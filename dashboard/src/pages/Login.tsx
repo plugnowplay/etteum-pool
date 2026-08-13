@@ -2,35 +2,53 @@ import { useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Eye, EyeOff, Lock } from "lucide-react";
-import { validateApiKey, API_BASE } from "@/lib/api";
+import { Eye, EyeOff, Lock, User } from "lucide-react";
+import { API_BASE } from "@/lib/api";
 
 interface LoginProps {
-  onLogin: () => void;
+  onLogin: (apiKey: string) => void;
 }
 
 export default function Login({ onLogin }: LoginProps) {
-  const [key, setKey] = useState("");
-  const [showKey, setShowKey] = useState(false);
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [showPass, setShowPass] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!key.trim()) {
-      setError("Please enter an API key");
+    if (!username.trim() || !password.trim()) {
+      setError("Enter username and password");
       return;
     }
 
     setLoading(true);
     setError(null);
 
-    const valid = await validateApiKey(key.trim());
-    if (valid) {
-      localStorage.setItem("api_key", key.trim());
-      onLogin();
-    } else {
-      setError("Invalid API key");
+    try {
+      const res = await fetch(`${API_BASE}/api/auth/dashboard-login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username: username.trim(), password }),
+      });
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setError(data.error || "Invalid username or password");
+        setLoading(false);
+        return;
+      }
+
+      const data = await res.json();
+      if (data.success && data.apiKey) {
+        localStorage.setItem("api_key", data.apiKey);
+        onLogin(data.apiKey);
+      } else {
+        setError("Login failed: no API key returned");
+      }
+    } catch {
+      setError("Cannot connect to server");
     }
     setLoading(false);
   }
@@ -44,26 +62,37 @@ export default function Login({ onLogin }: LoginProps) {
           </div>
           <CardTitle className="text-xl">Etteum</CardTitle>
           <p className="text-sm text-[var(--muted-foreground)] mt-1">
-            Enter your API key to access the dashboard
+            Sign in to access the dashboard
           </p>
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="relative">
+              <User className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--muted-foreground)]" />
               <Input
-                type={showKey ? "text" : "password"}
-                value={key}
-                onChange={(e) => { setKey(e.target.value); setError(null); }}
-                placeholder="sk-pool-..."
-                className="pr-10 font-mono text-sm"
+                type="text"
+                value={username}
+                onChange={(e) => { setUsername(e.target.value); setError(null); }}
+                placeholder="Username"
+                className="pl-10 text-sm"
                 autoFocus
+              />
+            </div>
+            <div className="relative">
+              <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--muted-foreground)]" />
+              <Input
+                type={showPass ? "text" : "password"}
+                value={password}
+                onChange={(e) => { setPassword(e.target.value); setError(null); }}
+                placeholder="Password"
+                className="pl-10 pr-10 text-sm"
               />
               <button
                 type="button"
-                onClick={() => setShowKey(!showKey)}
+                onClick={() => setShowPass(!showPass)}
                 className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
               >
-                {showKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                {showPass ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
               </button>
             </div>
 
@@ -74,7 +103,7 @@ export default function Login({ onLogin }: LoginProps) {
             )}
 
             <Button type="submit" className="w-full" disabled={loading}>
-              {loading ? "Verifying..." : "Login"}
+              {loading ? "Signing in..." : "Sign in"}
             </Button>
           </form>
         </CardContent>

@@ -106,7 +106,7 @@ app.use("/v1/*", async (c, next) => {
 // API Key authentication for management API
 app.use("/api/*", async (c, next) => {
   // Allow health check, info, and key validation without auth
-  if (c.req.path === "/api/health" || c.req.path === "/api/info" || c.req.path === "/api/keys/test") {
+  if (c.req.path === "/api/health" || c.req.path === "/api/info" || c.req.path === "/api/keys/test" || c.req.path === "/api/auth/dashboard-login" || c.req.path === "/api/auth/change-password") {
     await next();
     return;
   }

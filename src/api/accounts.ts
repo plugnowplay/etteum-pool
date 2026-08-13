@@ -1300,6 +1300,60 @@ accountsRouter.post("/", async (c) => {
     }
   }
 
+  // ── CodeBuddy: Bulk API key flow (cb-...) ──────────────────────────
+  if (body.provider === "codebuddy" && body.apiKeys) {
+    const keys = body.apiKeys
+      .split("\n")
+      .map((k: string) => k.trim())
+      .filter((k: string) => k.length > 0);
+
+    if (keys.length === 0) {
+      return c.json({ error: "apiKeys is empty" }, 400);
+    }
+
+    for (const key of keys) {
+      if (!key.startsWith("cb-")) {
+        return c.json({ error: `Invalid API key format: ${key.substring(0, 20)}... (must start with cb-)` }, 400);
+      }
+    }
+
+    const created: Array<{ id: number; email: string }> = [];
+    const existingCount = await db.select().from(accounts)
+      .where(eq(accounts.provider, "codebuddy"))
+      .then((rows) => rows.length);
+
+    for (let i = 0; i < keys.length; i++) {
+      const key = keys[i]!;
+      const email = `cb-account-${existingCount + i + 1}`;
+      const encryptedKey = encrypt(key);
+      const tokens = JSON.stringify({ api_key: key });
+
+      const inserted = await db.insert(accounts).values({
+        provider: "codebuddy",
+        email,
+        password: encryptedKey,
+        status: "active",
+        tokens,
+        quotaLimit: -1,
+        quotaRemaining: -1,
+        lastLoginAt: new Date(),
+      }).returning();
+
+      if (inserted[0]) {
+        created.push({ id: inserted[0].id, email });
+      }
+    }
+
+    pool.invalidate("codebuddy" as any);
+    broadcast({ type: "account_created", data: { provider: "codebuddy", count: created.length } });
+
+    return c.json({
+      success: true,
+      count: created.length,
+      accounts: created,
+    }, 201);
+  }
+
   // ── CodeBuddy China: Bulk API key flow (ck_...) ─────────────────────
   // Accept multiple API keys (one per line), validate format, and create
   // account per key with auto-generated email label.

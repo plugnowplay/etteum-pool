@@ -160,8 +160,9 @@ export async function markProxyFail(id: number, error?: string) {
 export async function checkProxyHealth(proxyUrl: string): Promise<{ ok: boolean; latencyMs: number; error?: string; ip?: string }> {
   const start = Date.now();
   try {
+    const curlPath = Bun.which("curl") || "/usr/bin/curl";
     const proc = Bun.spawn(
-      ["curl", "-s", "-o", "/dev/null", "-w", "%{http_code}|%{remote_ip}", "--proxy", proxyUrl, "--max-time", "10", "https://httpbin.org/ip"],
+      [curlPath, "-s", "-o", "/dev/null", "-w", "%{http_code}|%{remote_ip}", "--proxy", proxyUrl, "--max-time", "10", "https://httpbin.org/ip"],
       { stdout: "pipe", stderr: "pipe" }
     );
     const stdout = await new Response(proc.stdout).text();

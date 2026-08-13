@@ -21,6 +21,7 @@ import {
   Moon,
   ChevronLeft,
   ChevronRight,
+  KeyRound,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTheme } from "@/hooks/useTheme";
@@ -183,8 +184,19 @@ export default function Sidebar({ onLogout, open, onClose, collapsed = false, on
         ))}
       </nav>
 
-      {/* Bottom Settings, Theme & Logout */}
+      {/* Bottom Settings, Theme, Change Password & Logout */}
       <div className={cn("p-3 border-t border-[var(--sidebar-border)] space-y-1", collapsed && "px-2")}>
+        <NavLink
+          to="/change-password"
+          className={cn(
+            "flex items-center gap-3 rounded-md text-sm transition-colors text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:bg-[var(--secondary)] w-full",
+            collapsed ? "px-2 py-2 justify-center" : "px-3 py-2"
+          )}
+          title={collapsed ? "Change Password" : undefined}
+        >
+          <KeyRound className="w-4 h-4 flex-shrink-0" />
+          {!collapsed && "Change Password"}
+        </NavLink>
         <button
           onClick={toggleTheme}
           className={cn(

@@ -1,6 +1,6 @@
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
-import { Cpu, Copy, Check, Search } from "lucide-react";
+import { Cpu, Copy, Check, Search, ChevronsUpDown } from "lucide-react";
 import { useEffect, useState } from "react";
 import { fetchModels } from "@/lib/api";
 import { useTimedMessage } from "@/hooks/useTimedMessage";
@@ -32,11 +32,92 @@ function formatNumber(n: number | undefined): string {
   return String(n);
 }
 
+function ModelCombobox({
+  models,
+  value,
+  onChange,
+}: {
+  models: ModelData[];
+  value: string;
+  onChange: (id: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const [container, setContainer] = useState<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const close = (event: MouseEvent) => {
+      if (container && !container.contains(event.target as Node)) setOpen(false);
+    };
+    const escape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", close);
+    document.addEventListener("keydown", escape);
+    return () => {
+      document.removeEventListener("mousedown", close);
+      document.removeEventListener("keydown", escape);
+    };
+  }, [open, container]);
+
+  const filtered = models.filter((model) => {
+    const q = query.toLowerCase().trim();
+    return !q || model.id.toLowerCase().includes(q) || model.owned_by.toLowerCase().includes(q);
+  });
+
+  return (
+    <div ref={setContainer} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((state) => !state)}
+        className="w-full flex items-center justify-between gap-2 px-3 py-2 rounded-md border border-[var(--border)] bg-[var(--background)] text-sm text-left focus:outline-none focus:ring-2 focus:ring-[var(--primary)]"
+      >
+        <span className={value ? "truncate text-[var(--foreground)]" : "text-[var(--muted-foreground)]"}>
+          {value || "Select model..."}
+        </span>
+        <ChevronsUpDown className="w-4 h-4 shrink-0 opacity-60" />
+      </button>
+      {open && (
+        <div className="absolute z-50 mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--card)] shadow-lg">
+          <div className="flex items-center gap-2 p-2 border-b border-[var(--border)]">
+            <Search className="w-4 h-4 text-[var(--muted-foreground)]" />
+            <input
+              autoFocus
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="Search model..."
+              className="w-full bg-transparent text-sm text-[var(--foreground)] outline-none"
+            />
+          </div>
+          <div className="max-h-64 overflow-y-auto p-1">
+            {filtered.map((model) => (
+              <button
+                key={model.id}
+                type="button"
+                onClick={() => { onChange(model.id); setOpen(false); setQuery(""); }}
+                className="w-full flex items-center justify-between gap-2 rounded px-2 py-2 text-left text-sm hover:bg-[var(--secondary)]"
+              >
+                <span className="truncate text-[var(--foreground)]">{model.id}</span>
+                <span className="shrink-0 text-xs text-[var(--muted-foreground)]">{model.owned_by}</span>
+              </button>
+            ))}
+            {filtered.length === 0 && (
+              <p className="px-2 py-3 text-sm text-[var(--muted-foreground)]">No models found</p>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function Models() {
   const [models, setModels] = useState<ModelData[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<string>("all");
   const [search, setSearch] = useState("");
+  const [selectedModel, setSelectedModel] = useState("");
   const { message: copiedModel, setMessage: setCopiedModel } = useTimedMessage<string>(null, 1500);
 
   useEffect(() => {
@@ -94,6 +175,28 @@ export default function Models() {
               className="w-full pl-10 pr-4 py-2 bg-[var(--background)] border border-[var(--border)] rounded-lg text-sm text-[var(--foreground)] placeholder:text-[var(--muted-foreground)] focus:outline-none focus:ring-2 focus:ring-[var(--primary)]"
             />
           </div>
+        </CardContent>
+      </Card>
+
+      {/* Model combobox */}
+      <Card>
+        <CardContent className="p-4 space-y-2">
+          <label className="text-xs font-medium text-[var(--muted-foreground)] uppercase tracking-wider">
+            Quick model select
+          </label>
+          <ModelCombobox
+            models={models}
+            value={selectedModel}
+            onChange={async (modelId) => {
+              setSelectedModel(modelId);
+              await copyModelId(modelId);
+            }}
+          />
+          {selectedModel && (
+            <p className="text-xs text-[var(--muted-foreground)]">
+              Selected and copied: <code className="text-[var(--foreground)]">{selectedModel}</code>
+            </p>
+          )}
         </CardContent>
       </Card>
 

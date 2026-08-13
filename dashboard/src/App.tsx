@@ -9,6 +9,7 @@ const Accounts = lazy(() => import("./pages/Accounts"));
 const AccountList = lazy(() => import("./pages/AccountList"));
 const ByokAccountList = lazy(() => import("./pages/ByokAccountList"));
 const Models = lazy(() => import("./pages/Models"));
+const Combos = lazy(() => import("./pages/Combos"));
 const ApiKey = lazy(() => import("./pages/ApiKey"));
 const Requests = lazy(() => import("./pages/Requests"));
 const Usage = lazy(() => import("./pages/Usage"));
@@ -20,6 +21,7 @@ const ImageStudio = lazy(() => import("./pages/ImageStudio"));
 const FilterRules = lazy(() => import("./pages/FilterRules"));
 const Integration = lazy(() => import("./pages/Integration"));
 const CodexOAuthCallback = lazy(() => import("./pages/CodexOAuthCallback"));
+const ChangePassword = lazy(() => import("./pages/ChangePassword"));
 
 function RouteFallback() {
   return <div className="flex h-64 items-center justify-center text-sm text-[var(--muted-foreground)]">Loading...</div>;
@@ -46,7 +48,7 @@ export default function App() {
     check();
   }, []);
 
-  function handleLogin() {
+  function handleLogin(_apiKey?: string) {
     setAuthed(true);
   }
 
@@ -83,6 +85,7 @@ export default function App() {
           <Route path="/integration" element={<Integration />} />
           <Route path="/image-studio" element={<ImageStudio />} />
           <Route path="/oauth/codex/callback" element={<CodexOAuthCallback />} />
+          <Route path="/change-password" element={<ChangePassword />} />
         </Route>
       </Routes>
     </Suspense>

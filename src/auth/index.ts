@@ -4,7 +4,7 @@ import { warmupQueue } from "./warmup-queue";
 import { autoWarmupScheduler } from "./warmup-scheduler";
 import { loginAllProviders, stopLoginProcess, getActiveProcessIds } from "./runner";
 import { db } from "../db/index";
-import { accounts } from "../db/schema";
+import { accounts, settings } from "../db/schema";
 import { eq } from "drizzle-orm";
 import { encrypt } from "../utils/crypto";
 import { addAuthLog, clearAuthLogs, getAuthLogs } from "./logs";
@@ -25,6 +25,59 @@ function emptyLoginOptions(): { headless?: boolean; concurrency?: number } {
 /**
  * POST /api/auth/login/:id - Login a specific account
  */
+authRouter.post("/dashboard-login", async (c) => {
+  const body = await c.req.json<{ username?: string; password?: string }>();
+  const user = process.env.DASHBOARD_USER || "admin";
+
+  // Check DB-stored password first, fall back to env
+  const [storedPass] = await db.select().from(settings).where(eq(settings.key, "dashboard_password"));
+  let passValid = false;
+  if (storedPass?.value) {
+    passValid = await Bun.password.verify(body.password || "", storedPass.value);
+  }
+  // Fall back to env password if no DB password or DB password doesn't match
+  if (!passValid) {
+    const envPass = process.env.DASHBOARD_PASSWORD || "admin";
+    passValid = body.password === envPass;
+  }
+
+  if (body.username !== user || !passValid) {
+    return c.json({ error: "Invalid username or password" }, 401);
+  }
+  // Return the active API key so the dashboard can use it for subsequent requests
+  const { getActiveApiKey } = await import("../api/keys");
+  const apiKey = await getActiveApiKey();
+  return c.json({ success: true, apiKey });
+});
+
+/**
+ * POST /api/auth/change-password — change dashboard login credentials
+ */
+authRouter.post("/change-password", async (c) => {
+  const body = await c.req.json<{ currentPassword?: string; newPassword?: string }>();
+  const currentPass = process.env.DASHBOARD_PASSWORD || "admin";
+
+  if (body.currentPassword !== currentPass) {
+    return c.json({ error: "Current password is incorrect" }, 401);
+  }
+
+  if (!body.newPassword || body.newPassword.length < 6) {
+    return c.json({ error: "New password must be at least 6 characters" }, 400);
+  }
+
+  // Write to settings table so it persists across restarts
+  const [existing] = await db.select().from(settings).where(eq(settings.key, "dashboard_password"));
+  const hashed = await Bun.password.hash(body.newPassword);
+
+  if (existing) {
+    await db.update(settings).set({ value: hashed, updatedAt: new Date() }).where(eq(settings.key, "dashboard_password"));
+  } else {
+    await db.insert(settings).values({ key: "dashboard_password", value: hashed });
+  }
+
+  return c.json({ success: true, message: "Password changed successfully" });
+});
+
 authRouter.post("/login/:id", async (c) => {
   const id = Number(c.req.param("id"));
   const body = await c.req.json<{ headless?: boolean }>().catch(emptyLoginOptions);

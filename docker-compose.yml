@@ -1,0 +1,17 @@
+services:
+  etteum-pool:
+    image: etteum-pool:latest
+    container_name: etteum-pool
+    restart: unless-stopped
+    ports:
+      - "1930:1930"
+      - "1931:1931"
+    volumes:
+      - etteum_data:/app/data
+    environment:
+      - NODE_ENV=production
+      - DASHBOARD_USER=admin
+      - DASHBOARD_PASSWORD=etteum2026
+
+volumes:
+  etteum_data:
