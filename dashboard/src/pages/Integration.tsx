@@ -1,16 +1,25 @@
 import { useState, useEffect, useCallback } from "react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { PageHeader, PageShell, SectionHeader } from "@/components/ui/page-header";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Badge } from "@/components/ui/badge";
+import { useToast } from "@/components/ui/toast";
 import {
-  Plug,
   ArrowRight,
   Search,
   ChevronsUpDown,
   Check,
+  Copy,
   Terminal,
   Zap,
-  RefreshCw,
   Code,
   Box,
   Hammer,
@@ -30,7 +39,6 @@ import {
   type ClientMetaDTO,
   type IntegrationModelDTO,
 } from "@/lib/api";
-import { useTimedMessage } from "@/hooks/useTimedMessage";
 import { useWsEvent } from "@/hooks/useWebSocket";
 import { ClientCard } from "@/components/integration/ClientCard";
 
@@ -53,20 +61,11 @@ function ModelCombobox({
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
-  const ref = useState<HTMLDivElement | null>(null)[0]
-    ? null
-    : null;
-
-  // Simple implementation using useEffect for click-outside
   const [containerRef, setContainerRef] = useState<HTMLDivElement | null>(null);
 
   useEffect(() => {
     function onDoc(e: MouseEvent) {
-      if (
-        containerRef &&
-        !containerRef.contains(e.target as Node)
-      )
-        setOpen(false);
+      if (containerRef && !containerRef.contains(e.target as Node)) setOpen(false);
     }
     function onKey(e: KeyboardEvent) {
       if (e.key === "Escape") setOpen(false);
@@ -85,8 +84,7 @@ function ModelCombobox({
   const filtered = q
     ? options.filter(
         (o) =>
-          o.id.toLowerCase().includes(q) ||
-          o.owned_by.toLowerCase().includes(q)
+          o.id.toLowerCase().includes(q) || o.owned_by.toLowerCase().includes(q)
       )
     : options;
 
@@ -96,55 +94,53 @@ function ModelCombobox({
     setQuery("");
   };
 
-  const triggerCls =
-    "w-full px-3 py-2 rounded-md border border-[var(--border)] bg-[var(--background)] text-sm flex items-center justify-between gap-2 focus:outline-none focus:ring-2 focus:ring-[var(--primary)]";
-
   return (
     <div ref={setContainerRef} className="relative w-full">
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
-        className={triggerCls}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        className="focus-ring flex min-h-[44px] w-full items-center justify-between gap-2 rounded-md border border-[var(--border)] bg-[var(--background)] px-3 py-2 text-sm transition-colors duration-[var(--dur-fast)] ease-[var(--ease-out)] hover:border-[var(--muted-foreground)]/40 md:min-h-0"
       >
         <span
           className={
             value
-              ? "truncate text-[var(--foreground)]"
+              ? "truncate font-mono text-xs text-[var(--foreground)]"
               : "truncate text-[var(--muted-foreground)]"
           }
         >
           {value || "— pass through (no mapping) —"}
         </span>
-        <ChevronsUpDown className="w-4 h-4 opacity-60 shrink-0" />
+        <ChevronsUpDown className="h-4 w-4 shrink-0 opacity-60" />
       </button>
 
       {open && (
-        <div className="absolute z-50 mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--card)] shadow-lg">
-          <div className="flex items-center gap-2 px-2 py-1.5 border-b border-[var(--border)]">
-            <Search className="w-3.5 h-3.5 text-[var(--muted-foreground)] shrink-0" />
+        <div className="animate-scale-in absolute z-50 mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--card)] shadow-[var(--es-3)]">
+          <div className="flex items-center gap-2 border-b border-[var(--border)] px-2 py-1.5">
+            <Search className="h-3.5 w-3.5 shrink-0 text-[var(--muted-foreground)]" />
             <input
               autoFocus
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search models..."
-              className="w-full bg-transparent text-sm focus:outline-none text-[var(--foreground)]"
+              placeholder="Search models…"
+              aria-label="Search models"
+              className="w-full bg-transparent text-sm text-[var(--foreground)] placeholder:text-[var(--muted-foreground)] focus:outline-none"
             />
           </div>
-          <ul className="max-h-[18rem] overflow-y-auto py-1">
+          <ul role="listbox" className="max-h-[18rem] overflow-y-auto py-1">
             <li>
               <button
                 type="button"
                 onClick={() => select("")}
-                className={`w-full text-left px-3 py-2 text-sm hover:bg-[var(--secondary)] flex items-center justify-between ${
+                className={`flex w-full items-center justify-between px-3 py-2 text-left text-sm transition-colors hover:bg-[var(--secondary)] ${
                   !value ? "bg-[var(--secondary)]" : ""
                 }`}
               >
                 <span className="text-[var(--muted-foreground)]">
                   — pass through (no mapping) —
                 </span>
-                {!value && (
-                  <Check className="w-3.5 h-3.5 text-[var(--primary)]" />
-                )}
+                {!value && <Check className="h-3.5 w-3.5 text-[var(--primary)]" />}
               </button>
             </li>
             {filtered.map((o) => (
@@ -152,19 +148,19 @@ function ModelCombobox({
                 <button
                   type="button"
                   onClick={() => select(o.id)}
-                  className={`w-full text-left px-3 py-2 text-sm hover:bg-[var(--secondary)] flex items-center justify-between gap-2 ${
+                  className={`flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-sm transition-colors hover:bg-[var(--secondary)] ${
                     value === o.id ? "bg-[var(--secondary)]" : ""
                   }`}
                 >
-                  <span className="truncate text-[var(--foreground)]">
+                  <span className="truncate font-mono text-xs text-[var(--foreground)]">
                     {o.id}
                   </span>
-                  <span className="flex items-center gap-2 shrink-0">
+                  <span className="flex shrink-0 items-center gap-2">
                     <span className="text-xs text-[var(--muted-foreground)]">
                       {o.owned_by}
                     </span>
                     {value === o.id && (
-                      <Check className="w-3.5 h-3.5 text-[var(--primary)]" />
+                      <Check className="h-3.5 w-3.5 text-[var(--primary)]" />
                     )}
                   </span>
                 </button>
@@ -185,19 +181,17 @@ function ModelCombobox({
 export default function Integration() {
   const [enabled, setEnabled] = useState(true);
   const [targets, setTargets] = useState<Record<string, string>>({});
-  const [models, setModels] = useState<
-    { id: string; owned_by: string }[]
-  >([]);
+  const [models, setModels] = useState<{ id: string; owned_by: string }[]>([]);
   const [apiKey, setApiKey] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [applying, setApplying] = useState(false);
   const [clients, setClients] = useState<ClientMetaDTO[]>([]);
-  const [integrationModels, setIntegrationModels] = useState<
-    IntegrationModelDTO[]
-  >([]);
+  const [integrationModels, setIntegrationModels] = useState<IntegrationModelDTO[]>(
+    []
+  );
   const [activeTab, setActiveTab] = useState("claude");
-  const { message, setMessage } = useTimedMessage<string>(null, 3000);
+  const toast = useToast();
 
   const baseUrl = API_BASE;
   const defaultModel = "kp-sonnet-4.6";
@@ -230,11 +224,11 @@ export default function Integration() {
       setTargets(next);
       if (keyRes?.key) setApiKey(keyRes.key);
     } catch (e: any) {
-      setMessage(e.message || "Failed to load integration settings");
+      toast.error(e.message || "Failed to load integration settings");
     } finally {
       setLoading(false);
     }
-  }, [setMessage]);
+  }, [toast]);
 
   const loadClients = useCallback(async () => {
     try {
@@ -264,9 +258,9 @@ export default function Integration() {
         label: `Claude Code · ${slot.title}`,
       }));
       await saveIntegration({ enabled, mappings });
-      setMessage("Saved");
+      toast.success("Saved");
     } catch (e: any) {
-      setMessage(e.message || "Save failed");
+      toast.error(e.message || "Save failed");
     } finally {
       setSaving(false);
     }
@@ -276,9 +270,9 @@ export default function Integration() {
     setApplying(true);
     try {
       await applyIntegrationConfig(baseUrl);
-      setMessage("Applied configuration to ~/.claude/settings.json");
+      toast.success("Applied configuration to ~/.claude/settings.json");
     } catch (e: any) {
-      setMessage(e.message || "Failed to apply configuration");
+      toast.error(e.message || "Failed to apply configuration");
     } finally {
       setApplying(false);
     }
@@ -294,49 +288,39 @@ export default function Integration() {
     await loadClients();
   };
 
+  const mappedCount = CLAUDE_CODE_SLOTS.filter((s) => targets[s.source]).length;
+
   return (
-    <div className="space-y-6">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-[var(--foreground)] flex items-center gap-2">
-            <Plug className="w-6 h-6" /> Integration
-          </h1>
-          <p className="text-sm text-[var(--muted-foreground)]">
-            Connect AI coding tools to your proxy pool
-          </p>
-        </div>
-        <div className="flex items-center gap-2" />
-      </div>
+    <PageShell>
+      <PageHeader
+        title="Integration"
+        description="Connect AI coding tools to your proxy pool."
+        badge={
+          <Badge variant={enabled ? "success" : "muted"} dot>
+            {enabled ? "mapping on" : "mapping off"}
+          </Badge>
+        }
+      />
 
-      {message && (
-        <div className="px-4 py-2 rounded-md bg-[var(--secondary)] text-sm text-[var(--foreground)]">
-          {message}
-        </div>
-      )}
-
-      <Tabs
-        value={activeTab}
-        onValueChange={setActiveTab}
-        className="space-y-4"
-      >
+      <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
         <TabsList>
           <TabsTrigger value="claude" className="gap-1.5">
-            <Terminal className="w-3.5 h-3.5" /> Claude
+            <Terminal className="h-3.5 w-3.5" /> Claude
           </TabsTrigger>
           <TabsTrigger value="opencode" className="gap-1.5">
-            <Code className="w-3.5 h-3.5" /> OpenCode
+            <Code className="h-3.5 w-3.5" /> OpenCode
           </TabsTrigger>
           <TabsTrigger value="codex" className="gap-1.5">
-            <Box className="w-3.5 h-3.5" /> Codex
+            <Box className="h-3.5 w-3.5" /> Codex
           </TabsTrigger>
           <TabsTrigger value="hermes" className="gap-1.5">
-            <Hammer className="w-3.5 h-3.5" /> Hermes
+            <Hammer className="h-3.5 w-3.5" /> Hermes
           </TabsTrigger>
           <TabsTrigger value="openclaw" className="gap-1.5">
-            <PawPrint className="w-3.5 h-3.5" /> OpenClaw
+            <PawPrint className="h-3.5 w-3.5" /> OpenClaw
           </TabsTrigger>
           <TabsTrigger value="kilo" className="gap-1.5">
-            <Zap className="w-3.5 h-3.5" /> Kilo
+            <Zap className="h-3.5 w-3.5" /> Kilo
           </TabsTrigger>
         </TabsList>
 
@@ -344,76 +328,112 @@ export default function Integration() {
         <TabsContent value="claude" className="space-y-6">
           <Card>
             <CardHeader>
-              <CardTitle className="text-base flex items-center gap-2">
-                <Terminal className="w-4 h-4" /> Claude Code Setup
+              <CardTitle className="flex items-center gap-2">
+                <Terminal className="h-4 w-4 text-[var(--muted-foreground)]" />
+                Claude Code Setup
               </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <p className="text-sm text-[var(--muted-foreground)]">
-                Point Claude Code at this proxy. Sets{" "}
-                <code className="text-xs bg-[var(--secondary)] px-1 py-0.5 rounded">
+              <CardDescription>
+                Point Claude Code at this proxy — writes{" "}
+                <code className="rounded bg-[var(--surface-inset)] px-1 py-0.5 font-mono">
                   ANTHROPIC_BASE_URL
                 </code>{" "}
                 and{" "}
-                <code className="text-xs bg-[var(--secondary)] px-1 py-0.5 rounded">
+                <code className="rounded bg-[var(--surface-inset)] px-1 py-0.5 font-mono">
                   ANTHROPIC_AUTH_TOKEN
                 </code>{" "}
-                in{" "}
-                <code className="text-xs bg-[var(--secondary)] px-1 py-0.5 rounded">
+                into{" "}
+                <code className="rounded bg-[var(--surface-inset)] px-1 py-0.5 font-mono">
                   ~/.claude/settings.json
                 </code>
                 .
-              </p>
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
               <div className="grid gap-3 sm:grid-cols-2">
                 <CodeRow label="ANTHROPIC_BASE_URL" value={baseUrl} />
-                <CodeRow label="ANTHROPIC_AUTH_TOKEN" value={apiKey || "<YOUR_API_KEY>"} />
+                <CodeRow
+                  label="ANTHROPIC_AUTH_TOKEN"
+                  value={apiKey || "<YOUR_API_KEY>"}
+                />
               </div>
-              <Button onClick={handleApplyConfig} disabled={applying} className="gap-2">
-                {applying ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
+              <Button onClick={handleApplyConfig} loading={applying}>
+                {!applying && <Zap className="h-4 w-4" />}
                 Apply Config
               </Button>
             </CardContent>
           </Card>
 
-          <div className="flex items-center gap-3">
-            <label className="flex items-center gap-2 text-sm cursor-pointer">
-              <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
-              Enable mapping
-            </label>
-            <Button onClick={handleSave} disabled={saving}>
-              {saving ? "Saving..." : "Save"}
-            </Button>
-          </div>
-
           <Card>
             <CardHeader>
-              <CardTitle className="text-base flex items-center gap-2">
-                <ArrowRight className="w-4 h-4" /> Model Mapping
-              </CardTitle>
+              <SectionHeader
+                title="Model Mapping"
+                description="Changes apply after Save."
+                actions={
+                  <>
+                    <Badge variant="muted" className="tabular">
+                      {mappedCount}/{CLAUDE_CODE_SLOTS.length}
+                    </Badge>
+                    <label className="flex cursor-pointer select-none items-center gap-2 text-xs text-[var(--foreground)]">
+                      <input
+                        type="checkbox"
+                        checked={enabled}
+                        onChange={(e) => setEnabled(e.target.checked)}
+                        className="accent-[var(--primary)]"
+                      />
+                      Enable mapping
+                    </label>
+                    <Button size="sm" onClick={handleSave} loading={saving}>
+                      {saving ? "Saving…" : "Save"}
+                    </Button>
+                  </>
+                }
+              />
             </CardHeader>
             <CardContent>
               {loading ? (
-                <p className="text-sm text-[var(--muted-foreground)]">Loading...</p>
+                <div className="space-y-3">
+                  {CLAUDE_CODE_SLOTS.map((slot) => (
+                    <div
+                      key={slot.source}
+                      className="flex flex-col gap-2 rounded-md border border-[var(--border)] bg-[var(--surface-2)] px-4 py-3 sm:flex-row sm:items-center"
+                    >
+                      <div className="shrink-0 space-y-1.5 sm:w-48">
+                        <Skeleton className="h-3.5 w-20" />
+                        <Skeleton className="h-2.5 w-32" />
+                      </div>
+                      <Skeleton className="h-10 w-full" />
+                    </div>
+                  ))}
+                </div>
               ) : (
                 <div className="space-y-3">
                   {CLAUDE_CODE_SLOTS.map((slot) => (
-                    <div key={slot.source} className="flex flex-col gap-2 sm:flex-row sm:items-center px-4 py-3 rounded-md bg-[var(--secondary)]">
-                      <div className="sm:w-48 shrink-0">
-                        <div className="text-sm font-medium text-[var(--foreground)]">{slot.title}</div>
-                        <div className="text-xs text-[var(--muted-foreground)]">{slot.desc}</div>
+                    <div
+                      key={slot.source}
+                      className="flex flex-col gap-2 rounded-md border border-[var(--border)] bg-[var(--surface-2)] px-4 py-3 sm:flex-row sm:items-center"
+                    >
+                      <div className="shrink-0 sm:w-48">
+                        <div className="text-sm font-medium text-[var(--foreground)]">
+                          {slot.title}
+                        </div>
+                        <div className="text-xs text-[var(--muted-foreground)]">
+                          {slot.desc}
+                        </div>
                       </div>
-                      <ArrowRight className="hidden sm:block w-4 h-4 text-[var(--muted-foreground)] shrink-0" />
+                      <ArrowRight className="hidden h-4 w-4 shrink-0 text-[var(--muted-foreground)] sm:block" />
                       <ModelCombobox
                         value={targets[slot.source] || ""}
                         options={models}
-                        onChange={(id) => setTargets((t) => ({ ...t, [slot.source]: id }))}
+                        onChange={(id) =>
+                          setTargets((t) => ({ ...t, [slot.source]: id }))
+                        }
                       />
                     </div>
                   ))}
                 </div>
               )}
-              <p className="mt-3 text-xs text-[var(--muted-foreground)]">
-                Leave "pass through" to keep original behavior. Changes apply after Save.
+              <p className="mt-3 text-xs leading-relaxed text-[var(--muted-foreground)]">
+                Leave "pass through" to keep original behavior.
               </p>
             </CardContent>
           </Card>
@@ -421,108 +441,149 @@ export default function Integration() {
 
         {/* ── OpenCode Tab ────────────────────────────────────── */}
         <TabsContent value="opencode" className="space-y-6">
-          {clients.filter((c) => c.id === "opencode").map((c) => (
-            <ClientCard key={c.id} client={c} baseUrl={baseUrl} apiKey={apiKey}
-              model={clientModels.opencode || defaultModel} models={integrationModels}
-              showPreview
-              onModelChange={(m) => setClientModels((p) => ({ ...p, opencode: m }))}
-              onApply={handleApplyClient} onRestore={handleRestoreClient} />
-          ))}
+          {clients
+            .filter((c) => c.id === "opencode")
+            .map((c) => (
+              <ClientCard
+                key={c.id}
+                client={c}
+                baseUrl={baseUrl}
+                apiKey={apiKey}
+                model={clientModels.opencode || defaultModel}
+                models={integrationModels}
+                showPreview
+                onModelChange={(m) =>
+                  setClientModels((p) => ({ ...p, opencode: m }))
+                }
+                onApply={handleApplyClient}
+                onRestore={handleRestoreClient}
+              />
+            ))}
         </TabsContent>
 
         {/* ── Codex Tab ───────────────────────────────────────── */}
         <TabsContent value="codex" className="space-y-6">
-          {clients.filter((c) => c.id === "codex").map((c) => (
-            <ClientCard key={c.id} client={c} baseUrl={baseUrl} apiKey={apiKey}
-              model={clientModels.codex || "codex-auto"} models={integrationModels}
-              showPreview={false}
-              onModelChange={(m) => setClientModels((p) => ({ ...p, codex: m }))}
-              onApply={handleApplyClient} onRestore={handleRestoreClient} />
-          ))}
+          {clients
+            .filter((c) => c.id === "codex")
+            .map((c) => (
+              <ClientCard
+                key={c.id}
+                client={c}
+                baseUrl={baseUrl}
+                apiKey={apiKey}
+                model={clientModels.codex || "codex-auto"}
+                models={integrationModels}
+                showPreview={false}
+                onModelChange={(m) => setClientModels((p) => ({ ...p, codex: m }))}
+                onApply={handleApplyClient}
+                onRestore={handleRestoreClient}
+              />
+            ))}
         </TabsContent>
 
         {/* ── Hermes Tab ──────────────────────────────────────── */}
         <TabsContent value="hermes" className="space-y-6">
-          {clients.filter((c) => c.id === "hermes").map((c) => (
-            <ClientCard key={c.id} client={c} baseUrl={baseUrl} apiKey={apiKey}
-              model={clientModels.hermes || defaultModel} models={integrationModels}
-              showPreview={false}
-              onModelChange={(m) => setClientModels((p) => ({ ...p, hermes: m }))}
-              onApply={handleApplyClient} onRestore={handleRestoreClient} />
-          ))}
+          {clients
+            .filter((c) => c.id === "hermes")
+            .map((c) => (
+              <ClientCard
+                key={c.id}
+                client={c}
+                baseUrl={baseUrl}
+                apiKey={apiKey}
+                model={clientModels.hermes || defaultModel}
+                models={integrationModels}
+                showPreview={false}
+                onModelChange={(m) => setClientModels((p) => ({ ...p, hermes: m }))}
+                onApply={handleApplyClient}
+                onRestore={handleRestoreClient}
+              />
+            ))}
         </TabsContent>
 
         {/* ── OpenClaw Tab ────────────────────────────────────── */}
         <TabsContent value="openclaw" className="space-y-6">
-          {clients.filter((c) => c.id === "openclaw").map((c) => (
-            <ClientCard key={c.id} client={c} baseUrl={baseUrl} apiKey={apiKey}
-              model={clientModels.openclaw || defaultModel} models={integrationModels}
-              showPreview
-              onModelChange={(m) => setClientModels((p) => ({ ...p, openclaw: m }))}
-              onApply={handleApplyClient} onRestore={handleRestoreClient} />
-          ))}
+          {clients
+            .filter((c) => c.id === "openclaw")
+            .map((c) => (
+              <ClientCard
+                key={c.id}
+                client={c}
+                baseUrl={baseUrl}
+                apiKey={apiKey}
+                model={clientModels.openclaw || defaultModel}
+                models={integrationModels}
+                showPreview
+                onModelChange={(m) =>
+                  setClientModels((p) => ({ ...p, openclaw: m }))
+                }
+                onApply={handleApplyClient}
+                onRestore={handleRestoreClient}
+              />
+            ))}
         </TabsContent>
 
         {/* ── Kilo Tab ────────────────────────────────────────── */}
         <TabsContent value="kilo" className="space-y-6">
-          {clients.filter((c) => c.id === "kilo").map((c) => (
-            <ClientCard key={c.id} client={c} baseUrl={baseUrl} apiKey={apiKey}
-              model={clientModels.kilo || defaultModel} models={integrationModels}
-              showPreview
-              onModelChange={(m) => setClientModels((p) => ({ ...p, kilo: m }))}
-              onApply={handleApplyClient} onRestore={handleRestoreClient} />
-          ))}
+          {clients
+            .filter((c) => c.id === "kilo")
+            .map((c) => (
+              <ClientCard
+                key={c.id}
+                client={c}
+                baseUrl={baseUrl}
+                apiKey={apiKey}
+                model={clientModels.kilo || defaultModel}
+                models={integrationModels}
+                showPreview
+                onModelChange={(m) => setClientModels((p) => ({ ...p, kilo: m }))}
+                onApply={handleApplyClient}
+                onRestore={handleRestoreClient}
+              />
+            ))}
         </TabsContent>
       </Tabs>
-    </div>
+    </PageShell>
   );
 }
 
-/** Inline copyable code row */
+/** Inline copyable code row — copy-with-feedback, same pattern as JsonBlock. */
 function CodeRow({ label, value }: { label: string; value: string }) {
   const [copied, setCopied] = useState(false);
 
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1600);
+    } catch {
+      /* clipboard unavailable (non-https / permissions) */
+    }
+  }
+
   return (
-    <div>
-      <label className="text-xs font-medium text-[var(--muted-foreground)] mb-1 block">
+    <div className="space-y-1.5">
+      <label className="block text-xs font-medium text-[var(--muted-foreground)]">
         {label}
       </label>
-      <div className="flex items-center gap-2 px-3 py-2 rounded-md border border-[var(--border)] bg-[var(--background)]">
-        <code className="text-sm font-mono text-[var(--foreground)] truncate flex-1">
+      <div className="flex items-center gap-2 rounded-md border border-[var(--border)] bg-[var(--surface-inset)] px-3 py-2">
+        <pre className="min-w-0 flex-1 overflow-x-auto whitespace-pre font-mono text-xs text-[var(--foreground)]">
           {value}
-        </code>
+        </pre>
         <button
-          onClick={async () => {
-            try {
-              await navigator.clipboard.writeText(value);
-              setCopied(true);
-              setTimeout(() => setCopied(false), 1500);
-            } catch {
-              /* clipboard unavailable */
-            }
-          }}
-          className="p-1.5 rounded-md text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:bg-[var(--secondary)] transition-colors shrink-0"
-          title="Copy"
+          onClick={copy}
+          aria-label={`Copy ${label}`}
+          title={copied ? "Copied" : "Copy"}
+          className="focus-ring shrink-0 rounded-md p-1.5 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--secondary)] hover:text-[var(--foreground)]"
         >
           {copied ? (
-            <Check className="w-3.5 h-3.5 text-[var(--success)]" />
+            <Check className="h-3.5 w-3.5 text-[var(--success)]" />
           ) : (
-            <svg
-              className="w-3.5 h-3.5"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
-              />
-            </svg>
+            <Copy className="h-3.5 w-3.5" />
           )}
         </button>
       </div>
     </div>
   );
 }
+

@@ -1,12 +1,13 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
-import { ArrowLeft, Search, Trash2, RefreshCw, RotateCcw, ExternalLink, ArrowUpDown, ArrowUp, ArrowDown, CheckCircle2, XCircle } from "lucide-react";
+import { EmptyState } from "@/components/ui/empty-state";
+import { useToast } from "@/components/ui/toast";
+import { ArrowLeft, Search, Trash2, RefreshCw, RotateCcw, ExternalLink, Users, ArrowUpDown, ArrowUp, ArrowDown, CheckCircle2, XCircle, AlertTriangle } from "lucide-react";
 import { formatDateTimeID } from "@/lib/utils";
-import { useTimedMessage } from "@/hooks/useTimedMessage";
 import { useWsEvent } from "@/hooks/useWebSocket";
 import {
   bulkDeleteAccounts,
@@ -268,7 +269,7 @@ export default function AccountList() {
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
   const perPage = 25;
-  const { message, setMessage: setTimedMessage, clearMessage } = useTimedMessage<string>(null, 4000);
+  const toast = useToast();
   const [error, setError] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<Status | "all">("all");
   const [sortKey, setSortKey] = useState<SortKey>("email");
@@ -306,8 +307,8 @@ export default function AccountList() {
 
   useEffect(() => { load(); }, [provider]);
 
-  function showSuccess(text: string) { setTimedMessage(text); setError(null); }
-  function showError(err: unknown) { setError(err instanceof Error ? err.message : String(err)); clearMessage(); }
+  function showSuccess(text: string) { toast.success(text); setError(null); }
+  function showError(err: unknown) { toast.error(err instanceof Error ? err.message : String(err)); setError(null); }
 
   async function handleWarmup(id: number) {
     try { await warmupAccount(id); showSuccess(`WarmUp queued #${id}`); await load(); } catch (err) { showError(err); }
@@ -485,39 +486,45 @@ export default function AccountList() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex items-center gap-3">
-          <Button variant="ghost" size="icon" onClick={() => navigate("/accounts")}>
-            <ArrowLeft className="w-5 h-5" />
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="flex items-center gap-2">
+          <Button variant="ghost" size="icon" onClick={() => navigate("/accounts")} aria-label="Back to accounts">
+            <ArrowLeft className="h-5 w-5" />
           </Button>
           <div>
-            <h1 className="text-2xl font-bold text-[var(--foreground)]">{labelProvider(provider || "")}</h1>
-            <p className="text-sm text-[var(--muted-foreground)] mt-1">{accounts.length} accounts</p>
+            <div className="flex items-center gap-2">
+              <h1 className="text-xl font-semibold tracking-tight text-[var(--foreground)]">{labelProvider(provider || "")}</h1>
+              <Badge variant="muted" className="tabular">{accounts.length}</Badge>
+            </div>
+            <p className="mt-1 text-sm text-[var(--muted-foreground)]">
+              {accounts.filter((a) => a.status === "active").length} active · {enabledCount} enabled
+            </p>
           </div>
         </div>
-        <div className="flex gap-2 flex-wrap">
-          <Button variant="outline" size="sm" onClick={load} disabled={loading}>
-            <RefreshCw className="w-4 h-4 mr-2" /> Refresh
+        <div className="flex flex-wrap gap-2">
+          <Button variant="outline" size="sm" onClick={load} loading={loading}>
+            Refresh
           </Button>
           <Button variant="outline" size="sm" onClick={handleWarmupAll}>
-            <RefreshCw className="w-4 h-4 mr-2" /> Warmup All
+            Warmup All
           </Button>
           <Button variant="outline" size="sm" onClick={handleRetryErrors} disabled={errorCount === 0}>
-            <RotateCcw className="w-4 h-4 mr-2" /> Retry Errors ({errorCount})
+            <RotateCcw className="h-3.5 w-3.5" /> Retry Errors ({errorCount})
           </Button>
           <Button variant="outline" size="sm" onClick={() => handleToggleAll(true)} disabled={disabledCount === 0}>
-            <CheckCircle2 className="w-4 h-4 mr-2 text-[var(--success)]" /> Enable All ({disabledCount})
+            <CheckCircle2 className="h-3.5 w-3.5 text-[var(--success)]" /> Enable All ({disabledCount})
           </Button>
           <Button variant="outline" size="sm" onClick={() => handleToggleAll(false)} disabled={enabledCount === 0}>
-            <XCircle className="w-4 h-4 mr-2 text-[var(--error)]" /> Disable All ({enabledCount})
+            <XCircle className="h-3.5 w-3.5 text-[var(--error)]" /> Disable All ({enabledCount})
           </Button>
         </div>
       </div>
 
       {/* Messages */}
-      {(message || error) && (
-        <div className={`rounded-md p-3 text-sm ${message ? "bg-[var(--success)]/10 text-[var(--success)]" : "bg-[var(--error)]/10 text-[var(--error)]"}`}>
-          {message || error}
+      {error && (
+        <div className="flex items-start gap-2 rounded-lg border border-[var(--error)]/30 bg-[var(--error)]/10 p-3 text-sm text-[var(--error)]">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>{error}</span>
         </div>
       )}
 
@@ -628,9 +635,9 @@ export default function AccountList() {
                         aria-checked={isEnabled}
                         onClick={() => handleToggle(account.id, isEnabled)}
                         title={isEnabled ? "Klik untuk non-aktifkan" : "Klik untuk aktifkan"}
-                        className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-[var(--ring)] focus:ring-offset-1 focus:ring-offset-[var(--background)] ${isEnabled ? "bg-[var(--success)]" : "bg-[var(--secondary)]"}`}
+                        className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full transition-colors duration-[var(--dur-fast)] ease-[var(--ease-out)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] focus-visible:ring-offset-1 focus-visible:ring-offset-[var(--background)] ${isEnabled ? "bg-[var(--success)]" : "bg-[var(--secondary)]"}`}
                       >
-                        <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${isEnabled ? "translate-x-4" : "translate-x-0.5"}`} />
+                        <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-[var(--es-1)] transition-transform duration-[var(--dur-fast)] ease-[var(--ease-out)] ${isEnabled ? "translate-x-4" : "translate-x-0.5"}`} />
                       </button>
                     </td>
                     <td className="p-4 text-sm text-[var(--muted-foreground)] hidden sm:table-cell">
@@ -670,7 +677,20 @@ export default function AccountList() {
                   );
                 })}
                 {!loading && filtered.length === 0 && (
-                  <tr><td colSpan={7} className="p-8 text-center text-sm text-[var(--muted-foreground)]">No accounts found</td></tr>
+                  <tr>
+                    <td colSpan={7} className="p-6">
+                      <EmptyState
+                        compact
+                        icon={search || statusFilter !== "all" ? Search : Users}
+                        title={search || statusFilter !== "all" ? "No matching accounts" : "No accounts yet"}
+                        description={
+                          search || statusFilter !== "all"
+                            ? "Loosen the search or status filter to see more rows."
+                            : "Accounts for this provider will appear here after import or login."
+                        }
+                      />
+                    </td>
+                  </tr>
                 )}
               </tbody>
             </table>

@@ -92,6 +92,7 @@ export class KiroProvider extends BaseProvider {
   /** "standard" = kiro (catch-all); "pro" = kiro-pro (kp- models, Pro pool). */
   readonly variant: KiroVariant;
   name = "kiro";
+  alias = "kiro";
   // Standard kiro is the catch-all (any unmatched model + bare claude/sonnet/
   // haiku). It speaks Anthropic natively (AWS CodeWhisperer event-stream). See
   // registry.ts and proxy/index.ts. The "pro" variant resets isFallback and
@@ -104,6 +105,7 @@ export class KiroProvider extends BaseProvider {
     this.variant = opts.variant ?? "standard";
     if (this.variant === "pro") {
       this.name = "kiro-pro";
+      this.alias = "kp";
       this.isFallback = false;
       this.supportedModels = KIRO_PRO_MODELS;
     }

@@ -1,7 +1,17 @@
-import { useEffect, useMemo, useState } from "react";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  CardDescription,
+} from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { Field, Input } from "@/components/ui/input";
+import { Select } from "@/components/ui/select";
+import { PageHeader, PageShell, SectionHeader } from "@/components/ui/page-header";
+import { useToast } from "@/components/ui/toast";
 import { Save, RefreshCw, Zap, Flame, Globe, Wand2 } from "lucide-react";
 import {
   fetchSettings,
@@ -11,7 +21,6 @@ import {
   type AutoWarmupStatus,
 } from "@/lib/api";
 import { useApi } from "@/hooks/useApi";
-import { useTimedMessage } from "@/hooks/useTimedMessage";
 
 const PROVIDER_LABELS: Record<string, string> = {
   kiro: "Kiro",
@@ -54,7 +63,7 @@ export default function Settings() {
   const [savedAt, setSavedAt] = useState<Date | null>(null);
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
-  const { message, setMessage } = useTimedMessage<string>(null, 3000);
+  const toast = useToast();
 
   const providerListApi = useApi<{ data: string[] }>(fetchProviderList, []);
 
@@ -97,7 +106,7 @@ export default function Settings() {
       await updateSettings(form);
       setSavedAt(new Date());
       setDirty(false);
-      setMessage("Settings saved.");
+      toast.success("Settings saved");
     } finally {
       setSaving(false);
     }
@@ -106,73 +115,70 @@ export default function Settings() {
   const globalMethod = form.load_balancing_method || "round_robin";
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-[var(--foreground)]">Proxy Settings</h1>
-          <p className="text-sm text-[var(--muted-foreground)] mt-1">
-            Configure load balancing and auto warmup
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          {dirty && (
-            <span className="text-xs text-[var(--warning)] px-2 py-1 rounded bg-[var(--warning)]/10">
+    <PageShell>
+      <PageHeader
+        title="Proxy Settings"
+        description="Configure load balancing, auto warmup, proxy pool routing, and the token compression pipeline."
+        badge={
+          dirty ? (
+            <Badge variant="warning" dot>
               Unsaved
-            </span>
-          )}
-          <Button variant="outline" size="sm" onClick={load}>
-            <RefreshCw className="w-4 h-4 mr-2" /> Reload
-          </Button>
-          <Button size="sm" onClick={save} disabled={saving || !dirty}>
-            <Save className="w-4 h-4 mr-2" /> {saving ? "Saving..." : "Save"}
-          </Button>
-        </div>
-      </div>
-
-      {message && (
-        <div className="rounded-md bg-[var(--success)]/10 p-3 text-sm text-[var(--success)]">
-          {message}
-        </div>
-      )}
+            </Badge>
+          ) : undefined
+        }
+        actions={
+          <>
+            <Button variant="outline" size="sm" onClick={load}>
+              <RefreshCw className="h-4 w-4" />
+              Reload
+            </Button>
+            <Button size="sm" onClick={save} loading={saving} disabled={!dirty}>
+              {!saving && <Save className="h-4 w-4" />}
+              Save
+            </Button>
+          </>
+        }
+      />
 
       <div className="grid gap-6 lg:grid-cols-2">
         {/* Load Balancing */}
-        <Card className="border-[var(--border)]">
+        <Card>
           <CardHeader>
-            <CardTitle className="text-base flex items-center gap-2">
-              <Zap className="w-4 h-4 text-[var(--primary)]" />
+            <CardTitle className="flex items-center gap-2">
+              <Zap className="h-4 w-4 text-[var(--primary)]" />
               Load Balancing
             </CardTitle>
             <CardDescription>
-              Control how requests are distributed across accounts
+              Control how requests are distributed across accounts.
             </CardDescription>
           </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="rounded-lg border border-[var(--border)] bg-[var(--secondary)]/40 p-4 space-y-2">
-              <label className="text-sm font-medium text-[var(--foreground)]">
-                Global Method
-              </label>
-              <select
+          <CardContent className="space-y-5">
+            <Field
+              label="Global method"
+              htmlFor="lb-global"
+              hint={
+                globalMethod === "sequential"
+                  ? "Uses accounts in order, moves to next only when current is exhausted."
+                  : "Distributes requests evenly across all active accounts."
+              }
+            >
+              <Select
+                id="lb-global"
                 value={form.load_balancing_method || "round_robin"}
                 onChange={(e) => setValue("load_balancing_method", e.target.value)}
-                className="w-full h-9 rounded-md border border-[var(--border)] bg-[var(--background)] px-3 text-sm text-[var(--foreground)]"
               >
                 <option value="round_robin">Round Robin</option>
                 <option value="sequential">Sequential</option>
-              </select>
-              <p className="text-xs text-[var(--muted-foreground)]">
-                {globalMethod === "sequential"
-                  ? "Uses accounts in order, moves to next only when current is exhausted."
-                  : "Distributes requests evenly across all active accounts."}
-              </p>
-            </div>
+              </Select>
+            </Field>
 
             {providers.length > 0 && (
-              <div className="space-y-2">
-                <div className="text-sm font-medium text-[var(--foreground)]">
-                  Per-Provider Override
-                </div>
-                <div className="space-y-2">
+              <div className="space-y-1">
+                <SectionHeader
+                  title="Per-provider override"
+                  description="Leave on Inherit to follow the global method."
+                />
+                <div className="divide-y divide-[var(--border)] border-t border-[var(--border)]">
                   {providers.map((provider) => {
                     const key = `provider_${provider}_lb_method`;
                     const effective = lbMethodFor(provider);
@@ -180,45 +186,44 @@ export default function Settings() {
                     return (
                       <div
                         key={provider}
-                        className="flex items-center justify-between gap-3 p-3 rounded-lg bg-[var(--secondary)] border border-transparent hover:border-[var(--border)] transition-colors"
+                        className="flex items-center justify-between gap-3 py-3"
                       >
                         <div className="min-w-0 flex-1">
-                          <p className="text-sm font-medium text-[var(--foreground)] flex items-center gap-2">
+                          <p className="flex items-center gap-2 text-sm font-medium text-[var(--foreground)]">
                             {labelFor(provider)}
                             {overriden && (
-                              <span className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-[var(--primary)]/20 text-[var(--primary)]">
+                              <Badge variant="info" className="px-1.5 py-0 text-[10px] uppercase">
                                 override
-                              </span>
+                              </Badge>
                             )}
                           </p>
-                          <p className="text-xs text-[var(--muted-foreground)]">
+                          <p className="mt-0.5 text-xs text-[var(--muted-foreground)]">
                             {effective === "sequential" ? "Sequential" : "Round Robin"}
                             {!overriden && (
-                              <span className="ml-1 text-[var(--muted-foreground)]/70">
-                                (inherits global)
-                              </span>
+                              <span className="ml-1 opacity-70">(inherits global)</span>
                             )}
                           </p>
                         </div>
-                        <div className="flex items-center gap-2">
-                          <select
+                        <div className="flex shrink-0 items-center gap-2">
+                          <Select
                             value={form[key] || ""}
                             onChange={(e) => setValue(key, e.target.value)}
-                            className="h-8 rounded-md border border-[var(--border)] bg-[var(--background)] px-2 text-xs text-[var(--foreground)]"
+                            aria-label={`Load balancing method for ${labelFor(provider)}`}
+                            className="h-8 w-[140px] text-xs"
                           >
                             <option value="">Inherit</option>
                             <option value="round_robin">Round Robin</option>
                             <option value="sequential">Sequential</option>
-                          </select>
+                          </Select>
                           {overriden && (
-                            <button
-                              type="button"
+                            <Button
+                              variant="ghost"
+                              size="sm"
                               onClick={() => setValue(key, "")}
-                              className="text-xs text-[var(--muted-foreground)] hover:text-[var(--foreground)] px-2 py-1 rounded hover:bg-[var(--secondary)]"
                               title="Clear override"
                             >
                               Reset
-                            </button>
+                            </Button>
                           )}
                         </div>
                       </div>
@@ -229,138 +234,147 @@ export default function Settings() {
             )}
           </CardContent>
         </Card>
-
         {/* Auto WarmUp */}
-        <Card className="border-[var(--border)]">
+        <Card>
           <CardHeader>
-            <CardTitle className="text-base flex items-center gap-2">
-              <Flame className="w-4 h-4 text-[var(--primary)]" />
+            <CardTitle className="flex items-center gap-2">
+              <Flame className="h-4 w-4 text-[var(--primary)]" />
               Auto WarmUp
             </CardTitle>
             <CardDescription>
-              Automatically warm up enabled providers on a schedule
+              Automatically warm up enabled providers on a schedule. Checks accounts with
+              status active, exhausted, or error (skips pending). Enable per provider on
+              the Accounts page.
             </CardDescription>
           </CardHeader>
-          <CardContent className="space-y-4">
-            <div>
-              <label className="text-sm text-[var(--foreground)]">Interval (minutes)</label>
+          <CardContent className="space-y-5">
+            <Field
+              label="Interval (minutes)"
+              htmlFor="warmup-interval"
+              hint="Global interval for all providers with Auto WarmUp enabled."
+            >
               <Input
+                id="warmup-interval"
                 type="number"
                 min={1}
                 max={1440}
                 value={form.auto_warmup_interval_minutes || ""}
                 onChange={(e) => setValue("auto_warmup_interval_minutes", e.target.value)}
                 placeholder="15"
-                className="mt-1"
+                className="tabular"
               />
-              <p className="mt-1 text-xs text-[var(--muted-foreground)]">
-                Global interval for all providers with Auto WarmUp enabled
-              </p>
-            </div>
+            </Field>
 
-            <div className="rounded-lg border border-[var(--border)] bg-[var(--secondary)]/40 p-3 space-y-2">
-              <p className="text-xs text-[var(--muted-foreground)]">Status</p>
-              <p className="text-sm font-medium text-[var(--foreground)]">
-                {warmupStatus && warmupStatus.enabledProviders.length > 0
-                  ? `${warmupStatus.enabledProviders.length} provider${warmupStatus.enabledProviders.length === 1 ? "" : "s"} enabled`
-                  : "No provider enabled"}
+            <div className="rounded-lg border border-[var(--border)] bg-[var(--surface-2)] p-4">
+              <p className="text-[11px] font-medium uppercase tracking-wide text-[var(--muted-foreground)]">
+                Status
+              </p>
+              <p className="mt-1.5 text-sm font-medium text-[var(--foreground)]">
+                {warmupStatus && warmupStatus.enabledProviders.length > 0 ? (
+                  <>
+                    <span className="tabular">{warmupStatus.enabledProviders.length}</span>{" "}
+                    provider{warmupStatus.enabledProviders.length === 1 ? "" : "s"} enabled
+                  </>
+                ) : (
+                  "No provider enabled"
+                )}
               </p>
               {warmupStatus?.enabledProviders && warmupStatus.enabledProviders.length > 0 && (
-                <p className="text-xs text-[var(--muted-foreground)] truncate">
+                <p className="mt-1 truncate text-xs text-[var(--muted-foreground)]">
                   {warmupStatus.enabledProviders.map(labelFor).join(", ")}
                 </p>
               )}
               {warmupStatus?.nextRunAt && (
-                <p className="text-xs text-[var(--muted-foreground)]">
-                  Next run: {new Date(warmupStatus.nextRunAt).toLocaleTimeString()}
+                <p className="mt-1 text-xs text-[var(--muted-foreground)]">
+                  Next run:{" "}
+                  <span className="tabular">
+                    {new Date(warmupStatus.nextRunAt).toLocaleTimeString()}
+                  </span>
                 </p>
               )}
               {savedAt && (
-                <p className="text-xs text-[var(--muted-foreground)]">
-                  Last saved: {savedAt.toLocaleTimeString()}
+                <p className="mt-1 text-xs text-[var(--muted-foreground)]">
+                  Last saved: <span className="tabular">{savedAt.toLocaleTimeString()}</span>
                 </p>
               )}
             </div>
-
-            <p className="text-xs text-[var(--muted-foreground)]">
-              Auto WarmUp checks accounts with status active, exhausted, or error (skips pending). Enable/disable per provider on the Accounts page.
-            </p>
           </CardContent>
         </Card>
 
         {/* Proxy Pool */}
-        <Card className="border-[var(--border)]">
+        <Card>
           <CardHeader>
-            <CardTitle className="text-base flex items-center gap-2">
-              <Globe className="w-4 h-4 text-[var(--primary)]" />
+            <CardTitle className="flex items-center gap-2">
+              <Globe className="h-4 w-4 text-[var(--primary)]" />
               Proxy Pool
             </CardTitle>
             <CardDescription>
-              Configure how the proxy pool is used for outgoing requests
+              Configure how the proxy pool is used for outgoing requests.
             </CardDescription>
           </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="rounded-lg border border-[var(--border)] bg-[var(--secondary)]/40 p-4 space-y-2">
-              <label className="text-sm font-medium text-[var(--foreground)]">
-                Usage Scope
-              </label>
-              <select
+          <CardContent className="space-y-5">
+            <Field
+              label="Usage scope"
+              htmlFor="proxy-usage"
+              hint={
+                form.proxy_pool_usage === "model"
+                  ? "Proxies are only used for upstream model API calls. Auth/login runs without proxy."
+                  : form.proxy_pool_usage === "auth"
+                    ? "Proxies are only used for login automation. Model API calls go direct."
+                    : "Proxies are used for both model API calls and login automation."
+              }
+            >
+              <Select
+                id="proxy-usage"
                 value={form.proxy_pool_usage || "all"}
                 onChange={(e) => setValue("proxy_pool_usage", e.target.value)}
-                className="w-full h-9 rounded-md border border-[var(--border)] bg-[var(--background)] px-3 text-sm text-[var(--foreground)]"
               >
                 <option value="all">All — Model + Auth</option>
                 <option value="model">Model Only — API requests only</option>
                 <option value="auth">Auth Only — Login automation only</option>
-              </select>
-              <p className="text-xs text-[var(--muted-foreground)]">
-                {form.proxy_pool_usage === "model"
-                  ? "Proxies are only used for upstream model API calls. Auth/login runs without proxy."
-                  : form.proxy_pool_usage === "auth"
-                    ? "Proxies are only used for login automation. Model API calls go direct."
-                    : "Proxies are used for both model API calls and login automation."}
-              </p>
-            </div>
+              </Select>
+            </Field>
 
-            <div className="rounded-lg border border-[var(--border)] bg-[var(--secondary)]/40 p-4 space-y-2">
-              <label className="text-sm font-medium text-[var(--foreground)]">
-                Rotation Strategy
-              </label>
-              <select
+            <Field
+              label="Rotation strategy"
+              htmlFor="proxy-rotation"
+              hint={
+                form.proxy_pool_rotation === "sequential"
+                  ? "Uses one proxy until it fails, then moves to the next in the list."
+                  : "Distributes requests evenly across all active proxies in rotation."
+              }
+            >
+              <Select
+                id="proxy-rotation"
                 value={form.proxy_pool_rotation || "round_robin"}
                 onChange={(e) => setValue("proxy_pool_rotation", e.target.value)}
-                className="w-full h-9 rounded-md border border-[var(--border)] bg-[var(--background)] px-3 text-sm text-[var(--foreground)]"
               >
                 <option value="round_robin">Round Robin</option>
                 <option value="sequential">Sequential</option>
-              </select>
-              <p className="text-xs text-[var(--muted-foreground)]">
-                {form.proxy_pool_rotation === "sequential"
-                  ? "Uses one proxy until it fails, then moves to the next in the list."
-                  : "Distributes requests evenly across all active proxies in rotation."}
-              </p>
-            </div>
+              </Select>
+            </Field>
           </CardContent>
         </Card>
-
         {/* Compression — token saver pipeline */}
-        <Card className="border-[var(--border)] lg:col-span-2">
+        <Card className="lg:col-span-2">
           <CardHeader>
             <div className="flex items-start justify-between gap-3">
               <div>
-                <CardTitle className="text-base flex items-center gap-2">
-                  <Wand2 className="w-4 h-4 text-[var(--primary)]" />
+                <CardTitle className="flex items-center gap-2">
+                  <Wand2 className="h-4 w-4 text-[var(--primary)]" />
                   Compression
                 </CardTitle>
                 <CardDescription className="mt-1">
-                  Reduce token usage by compressing tool outputs, deduplicating context, and shortening prompts. Pipeline runs in order: DCP → RTK → Caveman → Image Dedupe → Cache Markers.
+                  Reduce token usage by compressing tool outputs, deduplicating context, and
+                  shortening prompts. Pipeline runs in order: DCP → RTK → Caveman → Image
+                  Dedupe → Cache Markers.
                 </CardDescription>
               </div>
               <a
                 href="https://github.com/priyo000/etteum-pool/blob/main/docs/compression.md"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-xs text-[var(--primary)] hover:underline shrink-0 mt-1"
+                className="focus-ring mt-1 shrink-0 rounded text-xs text-[var(--primary)] hover:underline"
                 title="Open the compression docs"
               >
                 docs ↗
@@ -376,7 +390,7 @@ export default function Settings() {
               enabled={form.compression_rtk_enabled === "true"}
               onToggle={(v) => setValue("compression_rtk_enabled", v ? "true" : "false")}
             >
-              <div className="space-y-3 mt-3">
+              <div className="mt-3 space-y-3">
                 {/* Quick presets — primary control */}
                 <div className="grid grid-cols-3 gap-2">
                   {(
@@ -398,14 +412,14 @@ export default function Settings() {
                           setValue("compression_rtk_max_tool_chars", preset.chars);
                           setValue("compression_rtk_keep_last_n_turns_full", preset.turns);
                         }}
-                        className={`rounded-md border px-3 py-2 text-xs font-medium transition-colors text-left ${
+                        className={`focus-ring rounded-md border px-3 py-2 text-left text-xs font-medium transition-colors duration-[var(--dur-fast)] ease-[var(--ease-out)] min-h-[44px] md:min-h-0 ${
                           selected
                             ? "border-[var(--primary)] bg-[var(--primary)]/10 text-[var(--primary)]"
-                            : "border-[var(--border)] bg-[var(--secondary)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+                            : "border-[var(--border)] bg-[var(--surface-2)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
                         }`}
                       >
                         <div>{preset.name}</div>
-                        <div className="text-[10px] mt-0.5 opacity-70">
+                        <div className="tabular mt-0.5 text-[10px] opacity-70">
                           {preset.chars} chars · keep {preset.turns}
                         </div>
                       </button>
@@ -415,55 +429,62 @@ export default function Settings() {
 
                 {/* Advanced disclosure */}
                 <Disclosure label="Advanced settings">
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                    <div>
-                      <label className="text-xs text-[var(--muted-foreground)]">Max chars per tool result</label>
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                    <Field
+                      label="Max chars per tool result"
+                      htmlFor="rtk-max-chars"
+                      hint="~4 chars = 1 token. Default: 4000 (≈1000 tokens)."
+                    >
                       <Input
+                        id="rtk-max-chars"
                         type="number"
                         min={500}
                         max={50000}
                         step={500}
                         value={form.compression_rtk_max_tool_chars || "4000"}
                         onChange={(e) => setValue("compression_rtk_max_tool_chars", e.target.value)}
-                        className="mt-1"
+                        className="tabular"
                       />
-                      <p className="text-[10px] text-[var(--muted-foreground)] mt-1 leading-relaxed">
-                        ~4 chars = 1 token. Default: <code>4000</code> (≈1000 tokens).
-                      </p>
-                    </div>
-                    <div>
-                      <label className="text-xs text-[var(--muted-foreground)]">Keep last N turns full</label>
+                    </Field>
+                    <Field
+                      label="Keep last N turns full"
+                      htmlFor="rtk-keep-turns"
+                      hint="Recent turns left untouched. Default: 2."
+                    >
                       <Input
+                        id="rtk-keep-turns"
                         type="number"
                         min={0}
                         max={20}
                         value={form.compression_rtk_keep_last_n_turns_full || "2"}
-                        onChange={(e) => setValue("compression_rtk_keep_last_n_turns_full", e.target.value)}
-                        className="mt-1"
+                        onChange={(e) =>
+                          setValue("compression_rtk_keep_last_n_turns_full", e.target.value)
+                        }
+                        className="tabular"
                       />
-                      <p className="text-[10px] text-[var(--muted-foreground)] mt-1 leading-relaxed">
-                        Recent turns left untouched. Default: <code>2</code>.
-                      </p>
-                    </div>
-                    <div>
-                      <label className="text-xs text-[var(--muted-foreground)]">Smart truncate</label>
-                      <label className="mt-1 flex items-center gap-2 h-9 px-3 rounded-md border border-[var(--border)] bg-[var(--background)] cursor-pointer">
+                    </Field>
+                    <Field
+                      label="Smart truncate"
+                      hint="git diff / tree aware. Default: on."
+                    >
+                      <label className="flex h-9 min-h-[44px] cursor-pointer items-center gap-2 rounded-md border border-[var(--border)] bg-[var(--background)] px-3 md:min-h-0">
                         <input
                           type="checkbox"
                           checked={form.compression_rtk_smart_truncate === "true"}
-                          onChange={(e) => setValue("compression_rtk_smart_truncate", e.target.checked ? "true" : "false")}
+                          onChange={(e) =>
+                            setValue(
+                              "compression_rtk_smart_truncate",
+                              e.target.checked ? "true" : "false"
+                            )
+                          }
                         />
                         <span className="text-xs text-[var(--foreground)]">Pattern-aware</span>
                       </label>
-                      <p className="text-[10px] text-[var(--muted-foreground)] mt-1 leading-relaxed">
-                        git diff / tree aware. Default: <code>on</code>.
-                      </p>
-                    </div>
+                    </Field>
                   </div>
                 </Disclosure>
               </div>
             </CompressionRow>
-
             {/* DCP */}
             <CompressionRow
               title="DCP"
@@ -501,19 +522,19 @@ export default function Settings() {
                         type="button"
                         onClick={() => setValue("compression_caveman_level", lvl)}
                         title={hint}
-                        className={`rounded-md border px-3 py-2 text-xs font-medium transition-colors text-left ${
+                        className={`focus-ring rounded-md border px-3 py-2 text-left text-xs font-medium transition-colors duration-[var(--dur-fast)] ease-[var(--ease-out)] min-h-[44px] md:min-h-0 ${
                           selected
                             ? "border-[var(--primary)] bg-[var(--primary)]/10 text-[var(--primary)]"
-                            : "border-[var(--border)] bg-[var(--secondary)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+                            : "border-[var(--border)] bg-[var(--surface-2)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
                         }`}
                       >
                         <div>{title}</div>
-                        <div className="text-[10px] mt-0.5 opacity-70">{subtitle}</div>
+                        <div className="mt-0.5 text-[10px] opacity-70">{subtitle}</div>
                       </button>
                     );
                   })}
                 </div>
-                <p className="text-[11px] text-[var(--muted-foreground)] leading-relaxed">
+                <p className="text-[11px] leading-relaxed text-[var(--muted-foreground)]">
                   {form.compression_caveman_level === "lite" &&
                     "Lite: removes politeness fillers (\"please\", \"make sure to\") and verbose connectors. Sentence structure preserved. Saves ~5–15%."}
                   {form.compression_caveman_level === "full" &&
@@ -553,27 +574,32 @@ export default function Settings() {
           </CardContent>
         </Card>
       </div>
-    </div>
+    </PageShell>
   );
 }
 
 /**
  * Native <details> disclosure with chevron. Used to hide power-user controls
- * inside a CompressionRow so the default view stays simple (mirroring the
- * router-style toggle UX while keeping advanced knobs reachable).
+ * inside a CompressionRow so the default view stays simple.
  */
-function Disclosure({ label, children }: { label: string; children: React.ReactNode }) {
+function Disclosure({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <details className="group rounded-md border border-[var(--border)] bg-[var(--background)]/40">
-      <summary className="cursor-pointer list-none select-none px-3 py-2 flex items-center justify-between text-xs font-medium text-[var(--muted-foreground)] hover:text-[var(--foreground)]">
+    <details className="group rounded-md border border-[var(--border)] bg-[var(--surface-inset)]">
+      <summary className="flex cursor-pointer list-none select-none items-center justify-between px-3 py-2 text-xs font-medium text-[var(--muted-foreground)] transition-colors duration-[var(--dur-fast)] hover:text-[var(--foreground)]">
         <span>{label}</span>
-        <span className="transition-transform group-open:rotate-180" aria-hidden>▾</span>
+        <span
+          className="transition-transform duration-[var(--dur-fast)] group-open:rotate-180"
+          aria-hidden
+        >
+          ▾
+        </span>
       </summary>
-      <div className="px-3 pb-3 pt-1 border-t border-[var(--border)]">{children}</div>
+      <div className="border-t border-[var(--border)] px-3 pb-3 pt-3">{children}</div>
     </details>
   );
 }
 
+/** Toggle row: title + description left, switch right, divider between rows. */
 function CompressionRow({
   title,
   subtitle,
@@ -588,32 +614,35 @@ function CompressionRow({
   description: string;
   enabled: boolean;
   onToggle: (v: boolean) => void;
-  children?: React.ReactNode;
+  children?: ReactNode;
   /** When true, children render even when toggle is off (visually dimmed). */
   alwaysShowChildren?: boolean;
 }) {
   return (
-    <div className="rounded-lg border border-[var(--border)] bg-[var(--secondary)]/40 p-4">
-      <div className="flex items-start justify-between gap-3">
+    <div className="border-b border-[var(--border)] pb-4 last:border-b-0 last:pb-0">
+      <div className="flex items-start justify-between gap-4">
         <div className="min-w-0 flex-1">
           <div className="flex items-baseline gap-2">
             <span className="text-sm font-semibold text-[var(--foreground)]">{title}</span>
             <span className="text-xs text-[var(--muted-foreground)]">({subtitle})</span>
           </div>
-          <p className="mt-1 text-xs text-[var(--muted-foreground)]">{description}</p>
+          <p className="mt-1 text-xs leading-relaxed text-[var(--muted-foreground)]">
+            {description}
+          </p>
         </div>
-        <label className="relative inline-flex items-center cursor-pointer shrink-0">
+        <label className="relative inline-flex shrink-0 cursor-pointer items-center">
           <input
             type="checkbox"
-            className="sr-only peer"
+            className="peer sr-only"
             checked={enabled}
             onChange={(e) => onToggle(e.target.checked)}
+            aria-label={`Toggle ${title}`}
           />
-          <div className="w-10 h-5 bg-[var(--border)] peer-checked:bg-[var(--primary)] rounded-full transition-colors after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-transform peer-checked:after:translate-x-5"></div>
+          <div className="h-5 w-10 rounded-full bg-[var(--border)] transition-colors duration-[var(--dur-fast)] after:absolute after:left-[2px] after:top-[2px] after:h-4 after:w-4 after:rounded-full after:bg-[var(--foreground)] after:transition-transform after:content-[''] peer-checked:bg-[var(--primary)] peer-checked:after:bg-[var(--primary-foreground)] peer-checked:after:translate-x-5" />
         </label>
       </div>
       {children && (alwaysShowChildren || enabled) && (
-        <div className={alwaysShowChildren && !enabled ? "opacity-50 pointer-events-none" : ""}>
+        <div className={alwaysShowChildren && !enabled ? "pointer-events-none opacity-50" : ""}>
           {children}
         </div>
       )}

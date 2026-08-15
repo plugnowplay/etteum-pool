@@ -1,5 +1,11 @@
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { SearchInput } from "@/components/ui/input";
+import { PageHeader, PageShell } from "@/components/ui/page-header";
+import { DataTable, type Column } from "@/components/ui/data-table";
+import { EmptyState } from "@/components/ui/empty-state";
+import { useToast } from "@/components/ui/toast";
 import { Cpu, Copy, Check, Search, ChevronsUpDown } from "lucide-react";
 import { useEffect, useState } from "react";
 import { fetchModels } from "@/lib/api";
@@ -15,14 +21,17 @@ interface ModelData {
   thinking?: boolean;
 }
 
+/** Provider chip palette — token-backed only, no raw Tailwind colors. */
 const providerColors: Record<string, string> = {
   kiro: "bg-[var(--chart-2)]/15 text-[var(--chart-2)] border-[var(--chart-2)]/30",
   "kiro-pro": "bg-[var(--primary)]/15 text-[var(--primary)] border-[var(--primary)]/30",
   codebuddy: "bg-[var(--chart-3)]/15 text-[var(--chart-3)] border-[var(--chart-3)]/30",
-  "codebuddy-china": "bg-red-500/15 text-red-400 border-red-400/30",
+  "codebuddy-china": "bg-[var(--error)]/15 text-[var(--error)] border-[var(--error)]/30",
   canva: "bg-[var(--chart-6)]/15 text-[var(--chart-6)] border-[var(--chart-6)]/30",
   codex: "bg-[var(--chart-1)]/15 text-[var(--chart-1)] border-[var(--chart-1)]/30",
   qoder: "bg-[var(--chart-4)]/15 text-[var(--chart-4)] border-[var(--chart-4)]/30",
+  grok: "bg-[var(--info)]/15 text-[var(--info)] border-[var(--info)]/30",
+  "grok-cli": "bg-[var(--chart-5)]/15 text-[var(--chart-5)] border-[var(--chart-5)]/30",
 };
 
 function formatNumber(n: number | undefined): string {
@@ -71,22 +80,25 @@ function ModelCombobox({
       <button
         type="button"
         onClick={() => setOpen((state) => !state)}
-        className="w-full flex items-center justify-between gap-2 px-3 py-2 rounded-md border border-[var(--border)] bg-[var(--background)] text-sm text-left focus:outline-none focus:ring-2 focus:ring-[var(--primary)]"
+        aria-expanded={open}
+        aria-label="Select model"
+        className="focus-ring min-h-[44px] w-full items-center justify-between gap-2 rounded-md border border-[var(--border)] bg-[var(--background)] px-3 py-2 text-left text-sm flex md:min-h-0"
       >
         <span className={value ? "truncate text-[var(--foreground)]" : "text-[var(--muted-foreground)]"}>
           {value || "Select model..."}
         </span>
-        <ChevronsUpDown className="w-4 h-4 shrink-0 opacity-60" />
+        <ChevronsUpDown className="h-4 w-4 shrink-0 opacity-60" />
       </button>
       {open && (
-        <div className="absolute z-50 mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--card)] shadow-lg">
-          <div className="flex items-center gap-2 p-2 border-b border-[var(--border)]">
-            <Search className="w-4 h-4 text-[var(--muted-foreground)]" />
+        <div className="animate-scale-in absolute z-50 mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--card)] shadow-[var(--es-3)]">
+          <div className="flex items-center gap-2 border-b border-[var(--border)] p-2">
+            <Search className="h-4 w-4 text-[var(--muted-foreground)]" />
             <input
               autoFocus
               value={query}
               onChange={(event) => setQuery(event.target.value)}
               placeholder="Search model..."
+              aria-label="Search model"
               className="w-full bg-transparent text-sm text-[var(--foreground)] outline-none"
             />
           </div>
@@ -96,7 +108,7 @@ function ModelCombobox({
                 key={model.id}
                 type="button"
                 onClick={() => { onChange(model.id); setOpen(false); setQuery(""); }}
-                className="w-full flex items-center justify-between gap-2 rounded px-2 py-2 text-left text-sm hover:bg-[var(--secondary)]"
+                className="focus-ring flex w-full items-center justify-between gap-2 rounded px-2 py-2 text-left text-sm hover:bg-[var(--secondary)]"
               >
                 <span className="truncate text-[var(--foreground)]">{model.id}</span>
                 <span className="shrink-0 text-xs text-[var(--muted-foreground)]">{model.owned_by}</span>
@@ -119,6 +131,7 @@ export default function Models() {
   const [search, setSearch] = useState("");
   const [selectedModel, setSelectedModel] = useState("");
   const { message: copiedModel, setMessage: setCopiedModel } = useTimedMessage<string>(null, 1500);
+  const toast = useToast();
 
   useEffect(() => {
     fetchModels()
@@ -144,44 +157,120 @@ export default function Models() {
     setCopiedModel(modelId);
   }
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[var(--primary)]" />
-      </div>
-    );
-  }
+  const columns: Column<ModelData>[] = [
+    {
+      key: "id",
+      header: "Model",
+      primary: true,
+      sortValue: (m) => m.id,
+      cell: (m) => (
+        <span className="text-sm font-medium text-[var(--foreground)]">{m.id}</span>
+      ),
+    },
+    {
+      key: "owner",
+      header: "Owner",
+      sortValue: (m) => m.owned_by,
+      cell: (m) => (
+        <span
+          className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium ${
+            providerColors[m.owned_by] || "bg-[var(--muted)]/20 text-[var(--muted-foreground)]"
+          }`}
+        >
+          {m.owned_by}
+        </span>
+      ),
+    },
+    {
+      key: "context",
+      header: "Context",
+      align: "right",
+      hideBelow: "md",
+      width: "w-[100px]",
+      sortValue: (m) => m.context_window ?? 0,
+      cell: (m) => (
+        <span className="tabular text-sm text-[var(--foreground)]">
+          {formatNumber(m.context_window)}
+        </span>
+      ),
+    },
+    {
+      key: "output",
+      header: "Output",
+      align: "right",
+      hideBelow: "md",
+      width: "w-[100px]",
+      sortValue: (m) => m.max_output ?? 0,
+      cell: (m) => (
+        <span className="tabular text-sm text-[var(--foreground)]">
+          {formatNumber(m.max_output)}
+        </span>
+      ),
+    },
+    {
+      key: "features",
+      header: "Features",
+      hideBelow: "lg",
+      sortValue: (m) => (m.thinking ? 1 : 0),
+      cell: (m) =>
+        m.thinking ? (
+          <Badge variant="info" className="text-xs font-normal">
+            Thinking
+          </Badge>
+        ) : (
+          <span className="text-[var(--muted-foreground)]">—</span>
+        ),
+    },
+    {
+      key: "copy",
+      header: "",
+      align: "right",
+      width: "w-12",
+      cell: (m) => (
+        <Button
+          variant="ghost"
+          size="icon"
+          aria-label={`Copy model ID: ${m.id}`}
+          title={`Copy model ID: ${m.id}`}
+          onClick={(e) => {
+            e.stopPropagation();
+            copyModelId(m.id);
+          }}
+        >
+          {copiedModel === m.id ? (
+            <Check className="h-4 w-4 text-[var(--success)]" />
+          ) : (
+            <Copy className="h-4 w-4 text-[var(--muted-foreground)]" />
+          )}
+        </Button>
+      ),
+    },
+  ];
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div>
-        <h1 className="text-2xl font-bold text-[var(--foreground)]">Models</h1>
-        <p className="text-sm text-[var(--muted-foreground)] mt-1">
-          {models.length} models available across {new Set(models.map((m) => m.owned_by)).size} providers
-        </p>
+    <PageShell>
+      <PageHeader
+        title="Models"
+        description="Every model exposed by the pool, with context and output limits."
+        badge={
+          <Badge variant="muted" className="tabular">
+            {models.length}
+          </Badge>
+        }
+      />
+
+      <div className="flex flex-col gap-2.5 sm:flex-row">
+        <SearchInput
+          value={search}
+          onValueChange={setSearch}
+          placeholder="Search models, owners…"
+          className="sm:flex-1"
+        />
       </div>
 
-      {/* Search */}
       <Card>
-        <CardContent className="p-4">
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--muted-foreground)]" />
-            <input
-              type="text"
-              placeholder="Search models, owners..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="w-full pl-10 pr-4 py-2 bg-[var(--background)] border border-[var(--border)] rounded-lg text-sm text-[var(--foreground)] placeholder:text-[var(--muted-foreground)] focus:outline-none focus:ring-2 focus:ring-[var(--primary)]"
-            />
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Model combobox */}
-      <Card>
-        <CardContent className="p-4 space-y-2">
-          <label className="text-xs font-medium text-[var(--muted-foreground)] uppercase tracking-wider">
+        <CardContent className="space-y-2 p-4">
+          <label className="text-xs font-medium uppercase tracking-wider text-[var(--muted-foreground)]">
             Quick model select
           </label>
           <ModelCombobox
@@ -190,6 +279,7 @@ export default function Models() {
             onChange={async (modelId) => {
               setSelectedModel(modelId);
               await copyModelId(modelId);
+              toast.success(`Copied ${modelId}`);
             }}
           />
           {selectedModel && (
@@ -200,15 +290,14 @@ export default function Models() {
         </CardContent>
       </Card>
 
-      {/* Filters */}
       <div className="flex flex-wrap gap-2">
         {providers.map((p) => (
           <button
             key={p}
             onClick={() => setFilter(p)}
-            className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+            className={`focus-ring rounded-md px-3 py-1.5 text-xs font-medium transition-colors duration-[var(--dur-fast)] ${
               filter === p
-                ? "bg-[var(--info)]/20 text-[var(--info)] border border-[var(--info)]/30"
+                ? "border border-[var(--info)]/30 bg-[var(--info)]/20 text-[var(--info)]"
                 : "bg-[var(--secondary)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
             }`}
           >
@@ -217,104 +306,25 @@ export default function Models() {
         ))}
       </div>
 
-      {/* Table */}
-      <Card>
-        <CardContent className="p-0">
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead>
-                <tr className="border-b border-[var(--border)] bg-[var(--secondary)]/50">
-                  <th className="text-left py-3 px-4 text-xs font-medium text-[var(--muted-foreground)] uppercase tracking-wider">
-                    Model
-                  </th>
-                  <th className="text-left py-3 px-4 text-xs font-medium text-[var(--muted-foreground)] uppercase tracking-wider">
-                    Owner
-                  </th>
-                  <th className="text-left py-3 px-4 text-xs font-medium text-[var(--muted-foreground)] uppercase tracking-wider">
-                    Context
-                  </th>
-                  <th className="text-left py-3 px-4 text-xs font-medium text-[var(--muted-foreground)] uppercase tracking-wider">
-                    Output
-                  </th>
-                  <th className="text-left py-3 px-4 text-xs font-medium text-[var(--muted-foreground)] uppercase tracking-wider">
-                    Features
-                  </th>
-                  <th className="w-12"></th>
-                </tr>
-              </thead>
-              <tbody>
-                {filtered.map((model) => (
-                  <tr
-                    key={model.id}
-                    className="border-b border-[var(--border)] last:border-b-0 hover:bg-[var(--secondary)]/30 transition-colors"
-                  >
-                    {/* Model ID */}
-                    <td className="py-3 px-4">
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm font-medium text-[var(--foreground)]">
-                          {model.id}
-                        </span>
-                      </div>
-                    </td>
-
-                    {/* Owner */}
-                    <td className="py-3 px-4">
-                      <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium border ${providerColors[model.owned_by] || "bg-[var(--muted)]/20 text-[var(--muted-foreground)]"}`}>
-                        {model.owned_by}
-                      </span>
-                    </td>
-
-                    {/* Context */}
-                    <td className="py-3 px-4 text-sm text-[var(--foreground)]">
-                      {formatNumber(model.context_window)}
-                    </td>
-
-                    {/* Output */}
-                    <td className="py-3 px-4 text-sm text-[var(--foreground)]">
-                      {formatNumber(model.max_output)}
-                    </td>
-
-                    {/* Features */}
-                    <td className="py-3 px-4">
-                      {model.thinking && (
-                        <Badge variant="default" className="text-xs">
-                          Thinking
-                        </Badge>
-                      )}
-                    </td>
-
-                    {/* Copy Button */}
-                    <td className="py-3 px-4">
-                      <button
-                        type="button"
-                        onClick={() => copyModelId(model.id)}
-                        title={`Copy model ID: ${model.id}`}
-                        className="p-1.5 rounded-md hover:bg-[var(--secondary)] transition-colors group"
-                      >
-                        {copiedModel === model.id ? (
-                          <Check className="w-4 h-4 text-[var(--success)]" />
-                        ) : (
-                          <Copy className="w-4 h-4 text-[var(--muted-foreground)] group-hover:text-[var(--foreground)]" />
-                        )}
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-
-          {filtered.length === 0 && (
-            <div className="flex flex-col items-center justify-center py-12">
-              <Cpu className="w-12 h-12 text-[var(--muted-foreground)] mb-4" />
-              <p className="text-[var(--muted-foreground)]">No models found</p>
-              <p className="text-xs text-[var(--muted-foreground)] mt-1">
-                Try adjusting your search or filter
-              </p>
-            </div>
-          )}
-        </CardContent>
-      </Card>
-    </div>
+      <DataTable
+        columns={columns}
+        rows={filtered}
+        rowKey={(m) => m.id}
+        loading={loading}
+        pageSize={25}
+        empty={
+          <EmptyState
+            compact
+            icon={search || filter !== "all" ? Search : Cpu}
+            title="No models found"
+            description={
+              search || filter !== "all"
+                ? "Try adjusting your search or filter."
+                : "No models are exposed by the pool yet."
+            }
+          />
+        }
+      />
+    </PageShell>
   );
 }

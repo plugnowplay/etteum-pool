@@ -1,9 +1,16 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import { Input, Field } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { PageHeader, PageShell } from "@/components/ui/page-header";
+import { DataTable, type Column } from "@/components/ui/data-table";
+import { EmptyState } from "@/components/ui/empty-state";
+import { StatCard } from "@/components/ui/stat-card";
+import { SkeletonCard } from "@/components/ui/skeleton";
+import { useToast } from "@/components/ui/toast";
 import {
   CreditCard,
   Trash2,
@@ -13,9 +20,9 @@ import {
   Copy,
   Download,
   TrendingUp,
+  History,
 } from "lucide-react";
 import { fetchApi } from "@/lib/api";
-import { useTimedMessage } from "@/hooks/useTimedMessage";
 import { VisualCard } from "@/components/vcc/VisualCard";
 import { ExportDialog } from "@/components/vcc/ExportDialog";
 import { BinSelector } from "@/components/vcc/BinSelector";
@@ -71,7 +78,7 @@ export default function VccPool() {
   const [exportOpen, setExportOpen] = useState(false);
   const [exportCards, setExportCards] = useState<GeneratedCard[]>([]);
 
-  const { message, setMessage } = useTimedMessage<string>(null, 3000);
+  const toast = useToast();
 
   const loadPool = useCallback(async () => {
     try {
@@ -127,7 +134,7 @@ export default function VccPool() {
 
   const handleGenerate = async () => {
     if (!selectedBin || selectedBin.length < 6) {
-      setMessage("Please select or enter a BIN (minimum 6 digits)");
+      toast.warning("Please select or enter a BIN (minimum 6 digits)");
       return;
     }
 
@@ -143,9 +150,9 @@ export default function VccPool() {
       }));
 
       setGeneratedCards(cardsWithInfo);
-      setMessage(`Generated ${cardsWithInfo.length} cards`);
+      toast.success(`Generated ${cardsWithInfo.length} cards`);
     } catch (error) {
-      setMessage("Failed to generate cards");
+      toast.error("Failed to generate cards");
     } finally {
       setGenerating(false);
     }
@@ -154,7 +161,7 @@ export default function VccPool() {
   const handleCopyCard = async (card: GeneratedCard) => {
     const text = `${card.number}|${formatExpiry(card.expMonth, card.expYear)}|${card.cvv}`;
     await navigator.clipboard.writeText(text);
-    setMessage("Card copied");
+    toast.success("Card copied");
   };
 
   const handleCopyAll = async () => {
@@ -162,7 +169,7 @@ export default function VccPool() {
       .map((c) => `${c.number}|${formatExpiry(c.expMonth, c.expYear)}|${c.cvv}`)
       .join("\n");
     await navigator.clipboard.writeText(text);
-    setMessage(`${generatedCards.length} cards copied`);
+    toast.success(`${generatedCards.length} cards copied`);
   };
 
   const handleExportGenerated = () => {
@@ -173,14 +180,14 @@ export default function VccPool() {
   // Import
   const handleBulkImport = async () => {
     if (!bulkText.trim()) {
-      setMessage("Paste card list first");
+      toast.warning("Paste card list first");
       return;
     }
 
     const cards = parseCardLines(bulkText);
 
     if (cards.length === 0) {
-      setMessage("No valid cards found");
+      toast.warning("No valid cards found");
       return;
     }
 
@@ -198,10 +205,10 @@ export default function VccPool() {
         body: JSON.stringify({ cards: formattedCards }),
       });
       setBulkText("");
-      setMessage(`${result.added} cards imported`);
+      toast.success(`${result.added} cards imported`);
       loadPool();
     } catch (e: any) {
-      setMessage(e.message || "Import failed");
+      toast.error(e.message || "Import failed");
     }
   };
 
@@ -209,10 +216,10 @@ export default function VccPool() {
   const handleDelete = async (id: number) => {
     try {
       await fetchApi(`/api/vcc/pool/${id}`, { method: "DELETE" });
-      setMessage("Card removed");
+      toast.success("Card removed");
       loadPool();
     } catch (e: any) {
-      setMessage(e.message || "Failed to remove card");
+      toast.error(e.message || "Failed to remove card");
     }
   };
 
@@ -220,10 +227,10 @@ export default function VccPool() {
     if (!confirm("Remove all active VCC cards from pool?")) return;
     try {
       await fetchApi("/api/vcc/pool", { method: "DELETE" });
-      setMessage("Pool cleared");
+      toast.success("Pool cleared");
       loadPool();
     } catch (e: any) {
-      setMessage(e.message || "Failed to clear pool");
+      toast.error(e.message || "Failed to clear pool");
     }
   };
 
@@ -240,74 +247,180 @@ export default function VccPool() {
     setExportOpen(true);
   };
 
-  return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-[var(--foreground)]">VCC Pool</h1>
-          <p className="text-sm text-[var(--muted-foreground)]">
-            Generate and manage virtual credit cards with real-time BIN lookup
-          </p>
+  const poolColumns: Column<VCCCardInfo>[] = [
+    {
+      key: "number",
+      header: "Card",
+      primary: true,
+      sortValue: (c) => c.last4,
+      cell: (c) => (
+        <div className="flex min-w-0 items-center gap-2">
+          <CreditCard className="h-4 w-4 shrink-0 text-[var(--muted-foreground)]" />
+          <span className="tabular truncate font-mono text-sm text-[var(--foreground)]">
+            •••• •••• •••• {c.last4}
+          </span>
         </div>
-        <Badge variant="secondary" className="text-base px-4 py-2">
-          {pool.count} active card{pool.count !== 1 ? "s" : ""}
+      ),
+    },
+    {
+      key: "brand",
+      header: "Brand",
+      width: "w-[120px]",
+      hideBelow: "md",
+      sortValue: (c) => detectBrand(c.last4),
+      cell: (c) => (
+        <Badge variant="muted" className="font-normal capitalize">
+          {detectBrand(c.last4)}
         </Badge>
+      ),
+    },
+    {
+      key: "exp",
+      header: "Expiry",
+      width: "w-[100px]",
+      sortValue: (c) => c.exp,
+      cell: (c) => (
+        <span className="tabular font-mono text-xs text-[var(--muted-foreground)]">{c.exp}</span>
+      ),
+    },
+    {
+      key: "name",
+      header: "Holder",
+      hideBelow: "lg",
+      sortValue: (c) => c.name,
+      cell: (c) => (
+        <span className="block max-w-[200px] truncate text-xs text-[var(--muted-foreground)]">
+          {c.name}
+        </span>
+      ),
+    },
+    {
+      key: "status",
+      header: "Status",
+      width: "w-[100px]",
+      hideBelow: "xl",
+      sortValue: (c) => c.status,
+      cell: (c) => (
+        <Badge variant={c.status === "active" ? "success" : "muted"} dot>
+          {c.status}
+        </Badge>
+      ),
+    },
+    {
+      key: "actions",
+      header: "",
+      align: "right",
+      width: "w-[70px]",
+      cell: (c) => (
+        <div className="flex justify-end">
+          <Button
+            variant="danger"
+            size="icon"
+            aria-label={`Remove card ending ${c.last4}`}
+            title="Remove card"
+            onClick={() => handleDelete(c.id)}
+          >
+            <Trash2 className="h-4 w-4" />
+          </Button>
+        </div>
+      ),
+    },
+  ];
+
+  const txColumns: Column<VCCTransaction>[] = [
+    {
+      key: "status",
+      header: "Status",
+      width: "w-[110px]",
+      sortValue: (t) => t.status,
+      cell: (t) => (
+        <Badge variant={t.status === "success" ? "success" : "error"} dot>
+          {t.status}
+        </Badge>
+      ),
+    },
+    {
+      key: "card",
+      header: "Card",
+      width: "w-[110px]",
+      sortValue: (t) => t.cardLast4,
+      cell: (t) => (
+        <span className="tabular font-mono text-sm text-[var(--foreground)]">
+          •••• {t.cardLast4}
+        </span>
+      ),
+    },
+    {
+      key: "brand",
+      header: "Brand",
+      hideBelow: "lg",
+      width: "w-[110px]",
+      sortValue: (t) => t.cardBrand,
+      cell: (t) => (
+        <span className="text-xs capitalize text-[var(--muted-foreground)]">{t.cardBrand}</span>
+      ),
+    },
+    {
+      key: "account",
+      header: "Account",
+      primary: true,
+      sortValue: (t) => t.email ?? t.accountId,
+      cell: (t) => (
+        <span className="block max-w-[240px] truncate text-sm text-[var(--foreground)]">
+          {t.email || `Account #${t.accountId}`}
+        </span>
+      ),
+    },
+    {
+      key: "createdAt",
+      header: "When",
+      align: "right",
+      hideBelow: "md",
+      sortValue: (t) => t.createdAt,
+      cell: (t) => (
+        <span className="tabular text-xs text-[var(--muted-foreground)]">
+          {new Date(t.createdAt).toLocaleString()}
+        </span>
+      ),
+    },
+  ];
+
+  return (
+    <PageShell>
+      <PageHeader
+        title="VCC Pool"
+        description="Generate and manage virtual credit cards with real-time BIN lookup"
+        badge={
+          <Badge variant="muted" className="tabular">
+            {pool.count} active card{pool.count !== 1 ? "s" : ""}
+          </Badge>
+        }
+      />
+
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
+        {loading && pool.cards.length === 0 ? (
+          Array.from({ length: 5 }).map((_, i) => <SkeletonCard key={i} />)
+        ) : (
+          <>
+            <StatCard label="Total" value={stats.total} icon={TrendingUp} tone="primary" />
+            <StatCard label="Visa" value={stats.visa} icon={CreditCard} tone="info" />
+            <StatCard
+              label="Mastercard"
+              value={stats.mastercard}
+              icon={CreditCard}
+              tone="warning"
+            />
+            <StatCard label="Amex" value={stats.amex} icon={CreditCard} tone="success" />
+            <StatCard
+              label="Other"
+              value={stats.other}
+              icon={CreditCard}
+              className="col-span-2 lg:col-span-1"
+            />
+          </>
+        )}
       </div>
 
-      {/* Stats */}
-      {pool.count > 0 && (
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-          <Card>
-            <CardContent className="pt-6 pb-4">
-              <div className="flex items-center gap-2">
-                <TrendingUp className="w-4 h-4 text-[var(--primary)]" />
-                <div className="text-2xl font-bold">{stats.total}</div>
-              </div>
-              <p className="text-xs text-[var(--muted-foreground)] mt-1">Total</p>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="pt-6 pb-4">
-              <div className="text-2xl font-bold text-blue-500">{stats.visa}</div>
-              <p className="text-xs text-[var(--muted-foreground)] mt-1">
-                Visa
-              </p>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="pt-6 pb-4">
-              <div className="text-2xl font-bold text-orange-500">
-                {stats.mastercard}
-              </div>
-              <p className="text-xs text-[var(--muted-foreground)] mt-1">
-                Mastercard
-              </p>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="pt-6 pb-4">
-              <div className="text-2xl font-bold text-cyan-500">{stats.amex}</div>
-              <p className="text-xs text-[var(--muted-foreground)] mt-1">Amex</p>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="pt-6 pb-4">
-              <div className="text-2xl font-bold">{stats.other}</div>
-              <p className="text-xs text-[var(--muted-foreground)] mt-1">Other</p>
-            </CardContent>
-          </Card>
-        </div>
-      )}
-
-      {/* Message */}
-      {message && (
-        <div className="px-4 py-2 rounded-md bg-[var(--secondary)] text-sm text-[var(--foreground)]">
-          {message}
-        </div>
-      )}
-
-      {/* Tabs */}
       <Tabs defaultValue="generator" className="space-y-4">
         <TabsList className="grid w-full grid-cols-4">
           <TabsTrigger value="generator">Generator</TabsTrigger>
@@ -320,12 +433,11 @@ export default function VccPool() {
 
         {/* Generator Tab */}
         <TabsContent value="generator">
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {/* Left: Controls */}
+          <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
             <Card>
               <CardHeader>
-                <CardTitle className="text-base flex items-center gap-2">
-                  <Wand2 className="w-4 h-4" />
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <Wand2 className="h-4 w-4" />
                   Generate VCC
                 </CardTitle>
               </CardHeader>
@@ -336,31 +448,25 @@ export default function VccPool() {
                   onBinInfo={handleBinInfo}
                 />
 
-                <div>
-                  <label className="text-sm font-medium mb-2 block">
-                    Number of Cards
-                  </label>
+                <Field label="Number of Cards" htmlFor="gen-count" hint="1–100 per batch.">
                   <Input
+                    id="gen-count"
                     type="number"
+                    className="tabular"
                     value={genCount}
                     onChange={(e) => setGenCount(parseInt(e.target.value) || 1)}
                     min={1}
                     max={100}
                   />
-                </div>
+                </Field>
 
-                <Button
-                  onClick={handleGenerate}
-                  className="w-full"
-                  disabled={generating}
-                >
-                  <Wand2 className="w-4 h-4 mr-2" />
+                <Button onClick={handleGenerate} className="w-full" loading={generating}>
+                  {!generating && <Wand2 className="h-4 w-4" />}
                   {generating ? "Generating..." : `Generate ${genCount} Cards`}
                 </Button>
               </CardContent>
             </Card>
 
-            {/* Right: Preview */}
             <Card>
               <CardHeader>
                 <CardTitle className="text-base">Preview</CardTitle>
@@ -374,22 +480,30 @@ export default function VccPool() {
                   brand={detectBrand(selectedBin)}
                 />
                 {binInfo && (
-                  <div className="mt-4 space-y-2 text-sm">
-                    <div className="flex justify-between">
-                      <span className="text-[var(--muted-foreground)]">Brand:</span>
-                      <span className="font-medium capitalize">{binInfo.brand}</span>
+                  <div className="mt-4 rounded-md border border-[var(--border)] bg-[var(--surface-2)] px-3 py-1">
+                    <div className="flex items-baseline justify-between gap-4 py-1.5">
+                      <span className="text-xs text-[var(--muted-foreground)]">Brand</span>
+                      <span className="text-xs font-medium capitalize text-[var(--foreground)]">
+                        {binInfo.brand}
+                      </span>
                     </div>
-                    <div className="flex justify-between">
-                      <span className="text-[var(--muted-foreground)]">Country:</span>
-                      <span className="font-medium">{binInfo.countryName}</span>
+                    <div className="flex items-baseline justify-between gap-4 py-1.5">
+                      <span className="text-xs text-[var(--muted-foreground)]">Country</span>
+                      <span className="text-xs font-medium text-[var(--foreground)]">
+                        {binInfo.countryName}
+                      </span>
                     </div>
-                    <div className="flex justify-between">
-                      <span className="text-[var(--muted-foreground)]">Bank:</span>
-                      <span className="font-medium">{binInfo.issuer || "Unknown"}</span>
+                    <div className="flex items-baseline justify-between gap-4 py-1.5">
+                      <span className="text-xs text-[var(--muted-foreground)]">Bank</span>
+                      <span className="min-w-0 truncate text-xs font-medium text-[var(--foreground)]">
+                        {binInfo.issuer || "Unknown"}
+                      </span>
                     </div>
-                    <div className="flex justify-between">
-                      <span className="text-[var(--muted-foreground)]">Type:</span>
-                      <span className="font-medium capitalize">{binInfo.type}</span>
+                    <div className="flex items-baseline justify-between gap-4 py-1.5">
+                      <span className="text-xs text-[var(--muted-foreground)]">Type</span>
+                      <span className="text-xs font-medium capitalize text-[var(--foreground)]">
+                        {binInfo.type}
+                      </span>
                     </div>
                   </div>
                 )}
@@ -407,11 +521,11 @@ export default function VccPool() {
                 {generatedCards.length > 0 && (
                   <div className="flex gap-2">
                     <Button variant="outline" size="sm" onClick={handleCopyAll}>
-                      <Copy className="w-3 h-3 mr-1" />
+                      <Copy className="h-4 w-4" />
                       Copy All
                     </Button>
                     <Button variant="outline" size="sm" onClick={handleExportGenerated}>
-                      <Download className="w-3 h-3 mr-1" />
+                      <Download className="h-4 w-4" />
                       Export
                     </Button>
                   </div>
@@ -420,11 +534,13 @@ export default function VccPool() {
             </CardHeader>
             <CardContent>
               {generatedCards.length === 0 ? (
-                <p className="text-sm text-[var(--muted-foreground)] text-center py-8">
-                  No cards generated yet. Go to Generator tab to create cards.
-                </p>
+                <EmptyState
+                  icon={Wand2}
+                  title="No cards generated yet"
+                  description="Go to the Generator tab to create cards from a BIN."
+                />
               ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
                   {generatedCards.map((card, idx) => (
                     <div key={idx} className="space-y-2">
                       <VisualCard
@@ -435,9 +551,9 @@ export default function VccPool() {
                         showActions
                         onCopy={() => handleCopyCard(card)}
                       />
-                      <div className="text-xs font-mono text-[var(--muted-foreground)] px-1">
+                      <div className="tabular px-1 font-mono text-xs text-[var(--muted-foreground)]">
                         <div>{formatCardNumber(card.number)}</div>
-                        <div className="flex justify-between mt-1">
+                        <div className="mt-1 flex justify-between">
                           <span>Exp: {formatExpiry(card.expMonth, card.expYear)}</span>
                           <span>CVV: {card.cvv}</span>
                         </div>
@@ -451,169 +567,103 @@ export default function VccPool() {
         </TabsContent>
 
         {/* Pool Tab */}
-        <TabsContent value="pool">
+        <TabsContent value="pool" className="space-y-4">
           <Card>
             <CardHeader>
-              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-                <CardTitle className="text-base flex items-center gap-2">
-                  <CreditCard className="w-4 h-4" />
-                  Active Cards in Pool
-                </CardTitle>
-                <div className="flex flex-wrap gap-2">
-                  {pool.count > 0 && (
-                    <>
-                      <Button variant="outline" size="sm" onClick={handleExportPool}>
-                        <Download className="w-3 h-3 mr-1" />
-                        Export
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={handleClearAll}
-                        className="text-[var(--error)]"
-                      >
-                        <Trash2 className="w-3 h-3 mr-1" />
-                        Clear All
-                      </Button>
-                    </>
-                  )}
-                </div>
-              </div>
+              <CardTitle className="flex items-center gap-2 text-base">
+                <Upload className="h-4 w-4" />
+                Import Cards
+              </CardTitle>
             </CardHeader>
-            <CardContent>
-              {/* Bulk Import */}
-              <div className="mb-6 pb-6 border-b border-[var(--border)]">
-                <h3 className="text-sm font-semibold mb-3 flex items-center gap-2">
-                  <Upload className="w-4 h-4" />
-                  Import Cards
-                </h3>
-                <div className="space-y-3">
-                  <textarea
-                    value={bulkText}
-                    onChange={(e) => setBulkText(e.target.value)}
-                    placeholder="Paste cards (one per line):
-
-number|mm/yy|cvv
-4111111111111111|12/30|123
-
-or: number|mm|yy|cvv
-4111111111111111|12|30|123"
-                    className="w-full h-[120px] px-3 py-2 rounded-md border border-[var(--border)] bg-[var(--background)] text-sm font-mono resize-none focus:outline-none focus:ring-2 focus:ring-[var(--primary)]"
-                  />
-                  <Button onClick={handleBulkImport} className="w-full">
-                    <Upload className="w-4 h-4 mr-2" />
-                    Import Cards
-                  </Button>
-                </div>
-              </div>
-
-              {/* Active Cards List */}
-              {loading ? (
-                <p className="text-sm text-[var(--muted-foreground)] text-center py-8">
-                  Loading...
-                </p>
-              ) : pool.cards.length === 0 ? (
-                <p className="text-sm text-[var(--muted-foreground)] text-center py-8">
-                  No active cards in pool. Generate or import cards above.
-                </p>
-              ) : (
-                <div className="space-y-2">
-                  {pool.cards.map((card) => (
-                    <div
-                      key={card.id}
-                      className="flex items-center justify-between px-4 py-3 rounded-md bg-[var(--secondary)] hover:bg-[var(--muted)] transition-colors"
-                    >
-                      <div className="flex items-center gap-3 flex-1 min-w-0">
-                        <CreditCard className="w-4 h-4 text-[var(--muted-foreground)] flex-shrink-0" />
-                        <span className="font-mono text-sm truncate">
-                          •••• •••• •••• {card.last4}
-                        </span>
-                        <Badge variant="secondary" className="text-xs">
-                          {card.exp}
-                        </Badge>
-                        <span className="text-xs text-[var(--muted-foreground)] truncate hidden sm:inline">
-                          {card.name}
-                        </span>
-                      </div>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => handleDelete(card.id)}
-                        className="flex-shrink-0"
-                      >
-                        <Trash2 className="w-3 h-3 text-[var(--error)]" />
-                      </Button>
-                    </div>
-                  ))}
-                </div>
-              )}
+            <CardContent className="space-y-3">
+              <Field
+                label="Card list"
+                htmlFor="vcc-bulk"
+                hint="One per line: number|mm/yy|cvv or number|mm|yy|cvv"
+              >
+                <Textarea
+                  id="vcc-bulk"
+                  value={bulkText}
+                  onChange={(e) => setBulkText(e.target.value)}
+                  placeholder={
+                    "4111111111111111|12/30|123\n4111111111111111|12|30|123"
+                  }
+                  className="h-[120px] resize-none font-mono"
+                />
+              </Field>
+              <Button onClick={handleBulkImport} className="w-full">
+                <Upload className="h-4 w-4" />
+                Import Cards
+              </Button>
             </CardContent>
           </Card>
+
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-center gap-2">
+              <CreditCard className="h-4 w-4 text-[var(--muted-foreground)]" />
+              <h2 className="text-sm font-semibold text-[var(--foreground)]">
+                Active Cards in Pool
+              </h2>
+              <Badge variant="muted" className="tabular">
+                {pool.count}
+              </Badge>
+            </div>
+            {pool.count > 0 && (
+              <div className="flex flex-wrap gap-2">
+                <Button variant="outline" size="sm" onClick={handleExportPool}>
+                  <Download className="h-4 w-4" />
+                  Export
+                </Button>
+                <Button variant="danger" size="sm" onClick={handleClearAll}>
+                  <Trash2 className="h-4 w-4" />
+                  Clear All
+                </Button>
+              </div>
+            )}
+          </div>
+
+          <DataTable
+            columns={poolColumns}
+            rows={pool.cards}
+            rowKey={(c) => c.id}
+            loading={loading && pool.cards.length === 0}
+            pageSize={25}
+            empty={
+              <EmptyState
+                compact
+                icon={CreditCard}
+                title="No active cards in pool"
+                description="Generate or import cards above to fill the pool."
+              />
+            }
+          />
         </TabsContent>
 
         {/* History Tab */}
         <TabsContent value="history">
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base flex items-center gap-2">
-                <CheckCircle className="w-4 h-4" />
-                Upgrade History
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              {transactions.length === 0 ? (
-                <p className="text-sm text-[var(--muted-foreground)] text-center py-8">
-                  No upgrade transactions yet.
-                </p>
-              ) : (
-                <div className="space-y-2">
-                  {transactions.map((tx) => (
-                    <div
-                      key={tx.id}
-                      className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 px-4 py-3 rounded-md bg-[var(--secondary)]"
-                    >
-                      <div className="flex items-center gap-3 flex-1 min-w-0">
-                        <CheckCircle
-                          className={`w-4 h-4 flex-shrink-0 ${
-                            tx.status === "success"
-                              ? "text-[var(--success)]"
-                              : "text-[var(--error)]"
-                          }`}
-                        />
-                        <span className="font-mono text-sm">
-                          •••• {tx.cardLast4}
-                        </span>
-                        <span className="text-sm truncate">
-                          {tx.email || `Account #${tx.accountId}`}
-                        </span>
-                        <Badge
-                          variant={
-                            tx.status === "success" ? "success" : "destructive"
-                          }
-                          className="text-xs"
-                        >
-                          {tx.status}
-                        </Badge>
-                      </div>
-                      <span className="text-xs text-[var(--muted-foreground)]">
-                        {new Date(tx.createdAt).toLocaleString()}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </CardContent>
-          </Card>
+          <DataTable
+            columns={txColumns}
+            rows={transactions}
+            rowKey={(t) => t.id}
+            pageSize={25}
+            empty={
+              <EmptyState
+                compact
+                icon={History}
+                title="No upgrade transactions yet"
+                description="Successful and failed card upgrades will be listed here."
+              />
+            }
+          />
         </TabsContent>
       </Tabs>
 
-      {/* Export Dialog */}
       <ExportDialog
         open={exportOpen}
         onOpenChange={setExportOpen}
         cards={exportCards}
-        onMessage={setMessage}
+        onMessage={(m) => toast.info(m)}
       />
-    </div>
+    </PageShell>
   );
 }

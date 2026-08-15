@@ -878,9 +878,12 @@ function parseSseLine(line: string): ParsedDelta | null {
 
 export class QoderProvider extends BaseProvider {
   name = "qoder";
+  alias = "qd";
 
   override ownsModel(model: string): boolean {
-    return model.toLowerCase().startsWith("qd-");
+    const m = model.toLowerCase();
+    if (m.startsWith("qd-")) return true;
+    return QODER_MODELS.some((def) => def.id.toLowerCase() === `qd-${m}` || def.id.toLowerCase() === m);
   }
 
   supportedModels: ModelInfo[] = QODER_MODELS.map((m) => ({

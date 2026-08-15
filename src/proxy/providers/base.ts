@@ -125,10 +125,18 @@ export interface ProviderResult {
   quotaExhausted?: boolean;
   rateLimited?: boolean; // 429 rate-limit (temporary, don't mark exhausted)
   tokens?: unknown; // New tokens after refresh (if refreshed during request)
+  proxyUsed?: { id: number; url: string } | null;
 }
 
 export abstract class BaseProvider {
   abstract name: string;
+  /** Short prefix used in `alias/model` ids (e.g. "qd" → "qd/Auto"). */
+  alias?: string;
+  /** Extra prefixes that also resolve to this provider. */
+  aliases?: string[];
+
+  /** Last proxy used by fetchWithTimeout (for request logging). */
+  lastProxy: { id: number; url: string } | null = null;
   abstract supportedModels: ModelInfo[];
 
   abstract chatCompletion(
@@ -205,7 +213,9 @@ export abstract class BaseProvider {
   }
 
   getModelInfo(model: string): ModelInfo | undefined {
-    const normalized = model.toLowerCase();
+    const slashIdx = model.indexOf("/");
+    const bare = slashIdx >= 0 ? model.slice(slashIdx + 1) : model;
+    const normalized = bare.toLowerCase();
     return this.supportedModels.find((item) => item.id.toLowerCase() === normalized);
   }
 
@@ -275,6 +285,9 @@ export abstract class BaseProvider {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     const proxy = await getNextProxy("model");
+    this.lastProxy = proxy;
+    const proxyLabel = proxy ? `via proxy ${proxy.id} (${proxy.url.match(/@([^:\/]+)/)?.[1] || proxy.url})` : "direct (no proxy)";
+    console.log(`[PROXY] ${this.name}: ${url} ${proxyLabel}`);
     try {
       const response = await fetch(url, {
         ...init,

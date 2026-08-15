@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { useToast } from "@/components/ui/toast";
 import { Input } from "@/components/ui/input";
 import {
   Dialog,
@@ -11,7 +12,7 @@ import {
   DialogTitle as DTitle,
   DialogDescription,
 } from "@/components/ui/dialog";
-import { Plus, Upload, RefreshCw, Play, RotateCcw, Flame, ChevronDown, Loader2, Key, Pencil, Trash2, Zap, Lock, Shield, Eye, EyeOff } from "lucide-react";
+import { Plus, Upload, RefreshCw, Play, RotateCcw, Flame, ChevronDown, Loader2, Key, Pencil, Trash2, Zap, Lock, Shield, Eye, EyeOff, Search } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
 import { useWsEvent } from "@/hooks/useWebSocket";
 import {
@@ -42,7 +43,7 @@ import {
   type ByokProvider,
 } from "@/lib/api";
 
-type Provider = "kiro" | "kiro-pro" | "codebuddy" | "codebuddy-china" | "canva" | "codex" | "qoder" | "gitlab-duo" | "youmind";
+type Provider = "kiro" | "kiro-pro" | "codebuddy" | "codebuddy-china" | "canva" | "codex" | "qoder" | "gitlab-duo" | "youmind" | "grok" | "grok-cli";
 
 type ByokFormKey = {
   id?: number;
@@ -62,7 +63,7 @@ interface Account {
   quotaRemaining?: number;
 }
 
-const providers: Provider[] = ["kiro", "kiro-pro", "codebuddy", "codebuddy-china", "canva", "codex", "qoder", "gitlab-duo", "youmind"];
+const providers: Provider[] = ["kiro", "kiro-pro", "codebuddy", "codebuddy-china", "canva", "codex", "qoder", "gitlab-duo", "youmind", "grok", "grok-cli"];
 
 function labelProvider(provider: string) {
   if (provider === "kiro-pro") return "Kiro Pro";
@@ -72,6 +73,8 @@ function labelProvider(provider: string) {
   if (provider === "qoder") return "Qoder";
   if (provider === "gitlab-duo") return "GitLab Duo";
   if (provider === "youmind") return "YouMind";
+  if (provider === "grok") return "Grok";
+  if (provider === "grok-cli") return "Grok CLI";
   return provider.charAt(0).toUpperCase() + provider.slice(1);
 }
 
@@ -79,7 +82,7 @@ export default function Accounts() {
   const navigate = useNavigate();
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [loading, setLoading] = useState(true);
-  const [message, setMessage] = useState<string | null>(null);
+  const toast = useToast();
   const [error, setError] = useState<string | null>(null);
   const [queue, setQueue] = useState<any>(null);
   const [warmupQueue, setWarmupQueue] = useState<any>(null);
@@ -106,6 +109,18 @@ export default function Accounts() {
   const [gitlabBusy, setGitlabBusy] = useState(false);
   const [youmindApiKey, setYoumindApiKey] = useState("");
   const [youmindBusy, setYoumindBusy] = useState(false);
+  const [grokApiKey, setGrokApiKey] = useState("");
+  const [grokBusy, setGrokBusy] = useState(false);
+  const [grokCliDeviceCode, setGrokCliDeviceCode] = useState<{
+    deviceCode: string;
+    userCode: string;
+    verificationUri: string;
+    expiresIn: number;
+    interval: number;
+  } | null>(null);
+  const [grokCliAccessToken, setGrokCliAccessToken] = useState("");
+  const [grokCliError, setGrokCliError] = useState<string | null>(null);
+  const [grokCliBusy, setGrokCliBusy] = useState(false);
   const [codebuddyChinaApiKey, setCodebuddyChinaApiKey] = useState("");
   const [codebuddyChinaBulkApiKeys, setCodebuddyChinaBulkApiKeys] = useState("");
   const [codebuddyChinaBusy, setCodebuddyChinaBusy] = useState(false);
@@ -127,7 +142,6 @@ export default function Accounts() {
   });
   const [visibleByokSecrets, setVisibleByokSecrets] = useState<Set<string>>(new Set());
   const [revealingByokSecret, setRevealingByokSecret] = useState<string | null>(null);
-  const messageTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const codexOauthPopupRef = useRef<Window | null>(null);
   const codexOauthPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const codexOauthStateRef = useRef<string | null>(null);
@@ -165,9 +179,6 @@ export default function Accounts() {
 
   useEffect(() => {
     load();
-    return () => {
-      if (messageTimerRef.current) clearTimeout(messageTimerRef.current);
-    };
   }, []);
 
   useEffect(() => {
@@ -316,12 +327,10 @@ export default function Accounts() {
   }
 
   function showSuccess(text: string) {
-    setMessage(text);
+    toast.success(text);
     setError(null);
-    if (messageTimerRef.current) clearTimeout(messageTimerRef.current);
-    messageTimerRef.current = setTimeout(() => setMessage(null), 4000);
   }
-  function showError(err: unknown) { setError(err instanceof Error ? err.message : String(err)); setMessage(null); }
+  function showError(err: unknown) { toast.error(err instanceof Error ? err.message : String(err)); setError(null); }
 
   async function handleAdd() {
     if (!addDialogProvider) return;
@@ -419,6 +428,101 @@ export default function Accounts() {
       await load();
     } catch (err) { showError(err); }
     finally { setCodebuddyChinaBusy(false); }
+  }
+
+  async function handleGrokApiKeyLogin() {
+    const apiKey = grokApiKey.trim();
+    if (!apiKey) { showError(new Error("Paste Grok API key")); return; }
+    if (!apiKey.startsWith("xai-")) {
+      showError(new Error("Grok API key must start with xai-"));
+      return;
+    }
+    setGrokBusy(true);
+    try {
+      const res = await fetchApi<any>("/api/accounts", {
+        method: "POST",
+        body: JSON.stringify({
+          provider: "grok",
+          apiKey,
+        }),
+      });
+      const labelText = res?.email || "account";
+      showSuccess(res?.updated
+        ? `Grok key updated (${labelText})`
+        : `Grok ${labelText} added successfully`);
+      setGrokApiKey("");
+      setAddDialogProvider(null);
+      await load();
+    } catch (err) { showError(err); }
+    finally { setGrokBusy(false); }
+  }
+
+  async function handleGrokCliDeviceCode() {
+    setGrokCliBusy(true);
+    setGrokCliDeviceCode(null);
+    setGrokCliError(null);
+    try {
+      const res = await fetchApi<any>("/api/oauth/grok-cli/device-code", { method: "POST" });
+      setGrokCliDeviceCode({
+        deviceCode: res.device_code,
+        userCode: res.user_code,
+        verificationUri: res.verification_uri,
+        expiresIn: res.expires_in || 600,
+        interval: res.interval || 5,
+      });
+    } catch (err) {
+      setGrokCliError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setGrokCliBusy(false);
+    }
+  }
+
+  async function handleGrokCliPoll() {
+    if (!grokCliDeviceCode) return;
+    setGrokCliBusy(true);
+    setGrokCliError(null);
+    try {
+      const res = await fetchApi<any>("/api/oauth/grok-cli/poll", {
+        method: "POST",
+        body: JSON.stringify({ state: grokCliDeviceCode.deviceCode }),
+      });
+      if (res.status === "pending") return;
+      if (res.status === "done") {
+        showSuccess(`Grok CLI ${res.email || "account"} added successfully`);
+        setGrokCliDeviceCode(null);
+        setAddDialogProvider(null);
+        await load();
+      } else if (res.error) {
+        setGrokCliError(res.error);
+      }
+    } catch (err) {
+      setGrokCliError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setGrokCliBusy(false);
+    }
+  }
+
+  async function handleGrokCliAccessTokenLogin() {
+    const token = grokCliAccessToken.trim();
+    if (!token) { setGrokCliError("Paste access token"); return; }
+    setGrokCliBusy(true);
+    setGrokCliError(null);
+    try {
+      const res = await fetchApi<any>("/api/accounts", {
+        method: "POST",
+        body: JSON.stringify({ provider: "grok-cli", accessToken: token }),
+      });
+      showSuccess(res?.updated
+        ? `Grok CLI key updated (${res.email})`
+        : `Grok CLI ${res.email} added successfully`);
+      setGrokCliAccessToken("");
+      setAddDialogProvider(null);
+      await load();
+    } catch (err) {
+      setGrokCliError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setGrokCliBusy(false);
+    }
   }
 
   async function handleCodeBuddyBulkApiKey() {
@@ -669,6 +773,9 @@ export default function Accounts() {
       setAddMode("pat");
     }
     if (provider === "youmind") {
+      setAddMode("pat");
+    }
+    if (provider === "grok" || provider === "grok-cli") {
       setAddMode("pat");
     }
     setAddDialogProvider(provider);
@@ -947,6 +1054,8 @@ export default function Accounts() {
     }
   }
 
+  const [providerSearch, setProviderSearch] = useState("");
+
   const providerStats = useMemo(() => {
     return providers.map((provider) => {
       const rows = accounts.filter((a) => a.provider === provider);
@@ -964,28 +1073,39 @@ export default function Accounts() {
     });
   }, [accounts]);
 
+  const filteredStats = useMemo(() => {
+    const q = providerSearch.trim().toLowerCase();
+    if (!q) return providerStats;
+    return providerStats.filter((s) => labelProvider(s.provider).toLowerCase().includes(q) || s.provider.includes(q));
+  }, [providerStats, providerSearch]);
+
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-[var(--foreground)]">Accounts</h1>
-          <p className="text-sm text-[var(--muted-foreground)] mt-1">Manage provider accounts</p>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="flex items-center gap-2">
+          <div>
+            <div className="flex items-center gap-2">
+              <h1 className="text-xl font-semibold tracking-tight text-[var(--foreground)]">Accounts</h1>
+              <Badge variant="muted" className="tabular">{accounts.length}</Badge>
+            </div>
+            <p className="mt-1 text-sm text-[var(--muted-foreground)]">Manage provider accounts</p>
+          </div>
         </div>
         <div className="flex flex-wrap gap-2">
-          <Button variant="outline" size="sm" onClick={load} disabled={loading}>
-            <RefreshCw className="w-4 h-4 mr-2" /> Refresh
+          <Button variant="outline" size="sm" onClick={load} loading={loading}>
+            Refresh
           </Button>
           <Button variant="outline" size="sm" onClick={handleLoginAll}>
-            <Play className="w-4 h-4 mr-2" /> Login Pending
+            <Play className="h-3.5 w-3.5" /> Login Pending
           </Button>
         </div>
       </div>
 
       {/* Messages */}
-      {(message || error) && (
-        <div className={`rounded-md p-3 text-sm ${message ? "bg-[var(--success)]/10 text-[var(--success)]" : "bg-[var(--error)]/10 text-[var(--error)]"}`}>
-          {message || error}
+      {error && (
+        <div className="rounded-lg border border-[var(--error)]/30 bg-[var(--error)]/10 p-3 text-sm text-[var(--error)]">
+          {error}
         </div>
       )}
 
@@ -996,9 +1116,20 @@ export default function Accounts() {
         </div>
       )}
 
+      {/* Provider filter */}
+      <div className="relative">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[var(--muted-foreground)]" />
+        <Input
+          value={providerSearch}
+          onChange={(e) => setProviderSearch(e.target.value)}
+          placeholder="Filter providers…"
+          className="pl-9 max-w-sm"
+        />
+      </div>
+
       {/* Provider cards */}
       <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-        {providerStats.map((stat) => (
+        {filteredStats.map((stat) => (
           <Card
             key={stat.provider}
             className="border-[var(--border)] cursor-pointer hover:border-[var(--primary)]/50 transition-colors"
@@ -1473,6 +1604,10 @@ export default function Accounts() {
                 ? "Add via Personal Access Token, single Gmail (bot login), or bulk email|password."
                 : addDialogProvider === "youmind"
                 ? "Paste your YouMind API key (sk-ym-...). Server will validate against the OpenAPI relay and store it encrypted."
+                : addDialogProvider === "grok"
+                ? "Paste your xAI API key (xai-...). Server will validate against the xAI API and store it encrypted."
+                : addDialogProvider === "grok-cli"
+                ? "Sign in with your xAI/Grok account via device code. Uses Grok Build subscription credits (cli-chat-proxy.grok.com)."
                 : addDialogProvider === "codebuddy"
                 ? "Paste CodeBuddy API keys (cb-...). Satu key per baris untuk bulk import."
                 : addDialogProvider === "codebuddy-china"
@@ -1527,6 +1662,18 @@ export default function Accounts() {
                 className={`flex-1 rounded px-3 py-1.5 text-xs font-medium transition-colors ${addMode === "pat" ? "bg-[var(--background)] text-[var(--foreground)] shadow-sm" : "text-[var(--muted-foreground)]"}`}
               >API Key (sk-ym-...)</button>
             </div>
+          ) : addDialogProvider === "grok" ? (
+            <div className="flex gap-1 rounded-md bg-[var(--secondary)] p-1">
+              <button onClick={() => setAddMode("pat")}
+                className={`flex-1 rounded px-3 py-1.5 text-xs font-medium transition-colors ${addMode === "pat" ? "bg-[var(--background)] text-[var(--foreground)] shadow-sm" : "text-[var(--muted-foreground)]"}`}
+              >API Key (xai-...)</button>
+            </div>
+          ) : addDialogProvider === "grok-cli" ? (
+            <div className="flex gap-1 rounded-md bg-[var(--secondary)] p-1">
+              <button onClick={() => setAddMode("pat")}
+                className={`flex-1 rounded px-3 py-1.5 text-xs font-medium transition-colors ${addMode === "pat" ? "bg-[var(--background)] text-[var(--foreground)] shadow-sm" : "text-[var(--muted-foreground)]"}`}
+              >OAuth Device Code</button>
+            </div>
           ) : addDialogProvider === "codebuddy" ? (
             <div className="flex gap-1 rounded-md bg-[var(--secondary)] p-1">
               <button onClick={() => setAddMode("apikey")}
@@ -1567,6 +1714,33 @@ export default function Accounts() {
               <div className="flex justify-end gap-2">
                 <Button variant="outline" onClick={() => setAddDialogProvider(null)}>Cancel</Button>
                 <Button onClick={handleCookieLogin}>Add Account</Button>
+              </div>
+            </div>
+          )}
+
+          {addMode === "pat" && addDialogProvider === "grok" && (
+            <div className="space-y-4">
+              <div>
+                <label className="text-sm text-[var(--foreground)]">xAI API Key</label>
+                <textarea
+                  value={grokApiKey}
+                  onChange={(e) => setGrokApiKey(e.target.value)}
+                  className="mt-1 w-full h-32 rounded-md border border-[var(--border)] bg-[var(--background)] p-3 text-sm font-mono text-[var(--foreground)] placeholder:text-[var(--muted-foreground)] focus:outline-none focus:ring-1 focus:ring-[var(--ring)] resize-none"
+                  placeholder="xai-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+                  disabled={grokBusy}
+                />
+                <p className="mt-1 text-xs text-[var(--muted-foreground)]">
+                  Paste your xAI API key from{" "}
+                  <a href="https://console.x.ai" target="_blank" rel="noreferrer" className="underline">console.x.ai</a>{" "}
+                  → API Keys. Server validates via <code>GET /v1/api-key</code> and stores the key encrypted.
+                  Available models: <code>grok-4.6</code>, <code>grok-4</code>, <code>grok-4-fast</code>, <code>grok-code-fast</code>, <code>grok-3</code>, <code>grok-3-mini</code>.
+                </p>
+              </div>
+              <div className="flex justify-end gap-2">
+                <Button variant="outline" onClick={() => setAddDialogProvider(null)} disabled={grokBusy}>Cancel</Button>
+                <Button onClick={handleGrokApiKeyLogin} disabled={grokBusy}>
+                  {grokBusy ? "Validating..." : "Add Account"}
+                </Button>
               </div>
             </div>
           )}
@@ -1694,7 +1868,7 @@ ck_xyz789ghi012..."
                 />
                 <p className="mt-1 text-xs text-[var(--muted-foreground)]">
                   Paste satu atau lebih CodeBuddy China API key (prefix <code>ck_</code>), satu per baris. 
-                  Model tersedia: <code>cbc-deepseek-v3</code>, <code>cbc-claude-haiku-4.5</code>, <code>cbc-kimi-k2.5</code>, dll.
+                  Model tersedia: <code>cbcn/glm-5.2</code>, <code>cbcn/deepseek-v3</code>, <code>cbcn/kimi-k2.5</code>, dll.
                 </p>
               </div>
               <div className="flex justify-end gap-2">

@@ -1,9 +1,30 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Globe, Plus, Trash2, Upload, RefreshCw, Power, PowerOff, Download } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { Input, Field } from "@/components/ui/input";
+import { Select } from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
+import { PageHeader, PageShell } from "@/components/ui/page-header";
+import { DataTable, type Column } from "@/components/ui/data-table";
+import { EmptyState } from "@/components/ui/empty-state";
+import { StatCard } from "@/components/ui/stat-card";
+import { SkeletonCard } from "@/components/ui/skeleton";
+import { useToast } from "@/components/ui/toast";
+import {
+  Globe,
+  Plus,
+  Trash2,
+  Upload,
+  RefreshCw,
+  Power,
+  PowerOff,
+  Download,
+  Activity,
+  ShieldAlert,
+  Timer,
+} from "lucide-react";
 import { fetchApi, fetchProxyCountries, scrapeProxies, type ProxyCountry } from "@/lib/api";
-import { useTimedMessage } from "@/hooks/useTimedMessage";
 
 interface ProxyEntry {
   id: number;
@@ -31,7 +52,7 @@ export default function ProxyPool() {
   const [loading, setLoading] = useState(true);
   const [bulkText, setBulkText] = useState("");
   const [checking, setChecking] = useState(false);
-  const { message, setMessage } = useTimedMessage<string>(null, 3000);
+  const toast = useToast();
 
   // Scrape controls
   const [countries, setCountries] = useState<ProxyCountry[]>([]);
@@ -71,15 +92,15 @@ export default function ProxyPool() {
         verify: scrapeVerify,
       });
       if (result.added > 0) {
-        setMessage(
+        toast.success(
           `Scraped ${result.scraped}, ${result.added} added` +
             (scrapeVerify ? ` (${result.verified} alive)` : "") +
             (result.skipped > 0 ? `, ${result.skipped} duplicates skipped` : ""),
         );
       } else if (result.scraped === 0) {
-        setMessage("No proxies found for that region/source");
+        toast.warning("No proxies found for that region/source");
       } else {
-        setMessage(
+        toast.warning(
           scrapeVerify && result.verified === 0
             ? `Scraped ${result.scraped} but none passed health check`
             : "All scraped proxies already in pool",
@@ -87,7 +108,7 @@ export default function ProxyPool() {
       }
       loadPool();
     } catch (e: any) {
-      setMessage(e.message || "Scrape failed");
+      toast.error(e.message || "Scrape failed");
     } finally {
       setScraping(false);
     }
@@ -95,7 +116,7 @@ export default function ProxyPool() {
 
   const handleBulkAdd = async () => {
     if (!bulkText.trim()) {
-      setMessage("Paste proxy list first");
+      toast.warning("Paste proxy list first");
       return;
     }
 
@@ -106,7 +127,7 @@ export default function ProxyPool() {
       .filter(Boolean);
 
     if (proxies.length === 0) {
-      setMessage("No valid proxies found");
+      toast.warning("No valid proxies found");
       return;
     }
 
@@ -116,10 +137,10 @@ export default function ProxyPool() {
         body: JSON.stringify({ proxies }),
       });
       setBulkText("");
-      setMessage(`${result.added} proxy added`);
+      toast.success(`${result.added} proxy added`);
       loadPool();
     } catch (e: any) {
-      setMessage(e.message || "Failed to add proxies");
+      toast.error(e.message || "Failed to add proxies");
     }
   };
 
@@ -132,17 +153,17 @@ export default function ProxyPool() {
       });
       loadPool();
     } catch (e: any) {
-      setMessage(e.message || "Failed to toggle proxy");
+      toast.error(e.message || "Failed to toggle proxy");
     }
   };
 
   const handleDelete = async (id: number) => {
     try {
       await fetchApi(`/api/proxy-pool/pool/${id}`, { method: "DELETE" });
-      setMessage("Proxy removed");
+      toast.success("Proxy removed");
       loadPool();
     } catch (e: any) {
-      setMessage(e.message || "Failed to remove proxy");
+      toast.error(e.message || "Failed to remove proxy");
     }
   };
 
@@ -150,10 +171,10 @@ export default function ProxyPool() {
     if (!confirm("Remove all proxies from pool?")) return;
     try {
       await fetchApi("/api/proxy-pool/pool", { method: "DELETE" });
-      setMessage("Pool cleared");
+      toast.success("Pool cleared");
       loadPool();
     } catch (e: any) {
-      setMessage(e.message || "Failed to clear pool");
+      toast.error(e.message || "Failed to clear pool");
     }
   };
 
@@ -163,10 +184,11 @@ export default function ProxyPool() {
         `/api/proxy-pool/pool/${id}/check`,
         { method: "POST" }
       );
-      setMessage(result.ok ? `Healthy (${result.latencyMs}ms)` : `Failed: ${result.error}`);
+      if (result.ok) toast.success(`Healthy (${result.latencyMs}ms)`);
+      else toast.error(`Failed: ${result.error}`);
       loadPool();
     } catch (e: any) {
-      setMessage(e.message || "Health check failed");
+      toast.error(e.message || "Health check failed");
     }
   };
 
@@ -176,40 +198,30 @@ export default function ProxyPool() {
       const result = await fetchApi<{ checked: number }>("/api/proxy-pool/pool/check-all", {
         method: "POST",
       });
-      setMessage(`Checked ${result.checked} proxies`);
+      toast.success(`Checked ${result.checked} proxies`);
       loadPool();
     } catch (e: any) {
-      setMessage(e.message || "Check all failed");
+      toast.error(e.message || "Check all failed");
     } finally {
       setChecking(false);
     }
   };
 
-  const statusBadge = (status: string) => {
-    const colors: Record<string, string> = {
-      active: "bg-[var(--success)]/10 text-[var(--success)]",
-      disabled: "bg-[var(--warning)]/10 text-[var(--warning)]",
-      error: "bg-[var(--error)]/10 text-[var(--error)]",
-    };
-    return (
-      <span className={`text-xs px-2 py-0.5 rounded ${colors[status] || "bg-[var(--muted)]/10 text-[var(--muted-foreground)]"}`}>
-        {status}
-      </span>
-    );
+  const statusTone = (status: string): "success" | "warning" | "error" | "muted" => {
+    if (status === "active") return "success";
+    if (status === "disabled") return "warning";
+    if (status === "error") return "error";
+    return "muted";
   };
 
-  const latencyBadge = (ms: number | null) => {
-    if (ms == null) return null;
-    const color =
-      ms < 1000 ? "text-[var(--success)]" :
-      ms < 3000 ? "text-[var(--warning)]" :
-      "text-[var(--error)]";
-    return (
-      <span className={`text-xs font-mono shrink-0 ${color}`}>
-        {ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`}
-      </span>
-    );
-  };
+  const latencyClass = (ms: number) =>
+    ms < 1000
+      ? "text-[var(--success)]"
+      : ms < 3000
+        ? "text-[var(--warning)]"
+        : "text-[var(--error)]";
+
+  const formatLatency = (ms: number) => (ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`);
 
   const maskUrl = (url: string) => {
     try {
@@ -221,126 +233,275 @@ export default function ProxyPool() {
     }
   };
 
-  return (
-    <div className="space-y-6">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-[var(--foreground)]">Proxy Pool</h1>
-          <p className="text-sm text-[var(--muted-foreground)]">
-            Manage HTTP/SOCKS5 proxies for upstream requests and auth
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-sm text-[var(--muted-foreground)]">
-            {pool.activeCount}/{pool.count} active
+  const stats = useMemo(() => {
+    const errored = pool.proxies.filter((p) => p.status === "error").length;
+    const latencies = pool.proxies
+      .map((p) => p.latencyMs || 0)
+      .filter((ms) => ms > 0);
+    const avgMs = latencies.length
+      ? Math.round(latencies.reduce((a, b) => a + b, 0) / latencies.length)
+      : 0;
+    return { errored, avgMs };
+  }, [pool]);
+
+  const columns: Column<ProxyEntry>[] = [
+    {
+      key: "url",
+      header: "Proxy",
+      primary: true,
+      sortValue: (p) => p.url,
+      cell: (p) => (
+        <div className="flex min-w-0 items-center gap-2">
+          <Globe className="h-4 w-4 shrink-0 text-[var(--muted-foreground)]" />
+          <span className="truncate font-mono text-sm text-[var(--foreground)]">
+            {maskUrl(p.url)}
           </span>
-          <Button variant="outline" size="sm" onClick={handleCheckAll} disabled={checking}>
-            <RefreshCw className={`w-3 h-3 mr-1 ${checking ? "animate-spin" : ""}`} />
-            Check All
-          </Button>
-          {pool.count > 0 && (
-            <Button variant="outline" size="sm" onClick={handleClearAll}>
-              <Trash2 className="w-3 h-3 mr-1" />
-              Clear All
-            </Button>
-          )}
         </div>
+      ),
+    },
+    {
+      key: "type",
+      header: "Type",
+      width: "w-[90px]",
+      hideBelow: "md",
+      sortValue: (p) => p.type,
+      cell: (p) => (
+        <span className="text-xs text-[var(--muted-foreground)]">{p.type}</span>
+      ),
+    },
+    {
+      key: "status",
+      header: "Status",
+      width: "w-[110px]",
+      sortValue: (p) => p.status,
+      cell: (p) => (
+        <Badge variant={statusTone(p.status)} dot>
+          {p.status}
+        </Badge>
+      ),
+    },
+    {
+      key: "latency",
+      header: "Latency",
+      align: "right",
+      width: "w-[90px]",
+      hideBelow: "md",
+      sortValue: (p) => p.latencyMs ?? 0,
+      cell: (p) =>
+        p.latencyMs == null ? (
+          <span className="text-xs text-[var(--muted-foreground)]">—</span>
+        ) : (
+          <span className={`tabular font-mono text-xs ${latencyClass(p.latencyMs)}`}>
+            {formatLatency(p.latencyMs)}
+          </span>
+        ),
+    },
+    {
+      key: "counts",
+      header: "OK / Fail",
+      align: "right",
+      width: "w-[110px]",
+      hideBelow: "lg",
+      sortValue: (p) => p.successCount,
+      cell: (p) => (
+        <span className="tabular text-xs text-[var(--muted-foreground)]">
+          {p.successCount} / {p.failCount}
+        </span>
+      ),
+    },
+    {
+      key: "lastUsed",
+      header: "Last used",
+      hideBelow: "xl",
+      sortValue: (p) => p.lastUsedAt ?? "",
+      cell: (p) => (
+        <span className="tabular text-xs text-[var(--muted-foreground)]">
+          {p.lastUsedAt ? new Date(p.lastUsedAt).toLocaleString() : "—"}
+        </span>
+      ),
+    },
+    {
+      key: "actions",
+      header: "",
+      align: "right",
+      width: "w-[140px]",
+      cell: (p) => (
+        <div className="flex items-center justify-end gap-1">
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label="Health check proxy"
+            title="Health check"
+            onClick={() => handleCheckSingle(p.id)}
+          >
+            <RefreshCw className="h-4 w-4" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label={p.status === "active" ? "Disable proxy" : "Enable proxy"}
+            title={p.status === "active" ? "Disable" : "Enable"}
+            onClick={() => handleToggle(p.id, p.status)}
+          >
+            {p.status === "active" ? (
+              <PowerOff className="h-4 w-4" />
+            ) : (
+              <Power className="h-4 w-4" />
+            )}
+          </Button>
+          <Button
+            variant="danger"
+            size="icon"
+            aria-label="Delete proxy"
+            title="Delete"
+            onClick={() => handleDelete(p.id)}
+          >
+            <Trash2 className="h-4 w-4" />
+          </Button>
+        </div>
+      ),
+    },
+  ];
+
+  return (
+    <PageShell>
+      <PageHeader
+        title="Proxy Pool"
+        description="Manage HTTP/SOCKS5 proxies for upstream requests and auth"
+        badge={
+          <Badge variant="muted" className="tabular">
+            {pool.activeCount}/{pool.count} active
+          </Badge>
+        }
+        actions={
+          <>
+            <Button variant="outline" size="sm" onClick={handleCheckAll} loading={checking}>
+              {!checking && <RefreshCw className="h-4 w-4" />}
+              Check All
+            </Button>
+            {pool.count > 0 && (
+              <Button variant="outline" size="sm" onClick={handleClearAll}>
+                <Trash2 className="h-4 w-4" />
+                Clear All
+              </Button>
+            )}
+          </>
+        }
+      />
+
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        {loading && pool.proxies.length === 0 ? (
+          Array.from({ length: 4 }).map((_, i) => <SkeletonCard key={i} />)
+        ) : (
+          <>
+            <StatCard label="Proxies" value={pool.count} icon={Globe} tone="primary" />
+            <StatCard label="Active" value={pool.activeCount} icon={Activity} tone="success" />
+            <StatCard
+              label="Errored"
+              value={stats.errored}
+              icon={ShieldAlert}
+              tone={stats.errored > 0 ? "error" : "default"}
+            />
+            <StatCard
+              label="Avg latency"
+              value={stats.avgMs > 0 ? formatLatency(stats.avgMs) : "—"}
+              icon={Timer}
+              tone="info"
+            />
+          </>
+        )}
       </div>
 
-      {message && (
-        <div className="px-4 py-2 rounded-md bg-[var(--secondary)] text-sm text-[var(--foreground)]">
-          {message}
-        </div>
-      )}
-
-      {/* Add Proxies */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base flex items-center gap-2">
-            <Plus className="w-4 h-4" />
-            Add Proxies
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <textarea
-            className="w-full h-[120px] px-3 py-2 rounded-md border border-[var(--border)] bg-[var(--background)] text-sm font-mono resize-none focus:outline-none focus:ring-2 focus:ring-[var(--primary)]"
-            placeholder={"Paste proxy list (one per line):\n\nhttp://user:pass@host:port\nsocks5://host:port\nhttp://host:port"}
-            value={bulkText}
-            onChange={(e) => setBulkText(e.target.value)}
-          />
-          <Button onClick={handleBulkAdd} className="w-full">
-            <Upload className="w-4 h-4 mr-2" />
-            Add to Pool
-          </Button>
-        </CardContent>
-      </Card>
-
-      {/* Scrape Proxies */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base flex items-center gap-2">
-            <Download className="w-4 h-4" />
-            Scrape Proxies
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <p className="text-sm text-[var(--muted-foreground)]">
-            Pull fresh proxies from free public sources and add them straight to the pool.
-          </p>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <div className="space-y-1">
-              <label className="text-xs text-[var(--muted-foreground)]">Source</label>
-              <select
-                className="w-full px-3 py-2 rounded-md border border-[var(--border)] bg-[var(--background)] text-sm focus:outline-none focus:ring-2 focus:ring-[var(--primary)]"
-                value={scrapeSource}
-                onChange={(e) => setScrapeSource(e.target.value as typeof scrapeSource)}
-              >
-                <option value="all">All sources</option>
-                <option value="proxyscrape">ProxyScrape</option>
-                <option value="geonode">Geonode</option>
-                <option value="proxifly">Proxifly</option>
-              </select>
-            </div>
-            <div className="space-y-1">
-              <label className="text-xs text-[var(--muted-foreground)]">Region</label>
-              <select
-                className="w-full px-3 py-2 rounded-md border border-[var(--border)] bg-[var(--background)] text-sm focus:outline-none focus:ring-2 focus:ring-[var(--primary)]"
-                value={scrapeCountry}
-                onChange={(e) => setScrapeCountry(e.target.value)}
-              >
-                {countries.map((c) => (
-                  <option key={c.code} value={c.code}>
-                    {c.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="space-y-1">
-              <label className="text-xs text-[var(--muted-foreground)]">Protocol</label>
-              <select
-                className="w-full px-3 py-2 rounded-md border border-[var(--border)] bg-[var(--background)] text-sm focus:outline-none focus:ring-2 focus:ring-[var(--primary)]"
-                value={scrapeProtocol}
-                onChange={(e) => setScrapeProtocol(e.target.value as typeof scrapeProtocol)}
-              >
-                <option value="all">HTTP + SOCKS5</option>
-                <option value="http">HTTP</option>
-                <option value="socks5">SOCKS5</option>
-              </select>
-            </div>
-            <div className="space-y-1">
-              <label className="text-xs text-[var(--muted-foreground)]">Max count</label>
-              <input
-                type="number"
-                min={1}
-                max={500}
-                className="w-full px-3 py-2 rounded-md border border-[var(--border)] bg-[var(--background)] text-sm focus:outline-none focus:ring-2 focus:ring-[var(--primary)]"
-                value={scrapeLimit}
-                onChange={(e) => setScrapeLimit(Number(e.target.value))}
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <Plus className="h-4 w-4" />
+              Add Proxies
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <Field
+              label="Proxy list"
+              hint="One per line. Supports http://, https:// and socks5:// with optional credentials."
+              htmlFor="proxy-bulk"
+            >
+              <Textarea
+                id="proxy-bulk"
+                className="h-[120px] resize-none font-mono"
+                placeholder={"http://user:pass@host:port\nsocks5://host:port\nhttp://host:port"}
+                value={bulkText}
+                onChange={(e) => setBulkText(e.target.value)}
               />
+            </Field>
+            <Button onClick={handleBulkAdd} className="w-full">
+              <Upload className="h-4 w-4" />
+              Add to Pool
+            </Button>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <Download className="h-4 w-4" />
+              Scrape Proxies
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <p className="text-sm text-[var(--muted-foreground)]">
+              Pull fresh proxies from free public sources and add them straight to the pool.
+            </p>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Source" htmlFor="scrape-source">
+                <Select
+                  id="scrape-source"
+                  value={scrapeSource}
+                  onChange={(e) => setScrapeSource(e.target.value as typeof scrapeSource)}
+                >
+                  <option value="all">All sources</option>
+                  <option value="proxyscrape">ProxyScrape</option>
+                  <option value="geonode">Geonode</option>
+                  <option value="proxifly">Proxifly</option>
+                </Select>
+              </Field>
+              <Field label="Region" htmlFor="scrape-region">
+                <Select
+                  id="scrape-region"
+                  value={scrapeCountry}
+                  onChange={(e) => setScrapeCountry(e.target.value)}
+                >
+                  {countries.map((c) => (
+                    <option key={c.code} value={c.code}>
+                      {c.name}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+              <Field label="Protocol" htmlFor="scrape-protocol">
+                <Select
+                  id="scrape-protocol"
+                  value={scrapeProtocol}
+                  onChange={(e) => setScrapeProtocol(e.target.value as typeof scrapeProtocol)}
+                >
+                  <option value="all">HTTP + SOCKS5</option>
+                  <option value="http">HTTP</option>
+                  <option value="socks5">SOCKS5</option>
+                </Select>
+              </Field>
+              <Field label="Max count" htmlFor="scrape-limit">
+                <Input
+                  id="scrape-limit"
+                  type="number"
+                  min={1}
+                  max={500}
+                  className="tabular"
+                  value={scrapeLimit}
+                  onChange={(e) => setScrapeLimit(Number(e.target.value))}
+                />
+              </Field>
             </div>
-          </div>
-          <div className="flex items-center justify-between gap-3">
-            <label className="flex items-center gap-2 text-sm text-[var(--muted-foreground)] cursor-pointer">
+            <label className="flex cursor-pointer items-center gap-2 text-sm text-[var(--muted-foreground)]">
               <input
                 type="checkbox"
                 checked={scrapeVerify}
@@ -348,87 +509,29 @@ export default function ProxyPool() {
               />
               Health-check before adding (slower, but only keeps working proxies)
             </label>
-            <Button onClick={handleScrape} disabled={scraping}>
-              <Download className={`w-4 h-4 mr-2 ${scraping ? "animate-pulse" : ""}`} />
+            <Button onClick={handleScrape} loading={scraping} className="w-full">
+              {!scraping && <Download className="h-4 w-4" />}
               {scraping ? "Scraping..." : "Scrape & Add"}
             </Button>
-          </div>
-        </CardContent>
-      </Card>
+          </CardContent>
+        </Card>
+      </div>
 
-      {/* Proxy List */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base flex items-center gap-2">
-            <Globe className="w-4 h-4" />
-            Proxy List
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          {loading ? (
-            <p className="text-sm text-[var(--muted-foreground)]">Loading...</p>
-          ) : pool.proxies.length === 0 ? (
-            <p className="text-sm text-[var(--muted-foreground)]">
-              No proxies in pool. Add proxies above to enable IP rotation.
-            </p>
-          ) : (
-            <div className="space-y-2">
-              {pool.proxies.map((proxy) => (
-                <div
-                  key={proxy.id}
-                  className="flex items-center justify-between px-4 py-3 rounded-md bg-[var(--secondary)]"
-                >
-                  <div className="flex items-center gap-3 min-w-0 flex-1">
-                    <Globe className="w-4 h-4 text-[var(--muted-foreground)] shrink-0" />
-                    <span className="font-mono text-sm truncate">{maskUrl(proxy.url)}</span>
-                    <span className="text-xs text-[var(--muted-foreground)] shrink-0">{proxy.type}</span>
-                    {statusBadge(proxy.status)}
-                    {latencyBadge(proxy.latencyMs)}
-                    <span className="text-xs text-[var(--muted-foreground)] shrink-0">
-                      {proxy.successCount}ok / {proxy.failCount}fail
-                    </span>
-                    {proxy.lastUsedAt && (
-                      <span className="text-xs text-[var(--muted-foreground)] shrink-0">
-                        used {new Date(proxy.lastUsedAt).toLocaleString()}
-                      </span>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-1 shrink-0">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => handleCheckSingle(proxy.id)}
-                      title="Health check"
-                    >
-                      <RefreshCw className="w-3 h-3" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => handleToggle(proxy.id, proxy.status)}
-                      title={proxy.status === "active" ? "Disable" : "Enable"}
-                    >
-                      {proxy.status === "active" ? (
-                        <PowerOff className="w-3 h-3" />
-                      ) : (
-                        <Power className="w-3 h-3" />
-                      )}
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => handleDelete(proxy.id)}
-                      title="Delete"
-                    >
-                      <Trash2 className="w-3 h-3" />
-                    </Button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </CardContent>
-      </Card>
-    </div>
+      <DataTable
+        columns={columns}
+        rows={pool.proxies}
+        rowKey={(p) => p.id}
+        loading={loading && pool.proxies.length === 0}
+        pageSize={25}
+        empty={
+          <EmptyState
+            compact
+            icon={Globe}
+            title="No proxies in pool"
+            description="Add or scrape proxies above to enable IP rotation."
+          />
+        }
+      />
+    </PageShell>
   );
 }

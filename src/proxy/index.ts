@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { routeRequest, getAllModels, providers } from "./router";
+import { parseModelId, formatModelId, getByokProvider } from "./providers/registry";
 import { db } from "../db/index";
 import { requestLogs, usageSummary, accounts, type NewRequestLog } from "../db/schema";
 import { pool } from "./pool";
@@ -14,7 +15,7 @@ import {
 import { isBadUpstreamRequest, isInvalidModelError } from "./errors";
 import { prepareLogBody } from "./logging";
 import { resolveModelAlias } from "./model-mapping";
-import { eq, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { providerList, refreshByokModels } from "./providers/registry";
 
 export const proxyRouter = new Hono();
@@ -464,10 +465,23 @@ function wrapStreamWithUsageFinalizer(
 
 async function handleChatCompletion(body: ChatCompletionRequest) {
   // Rewrite the incoming model id to its mapped target (CLI integration, e.g.
-  // Claude Code's hardcoded haiku/sonnet/opus ids -> a model in the pool).
+  // the assistant's hardcoded haiku/sonnet/opus ids -> a model in the pool).
   body = { ...body, model: resolveModelAlias(normalizeModelId(body.model)) };
+
+  // Combo resolution: if model is "combo:<name>" (or a bare name matching a
+  // saved combo), resolve to the combo's first model. Bare names are checked
+  // AFTER alias/prefix resolution so provider-prefixed ids always win.
+  const comboMatch = /^combo:(.+)$/i.exec(body.model.trim());
+  const comboName = comboMatch?.[1] ?? body.model.trim();
+  const { getCombo } = await import("./combos");
+  const combo = await getCombo(comboName);
+  const comboModel = combo?.models[0];
+  if (comboModel) {
+    body = { ...body, model: comboModel };
+  }
+
   const isStream = body.stream === true;
-  const { result, account, provider, durationMs, compressionStats } = await routeRequest(body, isStream);
+  const { result, account, provider, durationMs, compressionStats, proxyUsed } = await routeRequest(body, isStream);
   let shouldReleaseTracking = true;
 
   try {
@@ -533,7 +547,7 @@ async function handleChatCompletion(body: ChatCompletionRequest) {
     responseBody: prepareLogBody(result.response),
     accountQuotaBefore: quotaBefore,
     accountQuotaAfter: quotaAfter,
-    compressionStats: compressionStats ?? null,
+    compressionStats: { ...compressionStats, proxyUsed: proxyUsed ? { id: proxyUsed.id, host: proxyUsed.url.match(/@([^:/]+)/)?.[1] || proxyUsed.url } : null },
   };
 
     if (isStream && result.stream) {
@@ -587,12 +601,36 @@ async function handleChatCompletion(body: ChatCompletionRequest) {
 
 /**
  * GET /v1/models - List available models
+ *
+ * Only providers with at least one usable account (status=active,
+ * enabled=true) are listed, so clients don't see models that would
+ * fail with "No active accounts available".
  */
 proxyRouter.get("/v1/models", async (c) => {
   // Ensure BYOK cache is fresh before listing models.
   // Without this, the sync getModels() returns stale/empty supportedModels.
   await refreshByokModels();
-  const models = getAllModels();
+
+  const usable = new Set(
+    (
+      await db
+        .selectDistinct({ provider: accounts.provider })
+        .from(accounts)
+        .where(and(eq(accounts.status, "active"), eq(accounts.enabled, true)))
+    ).map((row) => row.provider)
+  );
+
+  const models = getAllModels().filter((model) => {
+    // Exposed ids are "alias/model" — resolve back to the owning provider.
+    const { provider } = parseModelId(model.id);
+    if (!provider) return true; // unknown → keep (defensive)
+    // BYOK accounts hold the prefix in metadata; byok provider decides itself.
+    if (provider === "byok") {
+      return getByokProvider().getModels().some((m) => formatModelId("byok", m.id) === model.id);
+    }
+    return usable.has(provider);
+  });
+
   return c.json({
     object: "list",
     data: models,

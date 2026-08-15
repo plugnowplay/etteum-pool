@@ -11,6 +11,8 @@ import { warmupAccount } from "../auth/warmup-runner";
 import { pool, type ProviderName } from "../proxy/pool";
 import { activateQoderPat } from "../proxy/providers/qoder";
 import { activateYouMindKey } from "../proxy/providers/youmind";
+import { activateGrokKey } from "../proxy/providers/grok";
+import { activateGrokCliToken } from "../proxy/providers/grok-cli";
 
 export const accountsRouter = new Hono();
 
@@ -1185,11 +1187,11 @@ accountsRouter.get("/:id", async (c) => {
  */
 accountsRouter.post("/", async (c) => {
   const body = await c.req.json<{
-    provider: "kiro" | "kiro-pro" | "codebuddy" | "codebuddy-china" | "canva" | "codex" | "qoder" | "gitlab-duo" | "youmind";
+    provider: "kiro" | "kiro-pro" | "codebuddy" | "codebuddy-china" | "canva" | "codex" | "qoder" | "gitlab-duo" | "youmind" | "grok";
     email?: string;
     password?: string;
     personalToken?: string;
-    apiKey?: string; // YouMind sk-ym-... key
+    apiKey?: string; // YouMind sk-ym-... / Grok xai-... key
     apiKeys?: string; // CodeBuddy China bulk: newline-separated ck_... keys
     tokens?: Record<string, unknown>;
     status?: "active" | "pending";
@@ -1297,6 +1299,125 @@ accountsRouter.post("/", async (c) => {
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       return c.json({ error: `YouMind API key activation failed: ${msg}` }, 400);
+    }
+  }
+
+  // ── Grok (xAI): API key paste flow (xai-...) ───────────────────────
+  if (body.provider === "grok" && body.apiKey) {
+    const trimmed = body.apiKey.trim();
+    if (!trimmed) return c.json({ error: "apiKey is empty" }, 400);
+
+    try {
+      const { email, metadata } = await activateGrokKey(trimmed);
+      const encryptedKey = encrypt(trimmed);
+
+      const existing = await db.select().from(accounts)
+        .where(eq(accounts.email, email))
+        .then((rows) => rows.find((r) => r.provider === "grok"));
+
+      if (existing) {
+        await db.update(accounts).set({
+          password: encryptedKey,
+          status: "active",
+          tokens: null,
+          metadata: metadata as unknown,
+          errorMessage: null,
+          lastLoginAt: new Date(),
+          updatedAt: new Date(),
+        }).where(eq(accounts.id, existing.id));
+        pool.invalidate("grok");
+        broadcast({ type: "account_updated", data: { id: existing.id, provider: "grok", status: "active" } });
+        return c.json({ id: existing.id, provider: "grok", email, status: "active", updated: true }, 200);
+      }
+
+      const inserted = await db.insert(accounts).values({
+        provider: "grok",
+        email,
+        password: encryptedKey,
+        status: "active",
+        tokens: null,
+        metadata: metadata as unknown,
+        quotaLimit: -1,
+        quotaRemaining: -1,
+        lastLoginAt: new Date(),
+      }).returning();
+      const created = inserted[0]!;
+      pool.invalidate("grok");
+      broadcast({ type: "account_created", data: { id: created.id, provider: "grok", email } });
+      return c.json({ ...created, password: "***", tokens: null }, 201);
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      return c.json({ error: `Grok API key activation failed: ${msg}` }, 400);
+    }
+  }
+
+  // ── Grok CLI (Grok Build): OAuth device code token import ──────────
+  if (body.provider === "grok-cli" && body.accessToken) {
+    const accessToken = String(body.accessToken).trim();
+    const refreshToken = String(body.refreshToken || "").trim();
+    const idToken = String(body.idToken || "").trim();
+    const email = String(body.email || "").trim();
+
+    try {
+      const profile = await fetchGrokCliUserProfile(accessToken);
+      const finalEmail = profile.email || email || `grok-cli-${accessToken.slice(-8)}@device`;
+      const expiresAt = body.expiresIn
+        ? new Date(Date.now() + Number(body.expiresIn) * 1000).toISOString()
+        : null;
+
+      const tokens = {
+        access_token: accessToken,
+        refresh_token: refreshToken,
+        id_token: idToken,
+        expires_at: expiresAt,
+        email: finalEmail,
+        method: "device_code",
+        providerSpecificData: {
+          authMethod: "device_code",
+          email: profile.email || null,
+          userId: profile.userId || null,
+          hasGrokCodeAccess: profile.hasGrokCodeAccess ?? null,
+          subscriptionTier: profile.subscriptionTier ?? null,
+        },
+      };
+
+      const existing = await db.select().from(accounts)
+        .where(eq(accounts.email, finalEmail))
+        .then((rows) => rows.find((r) => r.provider === "grok-cli"));
+
+      if (existing) {
+        await db.update(accounts).set({
+          password: encrypt(accessToken),
+          status: "active",
+          tokens: JSON.stringify(tokens),
+          metadata: { ...profile, validated_at: new Date().toISOString() } as unknown,
+          errorMessage: null,
+          lastLoginAt: new Date(),
+          updatedAt: new Date(),
+        }).where(eq(accounts.id, existing.id));
+        pool.invalidate("grok-cli" as ProviderName);
+        broadcast({ type: "account_updated", data: { id: existing.id, provider: "grok-cli", status: "active" } });
+        return c.json({ id: existing.id, provider: "grok-cli", email: finalEmail, status: "active", updated: true }, 200);
+      }
+
+      const inserted = await db.insert(accounts).values({
+        provider: "grok-cli",
+        email: finalEmail,
+        password: encrypt(accessToken),
+        status: "active",
+        tokens: JSON.stringify(tokens),
+        metadata: { ...profile, validated_at: new Date().toISOString() } as unknown,
+        quotaLimit: -1,
+        quotaRemaining: -1,
+        lastLoginAt: new Date(),
+      }).returning();
+      const created = inserted[0]!;
+      pool.invalidate("grok-cli" as ProviderName);
+      broadcast({ type: "account_created", data: { id: created.id, provider: "grok-cli", email: finalEmail } });
+      return c.json({ id: created.id, provider: "grok-cli", email: finalEmail, status: "active" }, 201);
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      return c.json({ error: `Grok CLI activation failed: ${msg}` }, 400);
     }
   }
 
@@ -1570,7 +1691,7 @@ accountsRouter.post("/instant-login", async (c) => {
 accountsRouter.post("/bulk", async (c) => {
   const body = await c.req.json<{
     accounts: Array<{
-      provider: "kiro" | "codebuddy" | "canva" | "codex";
+      provider: "kiro" | "codebuddy" | "canva" | "codex" | "grok-cli";
       email: string;
       password: string;
     }>;

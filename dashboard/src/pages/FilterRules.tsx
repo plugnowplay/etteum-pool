@@ -1,9 +1,16 @@
 import { useState, useEffect, useCallback } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Filter, Plus, Trash2, Power, PowerOff, Pencil, X } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { Field } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { PageHeader, PageShell } from "@/components/ui/page-header";
+import { DataTable, type Column } from "@/components/ui/data-table";
+import { EmptyState } from "@/components/ui/empty-state";
+import { StatCard } from "@/components/ui/stat-card";
+import { useToast } from "@/components/ui/toast";
+import { Filter, Plus, Trash2, Power, PowerOff, Pencil, X, CheckCircle2 } from "lucide-react";
 import { fetchApi } from "@/lib/api";
-import { useTimedMessage } from "@/hooks/useTimedMessage";
 import { useWsEvent } from "@/hooks/useWebSocket";
 
 interface FilterRule {
@@ -38,7 +45,7 @@ export default function FilterRules() {
   const [data, setData] = useState<FilterListResponse>({ count: 0, activeCount: 0, rules: [] });
   const [loading, setLoading] = useState(true);
   const [form, setForm] = useState<RuleFormState | null>(null);
-  const { message, setMessage } = useTimedMessage<string>(null, 3000);
+  const toast = useToast();
 
   const load = useCallback(async () => {
     try {
@@ -63,7 +70,7 @@ export default function FilterRules() {
       });
       load();
     } catch (e: any) {
-      setMessage(e.message || "Failed to toggle rule");
+      toast.error(e.message || "Failed to toggle rule");
     }
   };
 
@@ -71,17 +78,17 @@ export default function FilterRules() {
     if (!confirm(`Delete rule "${rule.ruleId}"?`)) return;
     try {
       await fetchApi(`/api/filters/${rule.id}`, { method: "DELETE" });
-      setMessage("Rule deleted");
+      toast.success("Rule deleted");
       load();
     } catch (e: any) {
-      setMessage(e.message || "Failed to delete rule");
+      toast.error(e.message || "Failed to delete rule");
     }
   };
 
   const handleSave = async () => {
     if (!form) return;
     if (!form.pattern.trim()) {
-      setMessage("Pattern is required");
+      toast.warning("Pattern is required");
       return;
     }
     try {
@@ -95,7 +102,7 @@ export default function FilterRules() {
             isActive: form.isActive,
           }),
         });
-        setMessage("Rule created");
+        toast.success("Rule created");
       } else {
         await fetchApi(`/api/filters/${form.id}`, {
           method: "PATCH",
@@ -106,75 +113,208 @@ export default function FilterRules() {
             isActive: form.isActive,
           }),
         });
-        setMessage("Rule updated");
+        toast.success("Rule updated");
       }
       setForm(null);
       load();
     } catch (e: any) {
-      setMessage(e.message || "Save failed");
+      toast.error(e.message || "Save failed");
     }
   };
 
   const truncate = (s: string, n = 60) => (s.length > n ? `${s.slice(0, n)}…` : s);
 
-  return (
-    <div className="space-y-6">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-[var(--foreground)]">Filter Rules</h1>
-          <p className="text-sm text-[var(--muted-foreground)]">
-            Pre-request sanitizer rules to strip patterns that trigger upstream content moderation
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-sm text-[var(--muted-foreground)]">
-            {data.activeCount}/{data.count} active
+  const columns: Column<FilterRule>[] = [
+    {
+      key: "sortOrder",
+      header: "#",
+      width: "w-[56px]",
+      sortValue: (r) => r.sortOrder,
+      cell: (r) => (
+        <span className="tabular text-xs text-[var(--muted-foreground)]">{r.sortOrder}</span>
+      ),
+    },
+    {
+      key: "ruleId",
+      header: "Rule ID",
+      hideBelow: "lg",
+      width: "w-[160px]",
+      sortValue: (r) => r.ruleId,
+      cell: (r) => (
+        <span className="tabular block truncate font-mono text-xs text-[var(--muted-foreground)]">
+          {r.ruleId}
+        </span>
+      ),
+    },
+    {
+      key: "pattern",
+      header: "Pattern",
+      primary: true,
+      sortValue: (r) => r.pattern,
+      cell: (r) => (
+        <div className="min-w-0">
+          <span
+            className="block truncate font-mono text-sm text-[var(--foreground)]"
+            title={r.pattern}
+          >
+            {truncate(r.pattern)}
           </span>
-          <Button size="sm" onClick={() => setForm({ ...emptyForm })}>
-            <Plus className="w-3 h-3 mr-1" />
-            Add Rule
+          {r.replacement && (
+            <span
+              className="mt-0.5 block truncate font-mono text-xs text-[var(--muted-foreground)]"
+              title={r.replacement}
+            >
+              → {truncate(r.replacement, 30)}
+            </span>
+          )}
+        </div>
+      ),
+    },
+    {
+      key: "kind",
+      header: "Kind",
+      width: "w-[100px]",
+      hideBelow: "md",
+      sortValue: (r) => (r.isRegex ? "regex" : "string"),
+      cell: (r) => (
+        <Badge variant={r.isRegex ? "info" : "default"}>{r.isRegex ? "regex" : "string"}</Badge>
+      ),
+    },
+    {
+      key: "status",
+      header: "Status",
+      width: "w-[100px]",
+      sortValue: (r) => (r.isActive ? 1 : 0),
+      cell: (r) => (
+        <Badge variant={r.isActive ? "success" : "muted"} dot>
+          {r.isActive ? "active" : "off"}
+        </Badge>
+      ),
+    },
+    {
+      key: "actions",
+      header: "",
+      align: "right",
+      width: "w-[140px]",
+      cell: (r) => (
+        <div className="flex items-center justify-end gap-1">
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label={r.isActive ? "Disable rule" : "Enable rule"}
+            title={r.isActive ? "Disable" : "Enable"}
+            onClick={() => handleToggle(r)}
+          >
+            {r.isActive ? <PowerOff className="h-4 w-4" /> : <Power className="h-4 w-4" />}
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label="Edit rule"
+            title="Edit"
+            onClick={() =>
+              setForm({
+                id: r.id,
+                pattern: r.pattern,
+                replacement: r.replacement,
+                isRegex: r.isRegex,
+                isActive: r.isActive,
+              })
+            }
+          >
+            <Pencil className="h-4 w-4" />
+          </Button>
+          <Button
+            variant="danger"
+            size="icon"
+            aria-label="Delete rule"
+            title="Delete"
+            onClick={() => handleDelete(r)}
+          >
+            <Trash2 className="h-4 w-4" />
           </Button>
         </div>
+      ),
+    },
+  ];
+
+  return (
+    <PageShell>
+      <PageHeader
+        title="Filter Rules"
+        description="Pre-request sanitizer rules to strip patterns that trigger upstream content moderation"
+        badge={
+          <Badge variant="muted" className="tabular">
+            {data.activeCount}/{data.count} active
+          </Badge>
+        }
+        actions={
+          <Button size="sm" onClick={() => setForm({ ...emptyForm })}>
+            <Plus className="h-4 w-4" />
+            Add Rule
+          </Button>
+        }
+      />
+
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <StatCard label="Rules" value={data.count} icon={Filter} tone="primary" />
+        <StatCard label="Active" value={data.activeCount} icon={CheckCircle2} tone="success" />
+        <StatCard
+          label="Regex"
+          value={data.rules.filter((r) => r.isRegex).length}
+          icon={Filter}
+          tone="info"
+        />
+        <StatCard
+          label="Disabled"
+          value={data.rules.filter((r) => !r.isActive).length}
+          icon={PowerOff}
+          tone="warning"
+        />
       </div>
 
-      {message && (
-        <div className="px-4 py-2 rounded-md bg-[var(--secondary)] text-sm text-[var(--foreground)]">
-          {message}
-        </div>
-      )}
-
       {form && (
-        <Card>
+        <Card className="animate-slide-up">
           <CardHeader className="flex flex-row items-center justify-between">
-            <CardTitle className="text-base flex items-center gap-2">
-              <Filter className="w-4 h-4" />
+            <CardTitle className="flex items-center gap-2 text-base">
+              <Filter className="h-4 w-4" />
               {form.id == null ? "New Rule" : "Edit Rule"}
             </CardTitle>
-            <Button variant="ghost" size="sm" onClick={() => setForm(null)}>
-              <X className="w-4 h-4" />
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label="Close rule form"
+              onClick={() => setForm(null)}
+            >
+              <X className="h-4 w-4" />
             </Button>
           </CardHeader>
           <CardContent className="space-y-3">
-            <div>
-              <label className="text-xs font-medium text-[var(--muted-foreground)] mb-1 block">Pattern</label>
-              <textarea
-                className="w-full h-[80px] px-3 py-2 rounded-md border border-[var(--border)] bg-[var(--background)] text-sm font-mono resize-none focus:outline-none focus:ring-2 focus:ring-[var(--primary)]"
+            <Field
+              label="Pattern"
+              required
+              htmlFor="rule-pattern"
+              hint={form.isRegex ? "JavaScript regex, case-insensitive." : "Matched as an exact string."}
+            >
+              <Textarea
+                id="rule-pattern"
+                className="h-[80px] resize-none font-mono"
                 placeholder={form.isRegex ? "regex pattern (case-insensitive)" : "exact string to match"}
                 value={form.pattern}
                 onChange={(e) => setForm({ ...form, pattern: e.target.value })}
               />
-            </div>
-            <div>
-              <label className="text-xs font-medium text-[var(--muted-foreground)] mb-1 block">Replacement</label>
-              <textarea
-                className="w-full h-[60px] px-3 py-2 rounded-md border border-[var(--border)] bg-[var(--background)] text-sm font-mono resize-none focus:outline-none focus:ring-2 focus:ring-[var(--primary)]"
+            </Field>
+            <Field label="Replacement" htmlFor="rule-replacement">
+              <Textarea
+                id="rule-replacement"
+                className="h-[60px] resize-none font-mono"
                 placeholder="(empty to remove the matched text)"
                 value={form.replacement}
                 onChange={(e) => setForm({ ...form, replacement: e.target.value })}
               />
-            </div>
+            </Field>
             <div className="flex items-center gap-4">
-              <label className="flex items-center gap-2 text-sm cursor-pointer">
+              <label className="flex cursor-pointer items-center gap-2 text-sm">
                 <input
                   type="checkbox"
                   checked={form.isRegex}
@@ -182,7 +322,7 @@ export default function FilterRules() {
                 />
                 Regex
               </label>
-              <label className="flex items-center gap-2 text-sm cursor-pointer">
+              <label className="flex cursor-pointer items-center gap-2 text-sm">
                 <input
                   type="checkbox"
                   checked={form.isActive}
@@ -199,95 +339,27 @@ export default function FilterRules() {
         </Card>
       )}
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base flex items-center gap-2">
-            <Filter className="w-4 h-4" />
-            Rules ({data.count})
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          {loading ? (
-            <p className="text-sm text-[var(--muted-foreground)]">Loading...</p>
-          ) : data.rules.length === 0 ? (
-            <p className="text-sm text-[var(--muted-foreground)]">No rules. Click Add Rule to create one.</p>
-          ) : (
-            <div className="space-y-2">
-              {data.rules.map((rule) => (
-                <div
-                  key={rule.id}
-                  className="flex items-center justify-between px-4 py-3 rounded-md bg-[var(--secondary)]"
-                >
-                  <div className="flex items-center gap-3 min-w-0 flex-1">
-                    <span className="text-xs text-[var(--muted-foreground)] shrink-0 w-8">
-                      #{rule.sortOrder}
-                    </span>
-                    <span className="font-mono text-xs text-[var(--muted-foreground)] shrink-0 w-32 truncate">
-                      {rule.ruleId}
-                    </span>
-                    <span
-                      className={`text-xs px-2 py-0.5 rounded shrink-0 ${
-                        rule.isRegex ? "bg-[var(--info)]/10 text-[var(--info)]" : "bg-[var(--primary)]/10 text-[var(--primary)]"
-                      }`}
-                    >
-                      {rule.isRegex ? "regex" : "string"}
-                    </span>
-                    <span
-                      className={`text-xs px-2 py-0.5 rounded shrink-0 ${
-                        rule.isActive ? "bg-[var(--success)]/10 text-[var(--success)]" : "bg-[var(--muted)]/10 text-[var(--muted-foreground)]"
-                      }`}
-                    >
-                      {rule.isActive ? "active" : "off"}
-                    </span>
-                    <span className="font-mono text-sm truncate text-[var(--foreground)]" title={rule.pattern}>
-                      {truncate(rule.pattern)}
-                    </span>
-                    {rule.replacement && (
-                      <span className="font-mono text-xs text-[var(--muted-foreground)] truncate shrink-0" title={rule.replacement}>
-                        → {truncate(rule.replacement, 30)}
-                      </span>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-1 shrink-0">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => handleToggle(rule)}
-                      title={rule.isActive ? "Disable" : "Enable"}
-                    >
-                      {rule.isActive ? <PowerOff className="w-3 h-3" /> : <Power className="w-3 h-3" />}
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() =>
-                        setForm({
-                          id: rule.id,
-                          pattern: rule.pattern,
-                          replacement: rule.replacement,
-                          isRegex: rule.isRegex,
-                          isActive: rule.isActive,
-                        })
-                      }
-                      title="Edit"
-                    >
-                      <Pencil className="w-3 h-3" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => handleDelete(rule)}
-                      title="Delete"
-                    >
-                      <Trash2 className="w-3 h-3" />
-                    </Button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </CardContent>
-      </Card>
-    </div>
+      <DataTable
+        columns={columns}
+        rows={data.rules}
+        rowKey={(r) => r.id}
+        loading={loading && data.rules.length === 0}
+        pageSize={25}
+        empty={
+          <EmptyState
+            compact
+            icon={Filter}
+            title="No filter rules"
+            description="Click Add Rule to create your first sanitizer pattern."
+            action={
+              <Button size="sm" onClick={() => setForm({ ...emptyForm })}>
+                <Plus className="h-4 w-4" />
+                Add Rule
+              </Button>
+            }
+          />
+        }
+      />
+    </PageShell>
   );
 }

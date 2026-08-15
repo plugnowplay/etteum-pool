@@ -8,6 +8,8 @@ import { QoderProvider } from "./qoder";
 import { ByokProvider } from "./byok";
 import { GitlabDuoProvider } from "./gitlab-duo";
 import { YouMindProvider } from "./youmind";
+import { GrokProvider } from "./grok";
+import { GrokCliProvider, MODEL_BY_ID as GROK_CLI_MODEL_BY_ID } from "./grok-cli";
 
 /**
  * Single source of truth for the provider set.
@@ -34,16 +36,12 @@ const qoder = new QoderProvider();
 const byok = new ByokProvider();
 const gitlabDuo = new GitlabDuoProvider();
 const youmind = new YouMindProvider();
+const grok = new GrokProvider();
+const grokCli = new GrokCliProvider();
 
-// Priority order. canva/qoder/codex/kiro-pro/youmind have unique prefixes; codex
-// is listed before codebuddy so the literal "gpt-5-codex" resolves to codex
-// while codebuddy keeps its own "gpt-5*"/"gpt-5.x-codex" models. byok checks
-// dynamic prefixes from DB accounts. kiro is the fallback. gitlab-duo owns
-// `claude_(haiku|sonnet|opus)_<digit>...` underscore-style identifiers — no
-// overlap with any other provider, so position is not load-bearing. youmind
-// owns the `ym-*` prefix exclusively — also position-independent, but slotted
-// alongside the other prefix-based providers for readability.
-const PROVIDER_ORDER = [gitlabDuo, canva, qoder, codex, kiroPro, youmind, byok, codebuddyChina, codebuddy, kiro] as const;
+const PROVIDER_ORDER = [
+  gitlabDuo, canva, qoder, codex, kiroPro, youmind, grok, grokCli, byok, codebuddyChina, codebuddy, kiro,
+] as const;
 
 export const providers = {
   kiro,
@@ -56,22 +54,132 @@ export const providers = {
   byok,
   "gitlab-duo": gitlabDuo,
   youmind,
+  grok,
+  "grok-cli": grokCli,
 } as const;
 
 export type ProviderName = keyof typeof providers;
 
+const PROVIDER_ALIAS_MAP: Record<string, ProviderName> = {};
+const PROVIDER_SHORT_ALIAS: Partial<Record<ProviderName, string>> = {};
+for (const [key, val] of Object.entries(providers)) {
+  PROVIDER_ALIAS_MAP[key] = key as ProviderName;
+  const alias = (val as any).alias as string | undefined;
+  if (alias) {
+    PROVIDER_ALIAS_MAP[alias] = key as ProviderName;
+    PROVIDER_SHORT_ALIAS[key as ProviderName] = alias;
+  }
+  for (const a of ((val as any).aliases || []) as string[]) PROVIDER_ALIAS_MAP[a] = key as ProviderName;
+}
+
+// "grok/" prefix → grok-cli (override provider "grok" which uses "xai/" prefix)
+// Reverted: keep gcli/ prefix as default for grok-cli
+
+const BUILTIN_MODEL_ALIASES: Record<string, string> = {
+  "grok-build": "gcli-build",
+  "grok-4.6": "gcli-4.6",
+  "grok-4.6-high": "gcli-4.6-high",
+  "grok-4.6-medium": "gcli-4.6-medium",
+  "grok-4.6-low": "gcli-4.6-low",
+  "grok-4.5": "gcli-4.5",
+  "grok-4.5-high": "gcli-4.5-high",
+  "grok-4.5-medium": "gcli-4.5-medium",
+  "grok-4.5-low": "gcli-4.5-low",
+};
+
+interface ParsedModelId {
+  provider: ProviderName | null;
+  model: string;
+}
+
+// Internal model-id prefixes that are redundant once the alias/ prefix is
+// present (e.g. internal "qd-Auto" ↔ exposed "qd/Auto"). formatModelId()
+// strips them on the way out; parseModelId() restores them on the way in.
+const PROVIDER_MODEL_PREFIX: Partial<Record<ProviderName, string>> = {
+  qoder: "qd-",
+  "kiro-pro": "kp-",
+  youmind: "ym-",
+  "grok-cli": "gcli-",
+  codebuddy: "cb-",
+  codex: "codex-",
+};
+
+export function parseModelId(modelStr: string): ParsedModelId {
+  if (!modelStr) return { provider: null, model: modelStr };
+
+  if (modelStr.includes("/")) {
+    const idx = modelStr.indexOf("/");
+    const prefix = modelStr.slice(0, idx);
+    const model = modelStr.slice(idx + 1);
+    const resolved = PROVIDER_ALIAS_MAP[prefix];
+    if (resolved) {
+      // Grok CLI: reverse-map upstream name to internal model ID
+      if (resolved === "grok-cli") {
+        for (const [id, def] of Object.entries(GROK_CLI_MODEL_BY_ID)) {
+          if (def.upstream.toLowerCase() === model.toLowerCase()) {
+            return { provider: resolved, model: id };
+          }
+        }
+      }
+      const internalPrefix = PROVIDER_MODEL_PREFIX[resolved];
+      const bare = internalPrefix && !model.toLowerCase().startsWith(internalPrefix)
+        ? internalPrefix + model
+        : model;
+      return { provider: resolved, model: bare };
+    }
+    return { provider: null, model: modelStr };
+  }
+
+  const aliased = BUILTIN_MODEL_ALIASES[modelStr];
+  if (aliased) return parseModelId(aliased);
+
+  return { provider: null, model: modelStr };
+}
+
+export function formatModelId(provider: ProviderName, model: string): string {
+  // Grok CLI: expose as gcli/<upstream> (e.g. gcli/grok-4.6, gcli/grok-build)
+  if (provider === "grok-cli") {
+    const def = GROK_CLI_MODEL_BY_ID[model.toLowerCase()];
+    if (def) {
+      const effort = model.includes("-high") ? "-high"
+        : model.includes("-medium") ? "-medium"
+        : model.includes("-low") ? "-low"
+        : "";
+      return `gcli/${def.upstream}${effort}`;
+    }
+  }
+  const prefix = PROVIDER_SHORT_ALIAS[provider] || provider;
+  const internalPrefix = PROVIDER_MODEL_PREFIX[provider];
+  const stripped = internalPrefix && model.toLowerCase().startsWith(internalPrefix)
+    ? model.slice(internalPrefix.length)
+    : model;
+  return `${prefix}/${stripped}`;
+}
+
+export function stripProviderPrefix(modelStr: string): string {
+  return parseModelId(modelStr).model;
+}
+
 /** Map a model id to the provider that handles it. */
 export function getProviderForModel(model: string): ProviderName | null {
-  for (const provider of PROVIDER_ORDER) {
-    if (provider.ownsModel(model)) return provider.name as ProviderName;
+  const { provider: explicit, model: bare } = parseModelId(model);
+  if (explicit) return explicit;
+
+  for (const p of PROVIDER_ORDER) {
+    if (p.ownsModel(bare)) return p.name as ProviderName;
   }
   const fallback = PROVIDER_ORDER.find((p) => p.isFallback);
   return (fallback?.name as ProviderName) ?? null;
 }
 
-/** All models across every registered provider. */
+/** All models across every registered provider, exposed as `provider/model`. */
 export function getAllModels(): ModelInfo[] {
-  return PROVIDER_ORDER.flatMap((provider) => provider.getModels());
+  return PROVIDER_ORDER.flatMap((provider) =>
+    provider.getModels().map((m) => ({
+      ...m,
+      id: formatModelId(provider.name, m.id),
+    })),
+  );
 }
 
 /** Iterable list of provider instances (priority order). */

@@ -88,7 +88,9 @@ export function VisualCard({
   return (
     <div
       className={cn(
-        'relative w-full aspect-[1.586/1] rounded-xl overflow-hidden shadow-lg group',
+        'group relative aspect-[1.586/1] w-full overflow-hidden rounded-xl',
+        'shadow-[var(--es-3)] transition-all duration-[var(--dur-base)] ease-[var(--ease-out)]',
+        'hover:-translate-y-0.5 hover:shadow-[var(--es-4)]',
         className
       )}
     >
@@ -96,47 +98,57 @@ export function VisualCard({
       <div className={cn('absolute inset-0 bg-gradient-to-br', gradient)} />
 
       {/* Decorative circles */}
-      <div className="absolute -top-20 -right-20 w-60 h-60 rounded-full bg-white/5" />
-      <div className="absolute -bottom-32 -left-32 w-80 h-80 rounded-full bg-white/5" />
+      <div className="absolute -right-20 -top-20 h-60 w-60 rounded-full bg-white/5" />
+      <div className="absolute -bottom-32 -left-32 h-80 w-80 rounded-full bg-white/5" />
+      {/* Sheen sweep on hover */}
+      <div className="absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-white/10 to-transparent transition-transform duration-[600ms] ease-[var(--ease-out)] group-hover:translate-x-full" />
 
       {/* Content */}
-      <div className="relative h-full flex flex-col justify-between p-6 text-white">
-        {/* Top: Brand logo */}
-        <div className="flex justify-end">
+      <div className="relative flex h-full flex-col justify-between p-5 text-white md:p-6">
+        {/* Top: EMV chip + brand logo */}
+        <div className="flex items-start justify-between">
+          <div className="h-7 w-9 rounded-[4px] bg-gradient-to-br from-[#e8d48b] to-[#b8912f] shadow-inner">
+            <div className="mx-auto mt-1 h-5 w-6 rounded-[2px] border border-black/15" />
+          </div>
           <BrandLogo brand={brand} />
         </div>
 
         {/* Middle: Card number */}
-        <div className="text-xl md:text-2xl font-mono tracking-wider select-all">
+        <div className="tabular select-all font-mono text-xl tracking-[0.12em] drop-shadow-sm md:text-2xl">
           {displayNumber}
         </div>
 
         {/* Bottom: Name and expiry */}
-        <div className="flex justify-between items-end">
-          <div>
-            <div className="text-xs uppercase text-white/70 mb-1">Card Holder</div>
-            <div className="text-sm md:text-base uppercase tracking-wider font-medium">
+        <div className="flex items-end justify-between gap-3">
+          <div className="min-w-0">
+            <div className="mb-0.5 text-[10px] uppercase tracking-wider text-white/60">
+              Card Holder
+            </div>
+            <div className="truncate text-sm font-medium uppercase tracking-wider md:text-base">
               {name}
             </div>
           </div>
-          <div className="text-right">
-            <div className="text-xs uppercase text-white/70 mb-1">Expires</div>
-            <div className="text-sm md:text-base font-mono">{displayExp}</div>
+          <div className="shrink-0 text-right">
+            <div className="mb-0.5 text-[10px] uppercase tracking-wider text-white/60">
+              Expires
+            </div>
+            <div className="tabular font-mono text-sm md:text-base">{displayExp}</div>
           </div>
         </div>
       </div>
 
       {/* Action buttons overlay */}
       {showActions && (onCopy || onDelete) && (
-        <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+        <div className="absolute right-2 top-2 flex gap-1 opacity-0 transition-opacity duration-[var(--dur-fast)] focus-within:opacity-100 group-hover:opacity-100">
           {onCopy && (
             <Button
               size="icon"
               variant="ghost"
               onClick={onCopy}
-              className="h-8 w-8 bg-black/30 hover:bg-black/50 text-white"
+              aria-label="Copy card number"
+              className="h-8 w-8 min-h-0 min-w-0 bg-black/35 text-white backdrop-blur-sm hover:bg-black/55 hover:text-white"
             >
-              <Copy className="w-4 h-4" />
+              <Copy className="h-4 w-4" />
             </Button>
           )}
           {onDelete && (
@@ -144,9 +156,10 @@ export function VisualCard({
               size="icon"
               variant="ghost"
               onClick={onDelete}
-              className="h-8 w-8 bg-black/30 hover:bg-black/50 text-white"
+              aria-label="Delete card"
+              className="h-8 w-8 min-h-0 min-w-0 bg-black/35 text-white backdrop-blur-sm hover:bg-[var(--destructive)]/80 hover:text-white"
             >
-              <Trash2 className="w-4 h-4" />
+              <Trash2 className="h-4 w-4" />
             </Button>
           )}
         </div>

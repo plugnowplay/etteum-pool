@@ -15,6 +15,7 @@
     "preflight": "bun scripts/preflight.ts"
   },
   "dependencies": {
+    "better-sqlite3": "^13.0.3",
     "cbor-x": "^1.6.4",
     "drizzle-orm": "^0.45.2",
     "hono": "^4.12.17",

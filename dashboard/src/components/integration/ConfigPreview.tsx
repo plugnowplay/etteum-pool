@@ -1,5 +1,6 @@
 import { Copy, Check } from "lucide-react";
 import { useState } from "react";
+import { cn } from "@/lib/utils";
 
 interface ConfigPreviewProps {
   config: Record<string, unknown> | string;
@@ -23,7 +24,7 @@ export function ConfigPreview({ config, label }: ConfigPreviewProps) {
   };
 
   return (
-    <div className="space-y-1">
+    <div className="group/config space-y-1.5">
       {label && (
         <div className="flex items-center justify-between">
           <span className="text-xs font-medium text-[var(--muted-foreground)]">
@@ -31,18 +32,21 @@ export function ConfigPreview({ config, label }: ConfigPreviewProps) {
           </span>
           <button
             onClick={handleCopy}
-            className="p-1 rounded hover:bg-[var(--secondary)] text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors"
-            title="Copy config"
-          >
-            {copied ? (
-              <Check className="w-3 h-3 text-[var(--success)]" />
-            ) : (
-              <Copy className="w-3 h-3" />
+            aria-label={copied ? "Copied to clipboard" : "Copy config"}
+            className={cn(
+              "focus-ring flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] uppercase tracking-wider",
+              "transition-colors duration-[var(--dur-fast)]",
+              copied
+                ? "text-[var(--success)]"
+                : "text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
             )}
+          >
+            {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
+            {copied ? "Copied" : "Copy"}
           </button>
         </div>
       )}
-      <pre className="px-3 py-2 rounded-md border border-[var(--border)] bg-[var(--background)] text-[11px] font-mono text-[var(--foreground)] overflow-x-auto whitespace-pre max-h-64 overflow-y-auto">
+      <pre className="max-h-64 overflow-auto whitespace-pre rounded-md border border-[var(--border)] bg-[var(--surface-inset)] px-3 py-2.5 font-mono text-[11px] leading-relaxed text-[var(--foreground)]">
         {content}
       </pre>
     </div>

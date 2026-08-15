@@ -1,6 +1,8 @@
+import { Inbox } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
+import { EmptyState } from "@/components/ui/empty-state";
 
 interface ProviderData {
   name: string;
@@ -17,74 +19,110 @@ interface ProviderCardsProps {
 const defaultProviders: ProviderData[] = [];
 
 export default function ProviderCards({ providers = defaultProviders }: ProviderCardsProps) {
+  if (providers.length === 0) {
+    return (
+      <Card>
+        <EmptyState
+          compact
+          icon={Inbox}
+          title="No provider data yet"
+          description="Add or log in accounts to populate this section."
+        />
+      </Card>
+    );
+  }
+
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+    <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
       {providers.map((provider) => {
-        const usedPercentage = provider.credits.total > 0
-          ? Math.round((provider.credits.used / provider.credits.total) * 100)
-          : 0;
-        const remaining = provider.credits.remaining ?? (provider.credits.total - provider.credits.used);
+        const usedPercentage =
+          provider.credits.total > 0
+            ? Math.round((provider.credits.used / provider.credits.total) * 100)
+            : 0;
+        const remaining =
+          provider.credits.remaining ?? provider.credits.total - provider.credits.used;
+
+        // Near-exhaustion should read as a warning even before it hits zero.
+        const barTone =
+          usedPercentage >= 90
+            ? "var(--error)"
+            : usedPercentage >= 70
+              ? "var(--warning)"
+              : provider.color;
 
         return (
-          <Card key={provider.name} className="border-[var(--border)]">
+          <Card
+            key={provider.name}
+            className="transition-all duration-[var(--dur-base)] ease-[var(--ease-out)] hover:-translate-y-0.5 hover:shadow-[var(--es-3)]"
+          >
             <CardHeader className="pb-3">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <div
-                    className="w-3 h-3 rounded-full"
-                    style={{ backgroundColor: provider.color }}
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex min-w-0 items-center gap-2">
+                  <span
+                    className="h-2.5 w-2.5 shrink-0 rounded-full"
+                    style={{
+                      backgroundColor: provider.color,
+                      boxShadow: `0 0 8px ${provider.color}`,
+                    }}
                   />
-                  <CardTitle className="text-base">{provider.name}</CardTitle>
+                  <CardTitle className="truncate">{provider.name}</CardTitle>
                 </div>
-                <span className="text-xs text-[var(--muted-foreground)]">
-                  {provider.accounts.active}/{provider.accounts.total} accounts
+                <span className="tabular shrink-0 text-xs text-[var(--muted-foreground)]">
+                  {provider.accounts.active}/{provider.accounts.total}
                 </span>
               </div>
             </CardHeader>
-            <CardContent className="space-y-4">
-              {/* Status badges */}
-              <div className="flex gap-2 flex-wrap">
+
+            <CardContent className="space-y-3.5">
+              <div className="flex flex-wrap gap-1.5">
                 {provider.accounts.active > 0 && (
-                  <Badge variant="success">{provider.accounts.active} active</Badge>
+                  <Badge variant="success" dot className="tabular font-normal">
+                    {provider.accounts.active} active
+                  </Badge>
                 )}
                 {provider.accounts.exhausted > 0 && (
-                  <Badge variant="warning">{provider.accounts.exhausted} exhausted</Badge>
+                  <Badge variant="warning" dot className="tabular font-normal">
+                    {provider.accounts.exhausted} exhausted
+                  </Badge>
                 )}
                 {provider.accounts.error > 0 && (
-                  <Badge variant="error">{provider.accounts.error} error</Badge>
+                  <Badge variant="error" dot className="tabular font-normal">
+                    {provider.accounts.error} error
+                  </Badge>
+                )}
+                {provider.accounts.total === 0 && (
+                  <Badge variant="muted" className="font-normal">
+                    no accounts
+                  </Badge>
                 )}
               </div>
 
-              {/* Credits */}
-              <div className="space-y-2">
-                <div className="flex justify-between text-sm">
+              <div className="space-y-1.5">
+                <div className="flex items-baseline justify-between text-xs">
                   <span className="text-[var(--muted-foreground)]">Credits</span>
-                  <span className="text-[var(--foreground)]">
-                    {provider.credits.used.toFixed(2)} / {provider.credits.total.toFixed(2)}
+                  <span className="tabular text-[var(--foreground)]">
+                    {provider.credits.used.toFixed(2)}
+                    <span className="text-[var(--muted-foreground)]">
+                      {" / "}
+                      {provider.credits.total.toFixed(2)}
+                    </span>
                   </span>
                 </div>
                 <Progress
                   value={usedPercentage}
-                  indicatorClassName="rounded-full bg-[var(--progress-color)]"
-                  style={{ ["--progress-color" as any]: provider.color }}
-                  className="h-2"
+                  indicatorClassName="rounded-full bg-[var(--progress-color)] transition-[width] duration-[var(--dur-slow)] ease-[var(--ease-out)]"
+                  style={{ ["--progress-color" as string]: barTone } as React.CSSProperties}
+                  className="h-1.5"
                 />
-                <div className="flex justify-between text-xs text-[var(--muted-foreground)]">
+                <div className="tabular flex justify-between text-[11px] text-[var(--muted-foreground)]">
                   <span>{usedPercentage}% used</span>
-                  <span>{remaining.toFixed(2)} remaining</span>
+                  <span>{remaining.toFixed(2)} left</span>
                 </div>
               </div>
             </CardContent>
           </Card>
         );
       })}
-      {providers.length === 0 && (
-        <Card className="border-[var(--border)] col-span-full">
-          <CardContent className="p-6 text-sm text-[var(--muted-foreground)]">
-            No provider data yet. Add/login accounts to populate this section.
-          </CardContent>
-        </Card>
-      )}
     </div>
   );
 }

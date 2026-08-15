@@ -122,27 +122,21 @@ export function ClientCard({
   };
 
   return (
-    <Card className={`${!client.detected ? "opacity-70" : ""}`}>
-      <CardContent className="p-4 space-y-3">
+    <Card className={`${!client.detected ? "opacity-70" : ""} transition-all duration-[var(--dur-base)] ease-[var(--ease-out)]`}>
+      <CardContent className="space-y-3 p-4">
         {/* Header */}
         <div className="flex items-start justify-between gap-2">
-          <div className="flex items-center gap-2 min-w-0">
-            <div
-              className={`w-2 h-2 rounded-full shrink-0 ${
-                client.detected
-                  ? "bg-[var(--success)]"
-                  : "bg-[var(--muted-foreground)]"
-              }`}
+          <div className="flex min-w-0 items-center gap-2">
+            <span
+              className={`h-2 w-2 shrink-0 rounded-full ${client.detected ? "bg-[var(--success)] shadow-[0_0_6px_var(--success)]" : "bg-[var(--muted-foreground)]"}`}
               title={client.detected ? "Detected" : "Not found"}
             />
             <div className="min-w-0">
-              <h3 className="text-sm font-medium text-[var(--foreground)] truncate">
+              <h3 className="truncate text-sm font-medium text-[var(--foreground)]">
                 {client.name}
               </h3>
-              <p className="text-xs text-[var(--muted-foreground)]">
-                {client.detected
-                  ? `${client.cli}`
-                  : `${client.cli} — not detected`}
+              <p className="truncate text-xs text-[var(--muted-foreground)]">
+                {client.detected ? `${client.cli}` : `${client.cli} — not detected`}
               </p>
             </div>
           </div>
@@ -150,28 +144,28 @@ export function ClientCard({
             href={client.url}
             target="_blank"
             rel="noopener noreferrer"
-            className="text-[var(--muted-foreground)] hover:text-[var(--foreground)] shrink-0"
+            className="focus-ring shrink-0 rounded p-1 text-[var(--muted-foreground)] transition-colors hover:text-[var(--foreground)]"
             title="Open docs"
           >
-            <ExternalLink className="w-3.5 h-3.5" />
+            <ExternalLink className="h-3.5 w-3.5" />
           </a>
         </div>
 
         {/* Description */}
-        <p className="text-xs text-[var(--muted-foreground)]">
+        <p className="line-clamp-2 text-xs text-[var(--muted-foreground)]">
           {client.description}
         </p>
 
         {/* Model selector */}
         <div ref={ref} className="relative">
-          <label className="text-[11px] font-medium text-[var(--muted-foreground)] mb-1 block">Model</label>
-          <button type="button" onClick={() => setOpen((o) => !o)}
-            className="w-full px-3 py-2 rounded-md border border-[var(--border)] bg-[var(--background)] text-sm flex items-center justify-between gap-2 focus:outline-none focus:ring-2 focus:ring-[var(--primary)]">
+          <label className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-[var(--muted-foreground)]">Model</label>
+          <button type="button" onClick={() => setOpen((o) => !o)} aria-haspopup="listbox" aria-expanded={open}
+            className="focus-ring flex w-full items-center justify-between gap-2 rounded-md border border-[var(--border)] bg-[var(--background)] px-3 py-2 text-sm transition-colors hover:border-[var(--primary)]/40">
             <span className="truncate text-[var(--foreground)]">{model || "— select —"}</span>
-            <ChevronsUpDown className="w-4 h-4 opacity-60 shrink-0" />
+            <ChevronsUpDown className="h-4 w-4 shrink-0 opacity-60" />
           </button>
           {open && (
-            <div className="absolute z-50 mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--card)] shadow-lg">
+            <div className="animate-scale-in absolute z-50 mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--card)] shadow-[var(--es-3)]">
               <div className="flex items-center gap-2 px-2 py-1.5 border-b border-[var(--border)]">
                 <Search className="w-3.5 h-3.5 text-[var(--muted-foreground)] shrink-0" />
                 <input autoFocus value={query} onChange={(e) => setQuery(e.target.value)}
@@ -221,14 +215,11 @@ export function ClientCard({
           <Button
             size="sm"
             onClick={handleApply}
-            disabled={applying || !client.detected}
+            disabled={applying || !model || !client.detected}
+            loading={applying}
             className="gap-1.5 text-xs h-8"
           >
-            {applying ? (
-              <RefreshCw className="w-3 h-3 animate-spin" />
-            ) : (
-              <Zap className="w-3 h-3" />
-            )}
+            <Zap className="h-3 w-3" />
             Apply
           </Button>
           <Button
@@ -236,6 +227,7 @@ export function ClientCard({
             variant="outline"
             onClick={handleRestore}
             disabled={restoring || !client.detected}
+            loading={restoring}
             className="text-xs h-8"
           >
             Restore

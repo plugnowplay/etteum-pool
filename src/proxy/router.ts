@@ -16,6 +16,7 @@ export interface RouteResult {
   provider: ProviderName;
   durationMs: number;
   compressionStats?: CompressionStats;
+  proxyUsed?: { id: number; url: string } | null;
 }
 
 /** Check if a request contains image content blocks */
@@ -95,13 +96,18 @@ export async function routeRequest(
   request: ChatCompletionRequest,
   stream: boolean
 ): Promise<RouteResult> {
-  // Apply content filters to strip Claude Code identity, billing headers, etc.
   const sanitizedRequest = sanitizeRequest(request);
 
   const hasImages = requestHasImages(sanitizedRequest);
   const providerName = pool.getProviderForModel(sanitizedRequest.model);
   if (!providerName) {
     throw new Error(`No provider found for model: ${sanitizedRequest.model}`);
+  }
+
+  const { stripProviderPrefix } = await import("./providers/registry");
+  const strippedModel = stripProviderPrefix(sanitizedRequest.model);
+  if (strippedModel !== sanitizedRequest.model) {
+    sanitizedRequest.model = strippedModel;
   }
 
   // Apply compression pipeline (RTK + DCP + Caveman + image dedupe + cache markers).
@@ -170,7 +176,7 @@ export async function routeRequest(
           await pool.updateTokens(account.id, result.tokens);
         }
         await pool.markUsed(account.id);
-        return { result, account, provider: providerName, durationMs, compressionStats };
+        return { result, account, provider: providerName, durationMs, compressionStats, proxyUsed: provider.lastProxy };
       }
 
       pool.trackRequestEnd(account.id);

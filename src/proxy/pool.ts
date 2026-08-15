@@ -8,6 +8,36 @@ import { getProviderForModel, type ProviderName } from "./providers/registry";
 
 export type { ProviderName };
 
+// ── Grok CLI Plenger Helper ───────────────────────────────────────
+
+interface PlengerMeta {
+  plenger?: boolean;
+  plengerDisabledUntil?: string;
+}
+
+/** Check if a grok-cli account is currently disabled by plenger probe */
+export function isGrokCliPlengerAccount(account: Account): boolean {
+  if (account.provider !== "grok-cli") return false;
+
+  const raw = account.metadata;
+  if (!raw) return false;
+
+  try {
+    const meta = typeof raw === "string" ? JSON.parse(raw) : raw;
+    const plengerMeta = (meta || {}) as PlengerMeta;
+
+    if (plengerMeta.plenger !== true) return false;
+
+    const until = Date.parse(plengerMeta.plengerDisabledUntil || "");
+    if (!Number.isFinite(until)) return false;
+
+    // Still in plenger cooldown period
+    return until > Date.now();
+  } catch {
+    return false;
+  }
+}
+
 interface PoolState {
   lastIndex: Map<ProviderName, number>;
 }
@@ -322,7 +352,7 @@ class AccountPool {
   }
 
   private async fetchActiveAccounts(provider: ProviderName): Promise<Account[]> {
-    return db
+    const accountsList = await db
       .select()
       .from(accounts)
       .where(
@@ -332,6 +362,13 @@ class AccountPool {
           eq(accounts.enabled, true),
         )
       );
+
+    // Filter out grok-cli accounts marked as plenger
+    if (provider === "grok-cli") {
+      return accountsList.filter((account) => !isGrokCliPlengerAccount(account));
+    }
+
+    return accountsList;
   }
 
   /**
@@ -460,6 +497,47 @@ class AccountPool {
         tokens,
         updatedAt: new Date(),
       })
+      .where(eq(accounts.id, accountId));
+  }
+
+  /**
+   * Merge and persist metadata fields to account.metadata.
+   * Used for provider-specific state like plenger probe results.
+   */
+  async updateMetadata(
+    accountId: number,
+    patch: Record<string, unknown>,
+  ): Promise<void> {
+    const [account] = await db.select().from(accounts).where(eq(accounts.id, accountId));
+    if (!account) return;
+
+    const existing = (typeof account.metadata === "string"
+      ? JSON.parse(account.metadata || "{}")
+      : account.metadata || {}) as Record<string, unknown>;
+    const merged = { ...existing, ...patch };
+
+    await db
+      .update(accounts)
+      .set({ metadata: merged, updatedAt: new Date() })
+      .where(eq(accounts.id, accountId));
+  }
+
+  /**
+   * Update account metadata (JSON field). Merges with existing metadata.
+   * Used for provider-specific flags like plenger probe results.
+   */
+  async updateMetadata(accountId: number, patch: Record<string, unknown>): Promise<void> {
+    const [account] = await db.select().from(accounts).where(eq(accounts.id, accountId));
+    if (!account) return;
+
+    const existing = (typeof account.metadata === "string"
+      ? JSON.parse(account.metadata || "{}")
+      : account.metadata || {}) as Record<string, unknown>;
+    const merged = { ...existing, ...patch };
+
+    await db
+      .update(accounts)
+      .set({ metadata: merged, updatedAt: new Date() })
       .where(eq(accounts.id, accountId));
   }
 

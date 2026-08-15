@@ -60,6 +60,8 @@ const WORKER_TIMEOUT_VIDEO = 180_000; // 180s for video
  */
 export class CanvaProvider extends BaseProvider {
   name = "canva";
+  alias = "cv";
+  alias = "cv";
 
   override ownsModel(model: string): boolean {
     return model.toLowerCase().includes("canva");

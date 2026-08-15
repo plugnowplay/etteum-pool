@@ -153,6 +153,7 @@ interface ListBoardsItem {
 
 export class YouMindProvider extends BaseProvider {
   name = "youmind";
+  alias = "ym";
 
   /**
    * Native wire format. We pick "openai" because client-facing requests come

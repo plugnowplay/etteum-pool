@@ -2,6 +2,7 @@ import { lazy, Suspense, useState, useEffect } from "react";
 import { Routes, Route } from "react-router-dom";
 import Layout from "./components/layout/Layout";
 import Login from "./pages/Login";
+import { Skeleton, SkeletonCard, SkeletonRows } from "./components/ui/skeleton";
 import { isAuthenticated, validateApiKey, logout } from "./lib/api";
 
 const Dashboard = lazy(() => import("./pages/Dashboard"));
@@ -24,7 +25,22 @@ const CodexOAuthCallback = lazy(() => import("./pages/CodexOAuthCallback"));
 const ChangePassword = lazy(() => import("./pages/ChangePassword"));
 
 function RouteFallback() {
-  return <div className="flex h-64 items-center justify-center text-sm text-[var(--muted-foreground)]">Loading...</div>;
+  return (
+    <div className="animate-fade-in space-y-6">
+      <div className="space-y-2">
+        <Skeleton className="h-7 w-48" />
+        <Skeleton className="h-4 w-72" />
+      </div>
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        {Array.from({ length: 4 }).map((_, i) => (
+          <SkeletonCard key={i} />
+        ))}
+      </div>
+      <div className="rounded-lg border border-[var(--border)] bg-[var(--card)]">
+        <SkeletonRows rows={6} cols={4} />
+      </div>
+    </div>
+  );
 }
 
 export default function App() {
@@ -58,7 +74,12 @@ export default function App() {
   }
 
   if (authed === null) {
-    return <div className="flex h-screen items-center justify-center text-sm text-[var(--muted-foreground)]">Loading...</div>;
+    return (
+      <div className="flex h-screen flex-col items-center justify-center gap-3">
+        <img src="/etteum.svg" alt="" className="h-10 w-10 animate-pulse" />
+        <Skeleton className="h-3 w-28" />
+      </div>
+    );
   }
 
   if (!authed) {
@@ -74,6 +95,7 @@ export default function App() {
           <Route path="/accounts/byok/:prefix" element={<ByokAccountList />} />
           <Route path="/accounts/:provider" element={<AccountList />} />
           <Route path="/models" element={<Models />} />
+          <Route path="/combos" element={<Combos />} />
           <Route path="/api-key" element={<ApiKey />} />
           <Route path="/requests" element={<Requests />} />
           <Route path="/bot-logs" element={<BotLogs />} />

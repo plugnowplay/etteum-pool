@@ -3,7 +3,9 @@ import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "@/lib/utils";
 
 const badgeVariants = cva(
-  "inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-[var(--ring)] focus:ring-offset-2 focus:ring-offset-[var(--background)]",
+  "inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs font-semibold " +
+    "transition-colors duration-[var(--dur-fast)] " +
+    "focus:outline-none focus:ring-2 focus:ring-[var(--ring)] focus:ring-offset-2 focus:ring-offset-[var(--background)]",
   {
     variants: {
       variant: {
@@ -15,6 +17,8 @@ const badgeVariants = cva(
         warning: "border-transparent bg-[var(--warning)]/15 text-[var(--warning)]",
         error: "border-transparent bg-[var(--error)]/15 text-[var(--error)]",
         info: "border-transparent bg-[var(--info)]/15 text-[var(--info)]",
+        // Muted — de-emphasized, for neutral metadata chips.
+        muted: "border-transparent bg-[var(--muted)] text-[var(--muted-foreground)]",
       },
     },
     defaultVariants: {
@@ -25,10 +29,18 @@ const badgeVariants = cva(
 
 export interface BadgeProps
   extends React.HTMLAttributes<HTMLDivElement>,
-    VariantProps<typeof badgeVariants> {}
+    VariantProps<typeof badgeVariants> {
+  /** Show a small status dot before the label. */
+  dot?: boolean;
+}
 
-function Badge({ className, variant, ...props }: BadgeProps) {
-  return <div className={cn(badgeVariants({ variant }), className)} {...props} />;
+function Badge({ className, variant, dot = false, children, ...props }: BadgeProps) {
+  return (
+    <div className={cn(badgeVariants({ variant }), className)} {...props}>
+      {dot && <span className="h-1.5 w-1.5 rounded-full bg-current" aria-hidden />}
+      {children}
+    </div>
+  );
 }
 
 export { Badge, badgeVariants };

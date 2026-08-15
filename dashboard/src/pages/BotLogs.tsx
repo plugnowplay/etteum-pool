@@ -1,10 +1,15 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { PageHeader, PageShell } from "@/components/ui/page-header";
+import { DataTable, type Column } from "@/components/ui/data-table";
+import { EmptyState } from "@/components/ui/empty-state";
+import { StatCard } from "@/components/ui/stat-card";
+import { Drawer, DrawerSection, KeyValue } from "@/components/ui/drawer";
 import { clearAuthLogs, fetchAuthLogs, fetchAuthQueue, fetchWarmupQueue, loginAccount, loginAccounts, stopAllAccounts } from "@/lib/api";
 import { useWsEvent, useWsStatus } from "@/hooks/useWebSocket";
-import { AlertTriangle, CheckCircle, ChevronDown, RefreshCw, RotateCcw, Trash2, Radio, StopCircle } from "lucide-react";
+import { AlertTriangle, CheckCircle, ListChecks, Loader2, RefreshCw, RotateCcw, Trash2, Radio, StopCircle } from "lucide-react";
 import { formatTimeID } from "@/lib/utils";
 
 interface AuthLog {
@@ -116,8 +121,6 @@ export default function BotLogs() {
   const [queue, setQueue] = useState<any>(null);
   const [warmupQueue, setWarmupQueue] = useState<any>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
-  const [page, setPage] = useState(1);
-  const perPage = 25;
   const queueRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const wsStatus = useWsStatus();
   const connected = wsStatus === "open";
@@ -237,34 +240,149 @@ export default function BotLogs() {
     await load().catch(() => {});
   }
 
-  return (
-    <div className="space-y-6">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-[var(--foreground)]">Login Logs</h1>
-          <p className="text-sm text-[var(--muted-foreground)] mt-1">
-            Live progress for auto-login bot, including failed accounts.
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <Badge variant={connected ? "success" : "secondary"}>{connected ? "Live" : "Disconnected"}</Badge>
-          <Button variant="outline" size="sm" onClick={load}><RefreshCw className="w-4 h-4 mr-2" />Refresh</Button>
-          <Button variant="destructive" size="sm" onClick={handleStopAll}><StopCircle className="w-4 h-4 mr-2" />Stop All</Button>
-          <Button variant="outline" size="sm" onClick={handleClear}><Trash2 className="w-4 h-4 mr-2" />Clear</Button>
-        </div>
-      </div>
+  const columns: Column<ProcessLog>[] = [
+    {
+      key: "time",
+      header: "Time",
+      width: "w-[92px]",
+      sortValue: (p) => p.updatedAt,
+      cell: (p) => (
+        <span className="tabular font-mono text-xs text-[var(--muted-foreground)]">
+          {formatTimeID(p.updatedAt)}
+        </span>
+      ),
+    },
+    {
+      key: "status",
+      header: "Status",
+      width: "w-[120px]",
+      sortValue: (p) => processStatusLabel(p),
+      cell: (p) => (
+        <Badge variant={processStatusVariant(p)} dot>
+          {processStatusLabel(p)}
+        </Badge>
+      ),
+    },
+    {
+      key: "account",
+      header: "Account",
+      primary: true,
+      hideBelow: "md",
+      sortValue: (p) => p.latest.email ?? p.latest.accountId ?? "",
+      cell: (p) => (
+        <span className="block max-w-[220px] truncate text-sm text-[var(--foreground)]">
+          {p.latest.email || (p.latest.accountId ? `#${p.latest.accountId}` : "-")}
+        </span>
+      ),
+    },
+    {
+      key: "provider",
+      header: "Provider",
+      hideBelow: "md",
+      width: "w-[130px]",
+      sortValue: (p) => p.latest.provider ?? "",
+      cell: (p) => (
+        <span className="text-sm text-[var(--muted-foreground)]">
+          {providerLabel(p.latest.provider)}
+        </span>
+      ),
+    },
+    {
+      key: "step",
+      header: "Step",
+      hideBelow: "lg",
+      width: "w-[140px]",
+      sortValue: (p) => p.latest.step ?? p.operation,
+      cell: (p) => (
+        <span className="block truncate text-xs text-[var(--muted-foreground)]">
+          {p.latest.step || p.operation}
+        </span>
+      ),
+    },
+    {
+      key: "message",
+      header: "Message",
+      sortValue: (p) => p.latest.error || p.latest.message || "",
+      cell: (p) => {
+        const label = processStatusLabel(p);
+        const isRunning =
+          label !== "success" &&
+          label !== "error" &&
+          (p.latest.type === "login_progress" ||
+            p.latest.type === "queue_processing" ||
+            p.latest.type === "warmup_processing");
+        return (
+          <div className="flex items-center gap-2 text-sm text-[var(--muted-foreground)]">
+            {label === "success" && (
+              <CheckCircle className="h-4 w-4 shrink-0 text-[var(--success)]" />
+            )}
+            {label === "error" && (
+              <AlertTriangle className="h-4 w-4 shrink-0 text-[var(--error)]" />
+            )}
+            {isRunning && (
+              <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-[var(--warning)]" />
+            )}
+            <span className="min-w-0 flex-1 truncate">
+              {p.latest.error || p.latest.message || "-"}
+            </span>
+            <span className="tabular shrink-0 text-xs text-[var(--muted-foreground)]">
+              {p.events.length} steps
+            </span>
+          </div>
+        );
+      },
+    },
+  ];
 
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <Card className="border-[var(--border)]"><CardContent className="p-4"><p className="text-xs text-[var(--muted-foreground)]">Queue</p><p className="text-2xl font-bold">{totalQueued}</p></CardContent></Card>
-        <Card className="border-[var(--border)]"><CardContent className="p-4"><p className="text-xs text-[var(--muted-foreground)]">Progress</p><p className="text-2xl font-bold text-[var(--warning)]">{totalProgress}</p></CardContent></Card>
-        <Card className="border-[var(--border)]"><CardContent className="p-4"><p className="text-xs text-[var(--muted-foreground)]">Success</p><p className="text-2xl font-bold text-[var(--success)]">{totalSuccess}</p></CardContent></Card>
-        <Card className="border-[var(--border)]"><CardContent className="p-4"><p className="text-xs text-[var(--muted-foreground)]">Failed</p><p className="text-2xl font-bold text-[var(--error)]">{totalFailed}</p></CardContent></Card>
+  const activeProcess = processes.find((p) => p.key === expanded) || null;
+
+  return (
+    <PageShell>
+      <PageHeader
+        title="Login Logs"
+        description="Live progress for auto-login bot, including failed accounts."
+        badge={
+          <Badge variant={connected ? "success" : "muted"} dot>
+            {connected ? "Live" : "Disconnected"}
+          </Badge>
+        }
+        actions={
+          <>
+            <Button variant="outline" size="sm" onClick={load}>
+              <RefreshCw className="h-4 w-4" />
+              Refresh
+            </Button>
+            <Button variant="destructive" size="sm" onClick={handleStopAll}>
+              <StopCircle className="h-4 w-4" />
+              Stop All
+            </Button>
+            <Button variant="outline" size="sm" onClick={handleClear}>
+              <Trash2 className="h-4 w-4" />
+              Clear
+            </Button>
+          </>
+        }
+      />
+
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <StatCard label="Queue" value={totalQueued} icon={ListChecks} />
+        <StatCard label="Progress" value={totalProgress} icon={Radio} tone="warning" />
+        <StatCard label="Success" value={totalSuccess} icon={CheckCircle} tone="success" />
+        <StatCard
+          label="Failed"
+          value={totalFailed}
+          icon={AlertTriangle}
+          tone={totalFailed > 0 ? "error" : "default"}
+        />
       </div>
 
       {(totalProgress > 0 || totalQueued > 0) && (
-        <div className="rounded-md border border-[var(--warning)]/30 bg-[var(--warning)]/5 p-3 text-sm text-[var(--warning)] flex items-center gap-2">
-          <Radio className="w-4 h-4 animate-pulse" />
-          Sedang berjalan: {totalProgress} processing, {totalQueued} queued. Log akan update otomatis.
+        <div className="flex items-center gap-2 rounded-md border border-[var(--warning)]/30 bg-[var(--warning)]/5 p-3 text-sm text-[var(--warning)]">
+          <Radio className="h-4 w-4 animate-pulse" />
+          <span className="tabular">
+            Sedang berjalan: {totalProgress} processing, {totalQueued} queued. Log akan update
+            otomatis.
+          </span>
         </div>
       )}
 
@@ -272,105 +390,134 @@ export default function BotLogs() {
         <Card className="border-[var(--error)]/30 bg-[var(--error)]/5">
           <CardHeader>
             <div className="flex items-center justify-between gap-3">
-              <CardTitle className="text-base flex items-center gap-2"><AlertTriangle className="w-4 h-4 text-[var(--error)]" /> Failed Accounts</CardTitle>
+              <CardTitle className="flex items-center gap-2 text-base">
+                <AlertTriangle className="h-4 w-4 text-[var(--error)]" /> Failed Accounts
+              </CardTitle>
               <Button variant="outline" size="sm" onClick={handleRetryAll}>
-                <RotateCcw className="mr-2 h-4 w-4" /> Retry All ({failedAccounts.length})
+                <RotateCcw className="h-4 w-4" />
+                <span className="tabular">Retry All ({failedAccounts.length})</span>
               </Button>
             </div>
           </CardHeader>
-          <CardContent>
-            <div className="overflow-hidden rounded-md border border-[var(--error)]/20">
-              {failedAccounts.map((log) => (
-                <div key={`failed-${log.accountId || log.id}-${log.provider || "unknown"}`} className="grid grid-cols-[1fr_auto] gap-3 border-b border-[var(--error)]/10 px-3 py-2 text-sm last:border-0 md:grid-cols-[240px_140px_1fr_auto]">
-                  <div className="truncate font-medium text-[var(--foreground)]">{log.email || `Account #${log.accountId}`}</div>
-                  <div className="text-xs text-[var(--muted-foreground)] md:text-sm">{providerLabel(log.provider)}</div>
-                  <div className="col-span-2 truncate text-xs text-[var(--error)] md:col-span-1" title={log.error || log.message}>{log.error || log.message}</div>
-                  <Button variant="ghost" size="sm" onClick={() => handleRetry(log.accountId)} disabled={!log.accountId}>
-                    <RotateCcw className="mr-1 h-3 w-3" /> Retry
-                  </Button>
+          <CardContent className="space-y-2">
+            {failedAccounts.map((log) => (
+              <div
+                key={`failed-${log.accountId || log.id}-${log.provider || "unknown"}`}
+                className="flex flex-col gap-2 rounded-md border border-[var(--error)]/20 bg-[var(--card)] px-3 py-2.5 sm:flex-row sm:items-center sm:gap-4"
+              >
+                <div className="min-w-0 flex-1 truncate text-sm font-medium text-[var(--foreground)]">
+                  {log.email || `Account #${log.accountId}`}
                 </div>
-              ))}
-            </div>
+                <div className="shrink-0 text-xs text-[var(--muted-foreground)] sm:w-[130px]">
+                  {providerLabel(log.provider)}
+                </div>
+                <div
+                  className="min-w-0 flex-1 truncate text-xs text-[var(--error)]"
+                  title={log.error || log.message}
+                >
+                  {log.error || log.message}
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="shrink-0"
+                  onClick={() => handleRetry(log.accountId)}
+                  disabled={!log.accountId}
+                >
+                  <RotateCcw className="h-3.5 w-3.5" /> Retry
+                </Button>
+              </div>
+            ))}
           </CardContent>
         </Card>
       )}
 
-      <Card className="border-[var(--border)]">
-        <CardHeader><CardTitle className="text-base">Login Progress</CardTitle></CardHeader>
-        <CardContent className="p-0">
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead>
-                <tr className="border-b border-[var(--border)]">
-                  <th className="text-left text-xs font-medium text-[var(--muted-foreground)] uppercase tracking-wide p-4">Time</th>
-                  <th className="text-left text-xs font-medium text-[var(--muted-foreground)] uppercase tracking-wide p-4">Status</th>
-                  <th className="text-left text-xs font-medium text-[var(--muted-foreground)] uppercase tracking-wide p-4 hidden md:table-cell">Account</th>
-                  <th className="text-left text-xs font-medium text-[var(--muted-foreground)] uppercase tracking-wide p-4 hidden md:table-cell">Provider</th>
-                  <th className="text-left text-xs font-medium text-[var(--muted-foreground)] uppercase tracking-wide p-4 hidden lg:table-cell">Step</th>
-                  <th className="text-left text-xs font-medium text-[var(--muted-foreground)] uppercase tracking-wide p-4">Message</th>
-                </tr>
-              </thead>
-              <tbody>
-                {processes.slice((page - 1) * perPage, page * perPage).map((process) => (
-                  <Fragment key={process.key}>
-                    <tr
-                      className="cursor-pointer border-b border-[var(--border)] last:border-0 hover:bg-[var(--secondary)]/50"
-                      onClick={() => setExpanded((current) => current === process.key ? null : process.key)}
-                    >
-                      <td className="p-4 text-xs text-[var(--muted-foreground)] font-mono">{formatTimeID(process.updatedAt)}</td>
-                      <td className="p-4"><Badge variant={processStatusVariant(process)}>{processStatusLabel(process)}</Badge></td>
-                      <td className="p-4 text-sm text-[var(--foreground)] hidden md:table-cell">{process.latest.email || (process.latest.accountId ? `#${process.latest.accountId}` : "-")}</td>
-                      <td className="p-4 text-sm text-[var(--muted-foreground)] hidden md:table-cell">{providerLabel(process.latest.provider)}</td>
-                      <td className="p-4 text-xs text-[var(--muted-foreground)] hidden lg:table-cell">{process.latest.step || process.operation}</td>
-                      <td className="p-4 text-sm text-[var(--muted-foreground)]">
-                        <div className="flex items-center gap-2">
-                          {processStatusLabel(process) === "success" && <CheckCircle className="w-4 h-4 text-[var(--success)]" />}
-                          {processStatusLabel(process) === "error" && <AlertTriangle className="w-4 h-4 text-[var(--error)]" />}
-                          {processStatusLabel(process) !== "success" && processStatusLabel(process) !== "error" && (process.latest.type === "login_progress" || process.latest.type === "queue_processing" || process.latest.type === "warmup_processing") && <span className="h-2 w-2 rounded-full bg-[var(--warning)]" />}
-                          <span className="min-w-0 flex-1 truncate">{process.latest.error || process.latest.message || "-"}</span>
-                          <span className="shrink-0 text-xs text-[var(--muted-foreground)]">{process.events.length} steps</span>
-                          <ChevronDown className={`h-4 w-4 shrink-0 transition-transform ${expanded === process.key ? "rotate-180" : ""}`} />
-                        </div>
-                      </td>
-                    </tr>
-                    {expanded === process.key && (
-                      <tr className="border-b border-[var(--border)] bg-[var(--secondary)]/20">
-                        <td colSpan={6} className="p-4">
-                          <div className="space-y-2">
-                            {process.events.map((log) => (
-                              <div key={`${log.id}-${log.timestamp}`} className="grid grid-cols-[80px_120px_1fr] gap-3 rounded-md border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-xs">
-                                <span className="font-mono text-[var(--muted-foreground)]">{formatTimeID(log.timestamp)}</span>
-                                <span className="text-[var(--muted-foreground)]">{log.step || statusLabel(log.type)}</span>
-                                <span className={log.error ? "text-[var(--error)]" : "text-[var(--foreground)]"}>{log.error || log.message || "-"}</span>
-                              </div>
-                            ))}
-                          </div>
-                        </td>
-                      </tr>
-                    )}
-                  </Fragment>
-                ))}
-                {processes.length === 0 && (
-                  <tr><td colSpan={6} className="p-8 text-center text-sm text-[var(--muted-foreground)]">No login logs yet. Add an account or start login to see progress.</td></tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-          {/* Pagination */}
-          {processes.length > perPage && (
-            <div className="flex items-center justify-between border-t border-[var(--border)] px-4 py-3">
-              <p className="text-xs text-[var(--muted-foreground)]">
-                {(page - 1) * perPage + 1}–{Math.min(page * perPage, processes.length)} of {processes.length}
-              </p>
-              <div className="flex items-center gap-2">
-                <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage(page - 1)}>Prev</Button>
-                <span className="text-xs text-[var(--muted-foreground)]">{page}/{Math.ceil(processes.length / perPage)}</span>
-                <Button variant="outline" size="sm" disabled={page >= Math.ceil(processes.length / perPage)} onClick={() => setPage(page + 1)}>Next</Button>
+      <DataTable
+        columns={columns}
+        rows={processes}
+        rowKey={(p) => p.key}
+        activeKey={expanded}
+        onRowClick={(p) => setExpanded((current) => (current === p.key ? null : p.key))}
+        pageSize={25}
+        empty={
+          <EmptyState
+            compact
+            icon={ListChecks}
+            title="No login logs yet"
+            description="Add an account or start login to see progress here."
+          />
+        }
+      />
+
+      <Drawer
+        open={Boolean(activeProcess)}
+        onClose={() => setExpanded(null)}
+        width="md"
+        title={
+          activeProcess
+            ? activeProcess.latest.email ||
+              (activeProcess.latest.accountId ? `#${activeProcess.latest.accountId}` : "Process")
+            : ""
+        }
+        subtitle={activeProcess ? `${activeProcess.operation} · ${formatTimeID(activeProcess.updatedAt)}` : ""}
+        meta={
+          activeProcess ? (
+            <>
+              <Badge variant={processStatusVariant(activeProcess)} dot>
+                {processStatusLabel(activeProcess)}
+              </Badge>
+              <Badge variant="outline" className="font-normal">
+                {providerLabel(activeProcess.latest.provider)}
+              </Badge>
+              <Badge variant="muted" className="tabular font-normal">
+                {activeProcess.events.length} steps
+              </Badge>
+            </>
+          ) : null
+        }
+      >
+        {activeProcess && (
+          <>
+            <DrawerSection title="Summary">
+              <div className="rounded-md border border-[var(--border)] bg-[var(--surface-2)] px-3 py-1">
+                <KeyValue label="Operation" value={activeProcess.operation} />
+                <KeyValue label="Started" mono value={formatTimeID(activeProcess.startedAt)} />
+                <KeyValue label="Updated" mono value={formatTimeID(activeProcess.updatedAt)} />
+                <KeyValue
+                  label="Step"
+                  value={activeProcess.latest.step || activeProcess.operation}
+                />
               </div>
-            </div>
-          )}
-        </CardContent>
-      </Card>
-    </div>
+            </DrawerSection>
+
+            <DrawerSection title="Timeline">
+              <div className="space-y-2">
+                {activeProcess.events.map((log) => (
+                  <div
+                    key={`${log.id}-${log.timestamp}`}
+                    className="grid grid-cols-[72px_1fr] gap-3 rounded-md border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-xs sm:grid-cols-[72px_120px_1fr]"
+                  >
+                    <span className="tabular font-mono text-[var(--muted-foreground)]">
+                      {formatTimeID(log.timestamp)}
+                    </span>
+                    <span className="hidden text-[var(--muted-foreground)] sm:block">
+                      {log.step || statusLabel(log.type)}
+                    </span>
+                    <span
+                      className={
+                        log.error ? "text-[var(--error)]" : "text-[var(--foreground)]"
+                      }
+                    >
+                      {log.error || log.message || "-"}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </DrawerSection>
+          </>
+        )}
+      </Drawer>
+    </PageShell>
   );
 }
+

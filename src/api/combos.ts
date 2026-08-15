@@ -21,4 +21,3 @@ combosRouter.delete("/:name", async (c) => {
   broadcast({ type: "combos_updated", data: { name: c.req.param("name") } });
   return c.json({ success: true });
 });
-EOF

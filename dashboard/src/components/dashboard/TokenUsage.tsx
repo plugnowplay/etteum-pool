@@ -1,6 +1,9 @@
 import { useEffect, useState, useRef } from "react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Cpu } from "lucide-react";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Metric } from "@/components/ui/stat-card";
+import { EmptyState } from "@/components/ui/empty-state";
 import UsageChart from "./UsageChart";
 import { formatNumber, parseUtcDate, modelColor } from "@/lib/utils";
 import { fetchUsage } from "@/lib/api";
@@ -300,10 +303,15 @@ export default function TokenUsage({
   useWsEvent(["request_log", "request_error"], scheduleReload);
 
   return (
-    <Card className="border-[var(--border)]">
-      <CardHeader>
-        <div className="flex items-center justify-between">
-          <CardTitle className="text-lg">Token Usage</CardTitle>
+    <Card>
+      <CardHeader className="pb-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <CardTitle className="text-base">Token Usage</CardTitle>
+            <CardDescription>
+              Prompt vs completion split and per-model spend over time.
+            </CardDescription>
+          </div>
           <Tabs value={period} onValueChange={setPeriod}>
             <TabsList>
               <TabsTrigger value="1d">1d</TabsTrigger>
@@ -314,59 +322,80 @@ export default function TokenUsage({
           </Tabs>
         </div>
       </CardHeader>
+
       <CardContent className="space-y-6">
-        {/* Summary cards */}
-        <div className="grid grid-cols-3 gap-4">
-          <div className="rounded-lg bg-[var(--secondary)] p-4">
-            <p className="text-xs text-[var(--muted-foreground)] uppercase tracking-wide">Total</p>
-            <p className="text-xl font-bold mt-1">{formatNumber(stats.total)}</p>
-          </div>
-          <div className="rounded-lg bg-[var(--secondary)] p-4">
-            <p className="text-xs text-[var(--muted-foreground)] uppercase tracking-wide">Prompt</p>
-            <p className="text-xl font-bold mt-1">{formatNumber(stats.prompt)}</p>
-          </div>
-          <div className="rounded-lg bg-[var(--secondary)] p-4">
-            <p className="text-xs text-[var(--muted-foreground)] uppercase tracking-wide">Completion</p>
-            <p className="text-xl font-bold mt-1">{formatNumber(stats.completion)}</p>
-          </div>
+        {/* Summary */}
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+          <Metric label="Total" value={formatNumber(stats.total)} tone="info" />
+          <Metric label="Prompt" value={formatNumber(stats.prompt)} tone="success" />
+          <Metric label="Completion" value={formatNumber(stats.completion)} tone="primary" />
+          <Metric
+            label="Credits"
+            value={Number(stats.credits || 0).toFixed(2)}
+            tone="warning"
+          />
         </div>
 
         {/* Chart */}
         <div>
-          <h4 className="text-sm font-medium text-[var(--muted-foreground)] mb-4">Token Usage Over Time</h4>
+          <h4 className="mb-3 text-[10px] font-semibold uppercase tracking-wider text-[var(--muted-foreground)]">
+            Usage over time
+          </h4>
           <UsageChart data={chartData} period={period} colorsByModel={colorsByModel} />
         </div>
 
-        {/* By Model */}
+        {/* By model */}
         <div>
-          <h4 className="text-sm font-medium text-[var(--muted-foreground)] mb-4">By Model</h4>
-          <div className="space-y-3">
-            {modelUsage.map((model) => (
-              <div key={`${model.provider || "unknown"}/${model.model}`} className="space-y-1">
-                <div className="flex items-center justify-between gap-3 text-sm">
-                  <div className="min-w-0">
-                    <span className="text-[var(--foreground)]">{model.provider ? `${model.provider}/` : ""}{model.model}</span>
-                    <span className="ml-2 text-[10px] uppercase text-[var(--muted-foreground)]">{model.creditSource || "estimated"}</span>
-                  </div>
-                  <span className="shrink-0 text-[var(--muted-foreground)]">
-                    {formatNumber(model.tokens)} tokens · {model.requests || 0} req
-                  </span>
-                </div>
-                <div className="h-2 rounded-full bg-[var(--secondary)] overflow-hidden">
+          <h4 className="mb-3 text-[10px] font-semibold uppercase tracking-wider text-[var(--muted-foreground)]">
+            By model
+          </h4>
+
+          {modelUsage.length === 0 ? (
+            <EmptyState
+              compact
+              icon={Cpu}
+              title="No model usage yet"
+              description="Per-model token spend appears once requests are logged."
+            />
+          ) : (
+            <div className="space-y-2.5">
+              {modelUsage.map((model) => {
+                const pct = (Number(model.tokens || 0) / maxTokens) * 100;
+                return (
                   <div
-                    className="h-full rounded-full transition-all"
-                    style={{
-                      width: `${(Number(model.tokens || 0) / maxTokens) * 100}%`,
-                      backgroundColor: model.color,
-                    }}
-                  />
-                </div>
-              </div>
-            ))}
-            {modelUsage.length === 0 && (
-              <p className="text-sm text-[var(--muted-foreground)]">No model usage yet</p>
-            )}
-          </div>
+                    key={`${model.provider || "unknown"}/${model.model}`}
+                    className="space-y-1"
+                  >
+                    <div className="flex items-baseline justify-between gap-3 text-xs">
+                      <div className="flex min-w-0 items-center gap-2">
+                        <span
+                          className="h-2 w-2 shrink-0 rounded-full"
+                          style={{ backgroundColor: model.color }}
+                        />
+                        <span className="truncate font-medium text-[var(--foreground)]">
+                          {model.provider ? `${model.provider}/` : ""}
+                          {model.model}
+                        </span>
+                      </div>
+                      <span className="tabular shrink-0 text-[var(--muted-foreground)]">
+                        {formatNumber(model.tokens)}
+                        <span className="opacity-60"> tokens</span>
+                        <span className="mx-1 opacity-40">·</span>
+                        {model.requests || 0}
+                        <span className="opacity-60"> req</span>
+                      </span>
+                    </div>
+                    <div className="h-1.5 overflow-hidden rounded-full bg-[var(--secondary)]">
+                      <div
+                        className="h-full rounded-full transition-[width] duration-[var(--dur-slow)] ease-[var(--ease-out)]"
+                        style={{ width: `${pct}%`, backgroundColor: model.color }}
+                      />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       </CardContent>
     </Card>

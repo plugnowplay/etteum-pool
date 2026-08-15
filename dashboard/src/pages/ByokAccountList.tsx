@@ -4,7 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
-import { ArrowLeft, Eye, EyeOff, FlaskConical, Key, Plus, RefreshCw, Save, Trash2, Zap } from "lucide-react";
+import { ArrowLeft, Eye, EyeOff, FlaskConical, Key, KeySquare, Plus, RefreshCw, Save, Trash2, Zap } from "lucide-react";
 import {
   deleteAccount,
   fetchByokProviders,
@@ -16,7 +16,7 @@ import {
   type ByokProvider,
 } from "@/lib/api";
 import { formatDateTimeID } from "@/lib/utils";
-import { useTimedMessage } from "@/hooks/useTimedMessage";
+import { useToast } from "@/components/ui/toast";
 import { useWsEvent } from "@/hooks/useWebSocket";
 
 type LbMethod = "round_robin" | "sequential" | "least_inflight";
@@ -57,7 +57,7 @@ export default function ByokAccountList() {
   const [testingKey, setTestingKey] = useState<number | null>(null);
   const [revealingKey, setRevealingKey] = useState<string | null>(null);
   const [visibleSecrets, setVisibleSecrets] = useState<Set<string>>(new Set());
-  const { message, setMessage, clearMessage } = useTimedMessage<string>(null, 4000);
+  const toast = useToast();
   const [error, setError] = useState<string | null>(null);
   const [form, setForm] = useState({
     base_url: "",
@@ -67,8 +67,8 @@ export default function ByokAccountList() {
     keys: [emptyKey()] as KeyDraft[],
   });
 
-  function showSuccess(text: string) { setMessage(text); setError(null); }
-  function showError(err: unknown) { setError(err instanceof Error ? err.message : String(err)); clearMessage(); }
+  function showSuccess(text: string) { toast.success(text); setError(null); }
+  function showError(err: unknown) { toast.error(err instanceof Error ? err.message : String(err)); setError(null); }
 
   async function load() {
     if (!prefix) return;
@@ -253,34 +253,37 @@ export default function ByokAccountList() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex items-center gap-3">
-          <Button variant="ghost" size="icon" onClick={() => navigate("/accounts")}>
-            <ArrowLeft className="w-5 h-5" />
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="flex items-center gap-2">
+          <Button variant="ghost" size="icon" onClick={() => navigate("/accounts")} aria-label="Back to accounts">
+            <ArrowLeft className="h-5 w-5" />
           </Button>
           <div>
-            <h1 className="text-2xl font-bold text-[var(--foreground)]">BYOK · {prefix}</h1>
-            <p className="text-sm text-[var(--muted-foreground)] mt-1">
-              {form.keys.length} keys · {activeKeyCount} enabled · {models.length} models · {lbLabel(form.load_balancing_method)}
+            <div className="flex items-center gap-2">
+              <h1 className="text-xl font-semibold tracking-tight text-[var(--foreground)]">BYOK · {prefix}</h1>
+              <Badge variant="muted" className="tabular">{form.keys.length} keys</Badge>
+            </div>
+            <p className="mt-1 text-sm text-[var(--muted-foreground)]">
+              {activeKeyCount} enabled · {models.length} models · {lbLabel(form.load_balancing_method)}
             </p>
           </div>
         </div>
         <div className="flex flex-wrap gap-2">
-          <Button variant="outline" size="sm" onClick={load} disabled={loading}>
-            <RefreshCw className="w-4 h-4 mr-2" /> Refresh
+          <Button variant="outline" size="sm" onClick={load} loading={loading}>
+            Refresh
           </Button>
           <Button variant="outline" size="sm" onClick={testAll} disabled={testingKey !== null || form.keys.every((k) => !k.id)}>
-            <FlaskConical className="w-4 h-4 mr-2" /> Test All
+            <FlaskConical className="h-3.5 w-3.5" /> Test All
           </Button>
-          <Button size="sm" onClick={saveSettings} disabled={saving}>
-            <Save className="w-4 h-4 mr-2" /> {saving ? "Saving..." : "Save Settings"}
+          <Button size="sm" onClick={saveSettings} loading={saving}>
+            <Save className="h-3.5 w-3.5" /> Save Settings
           </Button>
         </div>
       </div>
 
-      {(message || error) && (
-        <div className={`rounded-md p-3 text-sm ${message ? "bg-[var(--success)]/10 text-[var(--success)]" : "bg-[var(--error)]/10 text-[var(--error)]"}`}>
-          {message || error}
+      {error && (
+        <div className="rounded-lg border border-[var(--error)]/30 bg-[var(--error)]/10 p-3 text-sm text-[var(--error)]">
+          {error}
         </div>
       )}
 

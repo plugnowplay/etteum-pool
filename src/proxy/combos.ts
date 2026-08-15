@@ -70,4 +70,3 @@ export function comboModels(combos: ComboDefinitionShape[]) {
     vision: combo.strategy === "capacity_auto_switch",
   }));
 }
-EOF

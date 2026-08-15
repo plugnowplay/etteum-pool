@@ -1,8 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Input, Field } from "@/components/ui/input";
+import { Select } from "@/components/ui/select";
+import { PageHeader, PageShell } from "@/components/ui/page-header";
+import { EmptyState } from "@/components/ui/empty-state";
+import { useToast } from "@/components/ui/toast";
 import { fetchApi } from "@/lib/api";
-import { Plus, Trash2, Save } from "lucide-react";
+import { Layers, Plus, Trash2, Save } from "lucide-react";
 
 type Strategy = "fallback" | "round_robin" | "fusion" | "capacity_auto_switch";
 type Combo = { name: string; strategy: Strategy; models: string[]; judgeModel?: string | null };
@@ -20,7 +25,7 @@ export default function Combos() {
   const [models, setModels] = useState<Model[]>([]);
   const [selected, setSelected] = useState<Combo | null>(null);
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
+  const toast = useToast();
 
   async function load() {
     const [comboData, modelData] = await Promise.all([
@@ -31,19 +36,20 @@ export default function Combos() {
     setModels((modelData.data || []).filter((model) => !model.id.startsWith("combo:")));
   }
 
-  useEffect(() => { load().catch((e) => setError(e.message)); }, []);
+  useEffect(() => { load().catch((e) => toast.error(e.message)); }, []);
 
   const modelOptions = useMemo(() => models.map((model) => model.id), [models]);
   const updateSelected = (patch: Partial<Combo>) => setSelected((current) => current ? { ...current, ...patch } : current);
 
   async function save() {
     if (!selected) return;
-    setSaving(true); setError("");
+    setSaving(true);
     try {
       const result = await fetchApi<{ combo: Combo }>("/api/combos", { method: "PUT", body: JSON.stringify(selected) });
       setCombos((current) => [...current.filter((combo) => combo.name !== result.combo.name), result.combo].sort((a, b) => a.name.localeCompare(b.name)));
       setSelected(result.combo);
-    } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+      toast.success(`Saved combo:${result.combo.name}`);
+    } catch (e) { toast.error(e instanceof Error ? e.message : String(e)); }
     finally { setSaving(false); }
   }
 
@@ -54,25 +60,172 @@ export default function Combos() {
   }
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div><h1 className="text-2xl font-bold text-[var(--foreground)]">Model Combos</h1><p className="text-sm text-[var(--muted-foreground)] mt-1">Group models under one virtual model with fallback, rotation, fusion, or capacity routing.</p></div>
-        <Button onClick={() => setSelected({ name: "", strategy: "fallback", models: [""], judgeModel: "" })}><Plus className="w-4 h-4 mr-2" /> New Combo</Button>
-      </div>
-      {error && <div className="rounded-md bg-red-500/10 text-red-400 px-4 py-2 text-sm">{error}</div>}
+    <PageShell>
+      <PageHeader
+        title="Model Combos"
+        description="Group models under one virtual model with fallback, rotation, fusion, or capacity routing."
+        actions={
+          <Button onClick={() => setSelected({ name: "", strategy: "fallback", models: [""], judgeModel: "" })}>
+            <Plus className="h-4 w-4" /> New Combo
+          </Button>
+        }
+      />
+
       <div className="grid gap-4 lg:grid-cols-[280px_1fr]">
-        <Card><CardHeader><CardTitle className="text-base">Saved combos</CardTitle></CardHeader><CardContent className="space-y-2">
-          {combos.map((combo) => <div key={combo.name} className="flex items-center gap-2"><button onClick={() => setSelected({ ...combo, models: [...combo.models] })} className={`flex-1 text-left rounded px-3 py-2 text-sm ${selected?.name === combo.name ? "bg-[var(--primary)]/15 text-[var(--primary)]" : "hover:bg-[var(--secondary)] text-[var(--foreground)]"}`}><div className="font-medium">combo:{combo.name}</div><div className="text-xs text-[var(--muted-foreground)]">{combo.strategy} · {combo.models.length} models</div></button><button title="Delete combo" onClick={() => remove(combo.name)} className="p-2 text-[var(--muted-foreground)] hover:text-red-400"><Trash2 className="w-4 h-4" /></button></div>)}
-          {combos.length === 0 && <p className="text-sm text-[var(--muted-foreground)]">No combos yet.</p>}
-        </CardContent></Card>
-        {selected ? <Card><CardHeader><CardTitle className="text-base">Combo editor</CardTitle></CardHeader><CardContent className="space-y-5">
-          <div><label className="text-sm text-[var(--foreground)]">Name</label><div className="flex items-center gap-2 mt-1"><span className="text-sm text-[var(--muted-foreground)]">combo:</span><input value={selected.name} onChange={(e) => updateSelected({ name: e.target.value })} placeholder="smart" className="flex-1 rounded-md border border-[var(--border)] bg-[var(--background)] px-3 py-2 text-sm text-[var(--foreground)]" /></div></div>
-          <div><label className="text-sm text-[var(--foreground)]">Strategy</label><div className="grid gap-2 sm:grid-cols-2 mt-2">{strategies.map((strategy) => <button key={strategy.id} onClick={() => updateSelected({ strategy: strategy.id })} className={`text-left rounded-md border p-3 ${selected.strategy === strategy.id ? "border-[var(--primary)] bg-[var(--primary)]/10" : "border-[var(--border)] hover:bg-[var(--secondary)]"}`}><div className="text-sm font-medium text-[var(--foreground)]">{strategy.title}</div><div className="text-xs text-[var(--muted-foreground)] mt-1">{strategy.description}</div></button>)}</div></div>
-          <div><label className="text-sm text-[var(--foreground)]">Panel models</label><div className="space-y-2 mt-2">{selected.models.map((model, index) => <div key={`${index}-${model}`} className="flex gap-2"><select value={model} onChange={(e) => { const next = [...selected.models]; next[index] = e.target.value; updateSelected({ models: next }); }} className="flex-1 rounded-md border border-[var(--border)] bg-[var(--background)] px-3 py-2 text-sm text-[var(--foreground)]"><option value="">Select model...</option>{modelOptions.map((id) => <option key={id} value={id}>{id}</option>)}</select><Button variant="outline" onClick={() => updateSelected({ models: selected.models.filter((_, i) => i !== index) })}><Trash2 className="w-4 h-4" /></Button></div>)}<Button variant="outline" onClick={() => updateSelected({ models: [...selected.models, ""] })}><Plus className="w-4 h-4 mr-2" /> Add model</Button></div></div>
-          {selected.strategy === "fusion" && <div><label className="text-sm text-[var(--foreground)]">Judge model</label><select value={selected.judgeModel || ""} onChange={(e) => updateSelected({ judgeModel: e.target.value })} className="mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--background)] px-3 py-2 text-sm text-[var(--foreground)]"><option value="">Select judge...</option>{modelOptions.map((id) => <option key={id} value={id}>{id}</option>)}</select><p className="text-xs text-amber-400 mt-1">Fusion bills every panel model plus judge: N+1 upstream calls.</p></div>}
-          <div className="flex justify-end gap-2"><Button variant="outline" onClick={() => setSelected(null)}>Cancel</Button><Button onClick={save} disabled={saving}><Save className="w-4 h-4 mr-2" />{saving ? "Saving..." : "Save combo"}</Button></div>
-        </CardContent></Card> : <Card><CardContent className="py-16 text-center text-sm text-[var(--muted-foreground)]">Select combo or create new.</CardContent></Card>}
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Saved combos</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            {combos.map((combo) => (
+              <div key={combo.name} className="flex items-center gap-2">
+                <button
+                  onClick={() => setSelected({ ...combo, models: [...combo.models] })}
+                  className={`focus-ring min-h-[44px] flex-1 rounded px-3 py-2 text-left text-sm transition-colors duration-[var(--dur-fast)] md:min-h-0 ${
+                    selected?.name === combo.name
+                      ? "bg-[var(--primary)]/15 text-[var(--primary)]"
+                      : "text-[var(--foreground)] hover:bg-[var(--secondary)]"
+                  }`}
+                >
+                  <div className="font-medium">combo:{combo.name}</div>
+                  <div className="text-xs text-[var(--muted-foreground)]">
+                    {combo.strategy} · <span className="tabular">{combo.models.length}</span> models
+                  </div>
+                </button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  aria-label={`Delete combo ${combo.name}`}
+                  title="Delete combo"
+                  onClick={() => remove(combo.name)}
+                  className="text-[var(--muted-foreground)] hover:text-[var(--destructive)]"
+                >
+                  <Trash2 className="h-4 w-4" />
+                </Button>
+              </div>
+            ))}
+            {combos.length === 0 && (
+              <EmptyState
+                compact
+                icon={Layers}
+                title="No combos yet"
+                description="Create a combo to route one virtual model across several upstreams."
+              />
+            )}
+          </CardContent>
+        </Card>
+
+        {selected ? (
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Combo editor</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-5">
+              <Field label="Name" htmlFor="combo-name" hint="Exposed upstream as combo:<name>.">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm text-[var(--muted-foreground)]">combo:</span>
+                  <Input
+                    id="combo-name"
+                    value={selected.name}
+                    onChange={(e) => updateSelected({ name: e.target.value })}
+                    placeholder="smart"
+                    className="flex-1"
+                  />
+                </div>
+              </Field>
+
+              <Field label="Strategy">
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {strategies.map((strategy) => (
+                    <button
+                      key={strategy.id}
+                      onClick={() => updateSelected({ strategy: strategy.id })}
+                      className={`focus-ring rounded-md border p-3 text-left transition-colors duration-[var(--dur-fast)] ${
+                        selected.strategy === strategy.id
+                          ? "border-[var(--primary)] bg-[var(--primary)]/10"
+                          : "border-[var(--border)] hover:bg-[var(--secondary)]"
+                      }`}
+                    >
+                      <div className="text-sm font-medium text-[var(--foreground)]">{strategy.title}</div>
+                      <div className="mt-1 text-xs text-[var(--muted-foreground)]">{strategy.description}</div>
+                    </button>
+                  ))}
+                </div>
+              </Field>
+
+              <Field label="Panel models">
+                <div className="space-y-2">
+                  {selected.models.map((model, index) => (
+                    <div key={`${index}-${model}`} className="flex gap-2">
+                      <Select
+                        value={model}
+                        aria-label={`Panel model ${index + 1}`}
+                        onChange={(e) => {
+                          const next = [...selected.models];
+                          next[index] = e.target.value;
+                          updateSelected({ models: next });
+                        }}
+                        className="flex-1"
+                      >
+                        <option value="">Select model...</option>
+                        {modelOptions.map((id) => (
+                          <option key={id} value={id}>{id}</option>
+                        ))}
+                      </Select>
+                      <Button
+                        variant="outline"
+                        size="icon"
+                        aria-label={`Remove panel model ${index + 1}`}
+                        onClick={() => updateSelected({ models: selected.models.filter((_, i) => i !== index) })}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  ))}
+                  <Button variant="outline" onClick={() => updateSelected({ models: [...selected.models, ""] })}>
+                    <Plus className="h-4 w-4" /> Add model
+                  </Button>
+                </div>
+              </Field>
+
+              {selected.strategy === "fusion" && (
+                <Field
+                  label="Judge model"
+                  hint="Fusion bills every panel model plus judge: N+1 upstream calls."
+                >
+                  <Select
+                    value={selected.judgeModel || ""}
+                    aria-label="Judge model"
+                    onChange={(e) => updateSelected({ judgeModel: e.target.value })}
+                  >
+                    <option value="">Select judge...</option>
+                    {modelOptions.map((id) => (
+                      <option key={id} value={id}>{id}</option>
+                    ))}
+                  </Select>
+                </Field>
+              )}
+
+              <div className="flex justify-end gap-2">
+                <Button variant="outline" onClick={() => setSelected(null)}>Cancel</Button>
+                <Button onClick={save} loading={saving}>
+                  {!saving && <Save className="h-4 w-4" />} Save combo
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        ) : (
+          <Card>
+            <CardContent className="py-8">
+              <EmptyState
+                icon={Layers}
+                title="No combo selected"
+                description="Pick a saved combo on the left, or create a new one."
+              />
+            </CardContent>
+          </Card>
+        )}
       </div>
-    </div>
+    </PageShell>
   );
 }

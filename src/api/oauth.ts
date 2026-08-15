@@ -401,6 +401,223 @@ oauthRouter.get("/codex/device-code", (c) => {
   return c.json({ error: "Provider does not support device code flow" }, 400);
 });
 
+// ── Grok CLI (Grok Build): Device Code OAuth Flow ──────────────────
+// Reference: plugnowplay/9router — src/lib/oauth/providers/grok-cli.js
+//
+// Flow:
+//   1. POST /oauth/grok-cli/device-code → auth.x.ai returns device_code + user_code + verification_uri
+//   2. User visits verification_uri, enters user_code, authorizes
+//   3. POST /oauth/grok-cli/poll → poll auth.x.ai token endpoint until access_token is returned
+//   4. On success, fetch user profile from cli-chat-proxy.grok.com/v1/user
+//   5. Upsert account in DB with tokens
+
+const GROK_CLI_CLIENT_ID = "b1a00492-073a-47ea-816f-4c329264a828";
+const GROK_CLI_DEVICE_CODE_URL = "https://auth.x.ai/oauth2/device/code";
+const GROK_CLI_TOKEN_URL = "https://auth.x.ai/oauth2/token";
+const GROK_CLI_SCOPE = "openid profile email offline_access grok-cli:access api:access conversations:read conversations:write";
+const GROK_CLI_USER_AGENT = "grok-shell/0.2.99 (linux; x86_64)";
+const GROK_CLI_USER_URL = "https://cli-chat-proxy.grok.com/v1/user";
+
+
+const grokCliDeviceSessions = new Map<string, { deviceCode: string; createdAt: number }>();
+
+interface GrokCliTokenResponse {
+  access_token: string;
+  refresh_token?: string;
+  id_token?: string;
+  expires_in?: number;
+  scope?: string;
+  token_type?: string;
+  error?: string;
+  error_description?: string;
+}
+
+interface GrokCliUserProfile {
+  email?: string;
+  userId?: string;
+  hasGrokCodeAccess?: boolean;
+  subscriptionTier?: string;
+}
+
+oauthRouter.post("/grok-cli/device-code", async (c) => {
+  try {
+    const body = new URLSearchParams({
+      client_id: GROK_CLI_CLIENT_ID,
+      scope: GROK_CLI_SCOPE,
+      referrer: "grok-build",
+    });
+
+    const response = await fetch(GROK_CLI_DEVICE_CODE_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        Accept: "application/json",
+        "User-Agent": GROK_CLI_USER_AGENT,
+      },
+      body,
+    });
+
+    if (!response.ok) {
+      const text = await response.text().catch(() => "");
+      return c.json({ error: `Device code request failed: ${text.slice(0, 200)}` }, 400);
+    }
+
+    const data = await response.json() as {
+      device_code: string;
+      user_code: string;
+      verification_uri: string;
+      verification_uri_complete?: string;
+      expires_in: number;
+      interval: number;
+    };
+
+    const state = randomBytes(32).toString("base64url");
+    grokCliDeviceSessions.set(state, {
+      deviceCode: data.device_code,
+      createdAt: Date.now(),
+    });
+    const now = Date.now();
+    for (const [key, val] of grokCliDeviceSessions) {
+      if (now - val.createdAt > 15 * 60 * 1000) grokCliDeviceSessions.delete(key);
+    }
+
+    return c.json({
+      state,
+      userCode: data.user_code,
+      verificationUri: data.verification_uri,
+      verificationUriComplete: data.verification_uri_complete,
+      expiresIn: data.expires_in,
+      interval: data.interval,
+    });
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    return c.json({ error: `Device code request failed: ${msg}` }, 500);
+  }
+});
+
+oauthRouter.post("/grok-cli/poll", async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    const state = body.state as string;
+    if (!state) return c.json({ error: "state is required" }, 400);
+
+    const session = grokCliDeviceSessions.get(state);
+    if (!session) return c.json({ error: "Device code session expired or not found" }, 400);
+
+    const response = await fetch(GROK_CLI_TOKEN_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        Accept: "application/json",
+        "User-Agent": GROK_CLI_USER_AGENT,
+      },
+      body: new URLSearchParams({
+        grant_type: "urn:ietf:params:oauth:grant-type:device_code",
+        device_code: session.deviceCode,
+        client_id: GROK_CLI_CLIENT_ID,
+      }),
+    });
+
+    let data: GrokCliTokenResponse;
+    try {
+      data = await response.json() as GrokCliTokenResponse;
+    } catch {
+      const text = await response.text().catch(() => "");
+      return c.json({ error: `Token response parse error: ${text.slice(0, 200)}` }, 502);
+    }
+
+    // Device flow: authorization_pending is expected while user authorizes
+    const pending = data.error === "authorization_pending" || data.error === "slow_down";
+    if (pending) {
+      return c.json({ status: "pending", error: data.error });
+    }
+
+    if (data.error) {
+      if (data.error === "expired_token" || data.error === "access_denied") {
+        grokCliDeviceSessions.delete(state);
+        return c.json({ status: "error", error: data.error_description || data.error }, 400);
+      }
+      return c.json({ status: "error", error: data.error_description || data.error }, 400);
+    }
+
+    if (!data.access_token) {
+      return c.json({ status: "error", error: "No access_token in response" }, 502);
+    }
+
+    grokCliDeviceSessions.delete(state);
+
+    // Fetch user profile from cli-chat-proxy.grok.com
+    let profile: GrokCliUserProfile = {};
+    try {
+      const userResp = await fetch(GROK_CLI_USER_URL, {
+        headers: {
+          Authorization: `Bearer ${data.access_token}`,
+          Accept: "application/json",
+          "User-Agent": GROK_CLI_USER_AGENT,
+          "x-xai-token-auth": "xai-grok-cli",
+        },
+      });
+      if (userResp.ok) {
+        const userData = await userResp.json() as any;
+        profile = {
+          email: userData.email || undefined,
+          userId: userData.userId || userData.user_id || userData.id || undefined,
+          hasGrokCodeAccess: userData.hasGrokCodeAccess ?? undefined,
+          subscriptionTier: userData.subscriptionTier || userData.subscription_tier || undefined,
+        };
+      }
+    } catch { /* non-fatal */ }
+
+    // Try to extract email from id_token JWT
+    if (!profile.email && data.id_token) {
+      try {
+        const payload = JSON.parse(
+          Buffer.from(data.id_token.split(".")[1]!, "base64").toString("utf-8")
+        );
+        profile.email = payload.email || payload.preferred_username || undefined;
+        profile.userId = profile.userId || payload.sub || undefined;
+      } catch { /* non-fatal */ }
+    }
+
+    const email = profile.email || `grok-cli-${data.access_token.slice(-8)}@device`;
+    const expiresAt = data.expires_in
+      ? new Date(Date.now() + data.expires_in * 1000).toISOString()
+      : null;
+
+    const tokens = {
+      access_token: data.access_token,
+      refresh_token: data.refresh_token || "",
+      id_token: data.id_token || "",
+      expires_at: expiresAt,
+      email,
+      method: "device_code",
+      providerSpecificData: {
+        authMethod: "device_code",
+        idToken: data.id_token || null,
+        email: profile.email || null,
+        userId: profile.userId || null,
+        hasGrokCodeAccess: profile.hasGrokCodeAccess ?? null,
+        subscriptionTier: profile.subscriptionTier ?? null,
+      },
+    };
+
+    return c.json({
+      status: "done",
+      email,
+      tokens,
+      profile: {
+        email: profile.email || null,
+        userId: profile.userId || null,
+        hasGrokCodeAccess: profile.hasGrokCodeAccess ?? null,
+        subscriptionTier: profile.subscriptionTier ?? null,
+      },
+    });
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    return c.json({ error: `Token poll failed: ${msg}` }, 500);
+  }
+});
+
 oauthRouter.post("/:provider/poll", (c) => {
   return c.json({ error: "Unsupported provider/action" }, 400);
 });

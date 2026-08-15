@@ -12,6 +12,11 @@ import { broadcast } from "../ws/index";
 
 export const authRouter = new Hono();
 
+const ALL_LOGIN_PROVIDERS = [
+  "kiro", "kiro-pro", "codebuddy", "canva", "codex", "qoder", "gitlab-duo",
+  "youmind", "grok", "grok-cli",
+] as const;
+
 function clampNumber(value: string | undefined, fallback: number, min: number, max: number): number {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) return fallback;
@@ -176,15 +181,13 @@ authRouter.post("/bulk-add", async (c) => {
     return c.json({ error: "accounts array is required" }, 400);
   }
 
-  const providers = body.providers || ["kiro", "kiro-pro", "codebuddy", "canva", "codex"];
+  const allProviders = ["kiro", "kiro-pro", "codebuddy", "canva", "codex", "qoder", "gitlab-duo", "youmind", "grok", "grok-cli"];
+  const providers = body.providers || allProviders;
 
-  // Validate providers
-  const validProviders = providers.filter((p) =>
-    ["kiro", "kiro-pro", "codebuddy", "canva", "codex", "qoder", "gitlab-duo"].includes(p)
-  );
+  const validProviders = providers.filter((p) => allProviders.includes(p));
 
   if (validProviders.length === 0) {
-    return c.json({ error: "At least one valid provider is required (kiro, kiro-pro, codebuddy, canva, codex, qoder, gitlab-duo)" }, 400);
+    return c.json({ error: `At least one valid provider is required (${allProviders.join(", ")})` }, 400);
   }
 
   const items = body.accounts.map((a) => ({
@@ -225,7 +228,7 @@ authRouter.post("/import", async (c) => {
   }
 
   const providers = (body.providers || ["kiro", "kiro-pro", "codebuddy", "canva", "codex", "qoder"]).filter((p) =>
-    ["kiro", "kiro-pro", "codebuddy", "canva", "codex", "qoder", "gitlab-duo"].includes(p)
+    ALL_LOGIN_PROVIDERS.includes(p)
   );
 
   const lines = body.text.trim().split("\n");

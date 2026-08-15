@@ -1,19 +1,27 @@
 import TokenUsage from "@/components/dashboard/TokenUsage";
 import { useEffect, useState, useRef } from "react";
+import { Coins, RefreshCw, Zap } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { PageHeader, PageShell } from "@/components/ui/page-header";
+import { StatCard } from "@/components/ui/stat-card";
+import { SkeletonCard } from "@/components/ui/skeleton";
 import { fetchDashboardStats, fetchModelUsage } from "@/lib/api";
-import { modelColor } from "@/lib/utils";
+import { formatNumber, modelColor } from "@/lib/utils";
 import { useWsEvent } from "@/hooks/useWebSocket";
 
 export default function Usage() {
   const [stats, setStats] = useState<any>(null);
   const [modelStats, setModelStats] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
   const reloadRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   async function load() {
+    setLoading(true);
     await Promise.all([
       fetchDashboardStats().then(setStats).catch(() => setStats(null)),
       fetchModelUsage().then((res: { data: any[] }) => setModelStats(res.data || [])).catch(() => setModelStats([])),
     ]);
+    setLoading(false);
   }
 
   const scheduleReload = () => {
@@ -48,15 +56,52 @@ export default function Usage() {
   }));
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold text-[var(--foreground)]">Usage</h1>
-        <p className="text-sm text-[var(--muted-foreground)] mt-1">
-          Detailed token and credit usage analytics
-        </p>
+    <PageShell>
+      <PageHeader
+        title="Usage"
+        description="Detailed token and credit usage analytics across every model in the pool."
+        actions={
+          <Button variant="outline" size="sm" onClick={load} loading={loading}>
+            {!loading && <RefreshCw className="h-4 w-4" />}
+            Refresh
+          </Button>
+        }
+      />
+
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        {loading && !stats ? (
+          Array.from({ length: 4 }).map((_, i) => <SkeletonCard key={i} />)
+        ) : (
+          <>
+            <StatCard
+              label="Total tokens"
+              value={<span className="tabular">{formatNumber(tokenStats.total)}</span>}
+              icon={Zap}
+              tone="primary"
+            />
+            <StatCard
+              label="Prompt"
+              value={<span className="tabular">{formatNumber(tokenStats.prompt)}</span>}
+              icon={Zap}
+              tone="success"
+            />
+            <StatCard
+              label="Completion"
+              value={<span className="tabular">{formatNumber(tokenStats.completion)}</span>}
+              icon={Zap}
+              tone="info"
+            />
+            <StatCard
+              label="Credits"
+              value={<span className="tabular">{tokenStats.credits.toFixed(2)}</span>}
+              icon={Coins}
+              tone="warning"
+            />
+          </>
+        )}
       </div>
 
       <TokenUsage stats={tokenStats} modelUsage={modelUsage} />
-    </div>
+    </PageShell>
   );
 }

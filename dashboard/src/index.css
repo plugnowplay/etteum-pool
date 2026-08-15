@@ -65,6 +65,28 @@
   --shadow-card: 0 2px 4px rgba(0, 0, 0, 0.3), 0 4px 8px rgba(0, 0, 0, 0.2);
 
   --radius: 0.625rem;
+
+  /* ── Elevation scale ─────────────────────────────────────────────────
+   * Layered shadows. es-1 rests, es-2 hovers, es-3 floats (dropdown/popover),
+   * es-4 overlays (drawer/modal). Dark mode leans on darker, wider shadows. */
+  --es-1: 0 1px 2px rgba(0, 0, 0, 0.24);
+  --es-2: 0 2px 4px rgba(0, 0, 0, 0.28), 0 1px 2px rgba(0, 0, 0, 0.2);
+  --es-3: 0 8px 16px -4px rgba(0, 0, 0, 0.36), 0 4px 8px -2px rgba(0, 0, 0, 0.24);
+  --es-4: 0 24px 48px -12px rgba(0, 0, 0, 0.5), 0 12px 24px -8px rgba(0, 0, 0, 0.32);
+
+  /* Surface tiers — subtle layering above --card without new hex values */
+  --surface-1: color-mix(in srgb, var(--card) 100%, transparent);
+  --surface-2: color-mix(in srgb, var(--card) 92%, var(--foreground) 8%);
+  --surface-inset: color-mix(in srgb, var(--background) 60%, #000 40%);
+
+  /* ── Motion ──────────────────────────────────────────────────────────
+   * Durations stay short; easings are the expressive part. */
+  --dur-fast: 120ms;
+  --dur-base: 180ms;
+  --dur-slow: 280ms;
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
 .light {
@@ -113,6 +135,15 @@
   --glow: 0 0 0 1px color-mix(in srgb, var(--primary) 30%, transparent),
           0 0 14px -4px color-mix(in srgb, var(--primary) 35%, transparent);
   --shadow-card: 0 1px 2px rgba(16, 24, 20, 0.06), 0 1px 3px rgba(16, 24, 20, 0.08);
+
+  /* Light mode elevation — tighter, cooler, less opacity */
+  --es-1: 0 1px 2px rgba(16, 24, 20, 0.06);
+  --es-2: 0 2px 4px rgba(16, 24, 20, 0.08), 0 1px 2px rgba(16, 24, 20, 0.04);
+  --es-3: 0 8px 16px -4px rgba(16, 24, 20, 0.1), 0 4px 8px -2px rgba(16, 24, 20, 0.06);
+  --es-4: 0 24px 48px -12px rgba(16, 24, 20, 0.18), 0 12px 24px -8px rgba(16, 24, 20, 0.1);
+
+  --surface-2: color-mix(in srgb, var(--card) 94%, var(--foreground) 6%);
+  --surface-inset: color-mix(in srgb, var(--background) 70%, var(--foreground) 6%);
 }
 
 /*
@@ -167,6 +198,46 @@
   --radius-lg: var(--radius);
   --radius-md: calc(var(--radius) - 2px);
   --radius-sm: calc(var(--radius) - 4px);
+
+  --shadow-es-1: var(--es-1);
+  --shadow-es-2: var(--es-2);
+  --shadow-es-3: var(--es-3);
+  --shadow-es-4: var(--es-4);
+
+  --color-surface-1: var(--surface-1);
+  --color-surface-2: var(--surface-2);
+  --color-surface-inset: var(--surface-inset);
+
+  --ease-out-expo: var(--ease-out);
+  --ease-spring: var(--ease-spring);
+
+  --animate-fade-in: fade-in var(--dur-base) var(--ease-out) both;
+  --animate-slide-up: slide-up var(--dur-base) var(--ease-out) both;
+  --animate-slide-in-right: slide-in-right var(--dur-slow) var(--ease-out) both;
+  --animate-scale-in: scale-in var(--dur-fast) var(--ease-spring) both;
+  --animate-shimmer: shimmer 1.6s linear infinite;
+}
+
+/* ── Keyframes ─────────────────────────────────────────────────────────── */
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes slide-up {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes slide-in-right {
+  from { opacity: 0; transform: translateX(24px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+@keyframes scale-in {
+  from { opacity: 0; transform: scale(0.96); }
+  to { opacity: 1; transform: scale(1); }
+}
+@keyframes shimmer {
+  from { background-position: -200% 0; }
+  to { background-position: 200% 0; }
 }
 
 * {
@@ -201,6 +272,42 @@ body {
 /* Utility: neon glow ring for emphasis */
 .glow {
   box-shadow: var(--glow);
+}
+
+/* Utility: shimmer skeleton surface */
+.skeleton {
+  background-image: linear-gradient(
+    90deg,
+    var(--muted) 0%,
+    color-mix(in srgb, var(--muted) 55%, var(--foreground) 12%) 50%,
+    var(--muted) 100%
+  );
+  background-size: 200% 100%;
+  animation: var(--animate-shimmer);
+}
+
+/* Utility: consistent keyboard focus ring across custom controls */
+.focus-ring:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--background), 0 0 0 4px color-mix(in srgb, var(--ring) 70%, transparent);
+}
+
+/* Utility: numeric columns align on the decimal, not the glyph width */
+.tabular {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+}
+
+/* Respect the OS reduced-motion preference — kill animation, keep state */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }
 
 /* Custom scrollbar */

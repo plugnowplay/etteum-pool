@@ -387,18 +387,14 @@ export default function ImageStudio() {
         <div className="flex flex-wrap items-center gap-2 text-xs">
           {results.length > 0 && (
             <>
-              <div className="flex items-center gap-1.5 rounded-md border border-[var(--border)] bg-[var(--card)] px-2.5 py-1.5">
+              <Badge variant="outline" className="gap-1.5 font-normal">
                 <ImageIcon className="h-3.5 w-3.5 text-[var(--muted-foreground)]" />
-                <span className="text-[var(--muted-foreground)]">
-                  <span className="font-medium text-[var(--foreground)]">{totalImages}</span> hasil
-                </span>
-              </div>
-              <div className="flex items-center gap-1.5 rounded-md border border-[var(--border)] bg-[var(--card)] px-2.5 py-1.5">
+                <span className="tabular font-medium text-[var(--foreground)]">{totalImages}</span> hasil
+              </Badge>
+              <Badge variant="outline" className="gap-1.5 font-normal">
                 <Sparkles className="h-3.5 w-3.5 text-[var(--warning)]" />
-                <span className="text-[var(--muted-foreground)]">
-                  <span className="font-medium text-[var(--foreground)]">{totalCredits}</span> credits
-                </span>
-              </div>
+                <span className="tabular font-medium text-[var(--foreground)]">{totalCredits}</span> credits
+              </Badge>
             </>
           )}
         </div>
@@ -409,7 +405,7 @@ export default function ImageStudio() {
         {/* LEFT: Chat panel with settings strip on top */}
         <div className="flex h-full min-h-0 flex-col gap-2">
           {/* Settings strip — minimal, always visible above chat */}
-          <div className="flex flex-wrap items-center gap-1.5 rounded-lg border border-[var(--border)] bg-[var(--card)] px-2 py-1.5">
+          <div className="flex flex-wrap items-center gap-1.5 rounded-lg border border-[var(--border)] bg-[var(--surface-2)] px-2 py-1.5 shadow-[var(--es-1)]">
             <Bot className="h-3.5 w-3.5 text-[var(--muted-foreground)]" />
             <div className="relative">
               <select
@@ -507,7 +503,7 @@ export default function ImageStudio() {
           </div>
 
           {/* Chat panel */}
-          <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--card)]">
+          <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--card)] shadow-[var(--es-1)]">
           <div className="flex items-center justify-between border-b border-[var(--border)] bg-gradient-to-r from-[var(--card)] to-[var(--card)]/50 px-4 py-3">
             <div className="flex items-center gap-2">
               <div className="flex h-7 w-7 items-center justify-center rounded-md bg-[var(--primary)]/10">
@@ -715,7 +711,7 @@ export default function ImageStudio() {
         </div>
 
         {/* RIGHT: Preview panel */}
-        <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--card)]">
+        <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--card)] shadow-[var(--es-1)]">
           <div className="flex items-center justify-between border-b border-[var(--border)] px-4 py-3">
             <div className="flex items-center gap-2">
               <div className="flex h-7 w-7 items-center justify-center rounded-md bg-[var(--success)]/10">
