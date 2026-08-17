@@ -139,6 +139,7 @@ export default function Accounts() {
   } | null>(null);
   const [grokCliAutoPolling, setGrokCliAutoPolling] = useState(false);
   const [grokCliAccessToken, setGrokCliAccessToken] = useState("");
+  const [grokCliBulkTokens, setGrokCliBulkTokens] = useState("");
   const [grokCliError, setGrokCliError] = useState<string | null>(null);
   const [grokCliBusy, setGrokCliBusy] = useState(false);
   const [codebuddyChinaApiKey, setCodebuddyChinaApiKey] = useState("");
@@ -600,6 +601,37 @@ export default function Accounts() {
       setGrokCliAccessToken("");
       setAddDialogProvider(null);
       await load();
+    } catch (err) {
+      setGrokCliError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setGrokCliBusy(false);
+    }
+  }
+
+  async function handleGrokCliBulkTokens() {
+    const text = grokCliBulkTokens.trim();
+    if (!text) { setGrokCliError("Paste access tokens (one per line)"); return; }
+    const tokens = text.split("\n").map((t) => t.trim()).filter(Boolean);
+    if (tokens.length === 0) { setGrokCliError("No valid tokens found"); return; }
+    setGrokCliBusy(true);
+    setGrokCliError(null);
+    try {
+      const res = await fetchApi<any>("/api/accounts", {
+        method: "POST",
+        body: JSON.stringify({ provider: "grok-cli", accessTokens: text }),
+      });
+      const parts: string[] = [];
+      if (res.created) parts.push(`${res.created} created`);
+      if (res.updated) parts.push(`${res.updated} updated`);
+      if (res.errors?.length) parts.push(`${res.errors.length} failed`);
+      showSuccess(`Grok CLI bulk: ${parts.join(", ") || "no changes"}`);
+      if (res.errors?.length) {
+        setGrokCliError(res.errors.map((e: any) => `…${e.token}: ${e.error}`).join("\n"));
+      } else {
+        setGrokCliBulkTokens("");
+        setAddDialogProvider(null);
+        await load();
+      }
     } catch (err) {
       setGrokCliError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -1895,6 +1927,9 @@ export default function Accounts() {
               <button onClick={() => setAddMode("pat")}
                 className={`flex-1 rounded px-3 py-1.5 text-xs font-medium transition-colors ${addMode === "pat" ? "bg-[var(--background)] text-[var(--foreground)] shadow-sm" : "text-[var(--muted-foreground)]"}`}
               >OAuth Device Code</button>
+              <button onClick={() => setAddMode("token")}
+                className={`flex-1 rounded px-3 py-1.5 text-xs font-medium transition-colors ${addMode === "token" ? "bg-[var(--background)] text-[var(--foreground)] shadow-sm" : "text-[var(--muted-foreground)]"}`}
+              >Bulk Token</button>
             </div>
           ) : addDialogProvider === "codebuddy" ? (
             <div className="flex gap-1 rounded-md bg-[var(--secondary)] p-1">
@@ -2049,6 +2084,31 @@ export default function Accounts() {
                   </div>
                 </>
               )}
+            </div>
+          )}
+
+          {addMode === "token" && addDialogProvider === "grok-cli" && (
+            <div className="space-y-4">
+              <div>
+                <label className="text-sm text-[var(--foreground)]">Grok CLI Access Tokens (bulk)</label>
+                <textarea
+                  value={grokCliBulkTokens}
+                  onChange={(e) => setGrokCliBulkTokens(e.target.value)}
+                  className="mt-1 w-full h-32 rounded-md border border-[var(--border)] bg-[var(--background)] p-3 text-sm font-mono text-[var(--foreground)] placeholder:text-[var(--muted-foreground)] focus:outline-none focus:ring-1 focus:ring-[var(--ring)] resize-none"
+                  placeholder={"eyJ0eX...d3Qi…\neyJ0eX...d3Qi…\neyJ0eX...d3Qi…"}
+                  disabled={grokCliBusy}
+                />
+                <p className="mt-1 text-xs text-[var(--muted-foreground)]">
+                  Satu access token per baris. Setiap token divalidasi via xAI billing/profile. Duplikat di-update, bukan di-skip.
+                </p>
+              </div>
+              {grokCliError && <p className="text-xs text-[var(--error)] whitespace-pre-line">{grokCliError}</p>}
+              <div className="flex justify-end gap-2">
+                <Button variant="outline" onClick={() => setAddDialogProvider(null)} disabled={grokCliBusy}>Cancel</Button>
+                <Button onClick={handleGrokCliBulkTokens} disabled={grokCliBusy || !grokCliBulkTokens.trim()}>
+                  {grokCliBusy ? (<><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Importing...</>) : "Import & Validate"}
+                </Button>
+              </div>
             </div>
           )}
 

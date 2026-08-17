@@ -1721,6 +1721,100 @@ accountsRouter.post("/", async (c) => {
     }
   }
 
+  // ── Grok CLI: Bulk Access Token import ──────────────────────────────
+  // Accepts one access token per line. Each token is validated via
+  // fetchGrokCliUserProfile (same as single flow). Skips duplicates,
+  // collects successes + failures, returns a summary.
+  if (body.provider === "grok-cli" && body.accessTokens) {
+    const tokensList = String(body.accessTokens)
+      .split("\n")
+      .map((t: string) => t.trim())
+      .filter((t: string) => t.length > 0);
+
+    if (tokensList.length === 0) {
+      return c.json({ error: "accessTokens is empty" }, 400);
+    }
+
+    for (const tok of tokensList) {
+      if (tok.length < 20) {
+        return c.json({ error: `Access token too short (min 20 chars): ${tok.substring(0, 12)}...` }, 400);
+      }
+    }
+
+    const created: Array<{ id: number; email: string }> = [];
+    const updated: Array<{ id: number; email: string }> = [];
+    const errors: Array<{ token: string; error: string }> = [];
+
+    for (const accessToken of tokensList) {
+      try {
+        const profile = await fetchGrokCliUserProfile(accessToken);
+        const finalEmail = profile.email || `grok-cli-${accessToken.slice(-8)}@device`;
+        const tokens = {
+          access_token: accessToken,
+          refresh_token: "",
+          id_token: "",
+          expires_at: null as string | null,
+          email: finalEmail,
+          method: "device_code" as const,
+          providerSpecificData: {
+            authMethod: "device_code",
+            email: profile.email || null,
+            userId: profile.userId || null,
+            hasGrokCodeAccess: profile.hasGrokCodeAccess ?? null,
+            subscriptionTier: profile.subscriptionTier ?? null,
+          },
+        };
+
+        const existing = await db.select().from(accounts)
+          .where(eq(accounts.email, finalEmail))
+          .then((rows) => rows.find((r) => r.provider === "grok-cli"));
+
+        if (existing) {
+          await db.update(accounts).set({
+            password: encrypt(accessToken),
+            status: "active",
+            tokens,
+            metadata: { ...profile, validated_at: new Date().toISOString() } as unknown,
+            errorMessage: null,
+            lastLoginAt: new Date(),
+            updatedAt: new Date(),
+          }).where(eq(accounts.id, existing.id));
+          updated.push({ id: existing.id, email: finalEmail });
+        } else {
+          const inserted = await db.insert(accounts).values({
+            provider: "grok-cli",
+            email: finalEmail,
+            password: encrypt(accessToken),
+            status: "active",
+            tokens,
+            metadata: { ...profile, validated_at: new Date().toISOString() } as unknown,
+            quotaLimit: 500_000,
+            quotaRemaining: 500_000,
+            lastLoginAt: new Date(),
+          }).returning();
+          if (inserted[0]) {
+            created.push({ id: inserted[0].id, email: finalEmail });
+            broadcast({ type: "account_created", data: { id: inserted[0].id, provider: "grok-cli", email: finalEmail } });
+          }
+        }
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        errors.push({ token: accessToken.slice(-8), error: msg });
+      }
+    }
+
+    pool.invalidate("grok-cli" as ProviderName);
+    broadcast({ type: "account_updated", data: { provider: "grok-cli", status: "active" } });
+
+    return c.json({
+      success: true,
+      count: created.length + updated.length,
+      created: created.length,
+      updated: updated.length,
+      errors,
+    }, 201);
+  }
+
   // ── Grok CLI (Grok Build): OAuth device code token import ──────────
   if (body.provider === "grok-cli" && body.accessToken) {
     const accessToken = String(body.accessToken).trim();
