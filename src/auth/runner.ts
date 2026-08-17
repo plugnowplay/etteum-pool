@@ -85,6 +85,7 @@ interface ScriptResultEvent {
   type: "result";
   kiro: ProviderResult;
   codebuddy: ProviderResult;
+  "codebuddy-github": ProviderResult;
   canva: ProviderResult;
   [key: string]: unknown;
 }
@@ -534,6 +535,17 @@ export async function loginAccount(account: Account, options: LoginOptions = {})
     // Success! Store credentials and quota
     const credentials = providerResult.credentials || {};
     const quota = providerResult.quota || {};
+
+    // codebuddy-github is an alternate login path (GitHub OAuth) that yields the
+    // same CodeBuddy access_token as the Gmail flow. Rebrand the account to the
+    // regular "codebuddy" provider so the existing codebuddy proxy can serve it.
+    if (provider === "codebuddy-github") {
+      await db
+        .update(accounts)
+        .set({ provider: "codebuddy", updatedAt: new Date() })
+        .where(eq(accounts.id, account.id));
+      account.provider = "codebuddy";
+    }
 
     // GitLab Duo: the bot returned a freshly-generated PAT. Hand it off to the
     // canonical account-creation pipeline (`createGitlabDuoAccount`) which

@@ -1,42 +1,36 @@
 """
-CodeBuddy GitHub Auth Provider - Creates GitHub accounts via signup and logs into CodeBuddy.
+CodeBuddy GitHub OAuth Provider - Login to CodeBuddy using an existing GitHub account.
 
-Flows:
-1. GitHub Account Creation: Create new GitHub account at github.com/signup
-   - Fill form with provided credentials
-   - Verify email via IMAP (read verification email, extract link)
-   - Click verification link in browser
+Flow:
+1. Navigate to CodeBuddy login page
+2. Click "Sign in with GitHub" button
+3. Authenticate with the user's existing GitHub account
+4. Authorize CodeBuddy access
+5. Capture session/access tokens (NO API key creation per user request)
 
-2. CodeBuddy GitHub OAuth Login:
-   - Navigate to CodeBuddy login page
-   - Click "Sign in with GitHub" button
-   - Authenticate with the newly created GitHub account
-   - Authorize CodeBuddy access
-   - Capture session/access tokens (NO API key creation per user request)
+Input format: github_email|github_password
 
-Input format: github_email|github_password|imap_host|imap_port|imap_user|imap_pass
-
-Note: This adapter creates a fresh GitHub account, then uses it solely to log into
-CodeBuddy. The result is stored as a CodeBuddy token (access_token, web_cookie) WITHOUT
-creating an API key, matching the user's requirement: "jangan create apiket, pakai akses token aja".
+Note: Per user request "jangan bikin akun github tapi oauth pakai github" — this
+adapter does NOT create a GitHub account. It uses the user's existing GitHub
+credentials to log into CodeBuddy via GitHub OAuth. The result is stored as a
+CodeBuddy token (access_token, refresh_token, web_cookie) WITHOUT creating an API key.
 """
 
 import asyncio
 import json
 import os
 import re
-from datetime import datetime
+from pathlib import Path
 from typing import Any
+from urllib.parse import quote, unquote, urlparse
 
-from playwright.async_api import async_playwright
-
-from .base import (
-    ErrorCode,
-    NormalizedAccount,
-    NonRetryableBatcherError,
-    ProviderAdapter,
-    ProviderResult,
-    RetryableBatcherError,
+from app.errors.codes import ErrorCode
+from app.errors.exceptions import NonRetryableBatcherError, RetryableBatcherError
+from app.providers.base import NormalizedAccount, ProviderAdapter
+from app.providers.browser_utils import (
+    OAUTH_FIREFOX_PREFS,
+    build_camoufox_kwargs,
+    is_browser_crash,
 )
 
 COOKIES_DIR = Path(__file__).parent.parent.parent.parent / "cookies"
@@ -48,6 +42,11 @@ CODEBUDDY_PLATFORM = os.getenv("BATCHER_CODEBUDDY_PLATFORM", "IDE").upper() or "
 CODEBUDDY_STATE_ENDPOINT = os.getenv(
     "BATCHER_CODEBUDDY_STATE_ENDPOINT",
     f"{CODEBUDDY_BASE_URL}/v2/plugin/auth/state?platform={CODEBUDDY_PLATFORM}",
+)
+
+BROWSER_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 )
 
 
@@ -64,8 +63,87 @@ def _emit_oauth_progress(message: str):
         pass
 
 
+def _get_proxy_url() -> str | None:
+    """Proxy URL injected by the TS runner (BATCHER_PROXY_URL) or the shell env.
+
+    CodeBuddy is not reachable directly from every host, so the browser must go
+    through the same proxy pool the rest of the CodeBuddy flow uses.
+    """
+    return (
+        os.getenv("BATCHER_PROXY_URL")
+        or os.getenv("HTTPS_PROXY")
+        or os.getenv("HTTP_PROXY")
+        or None
+    )
+
+
+def _playwright_proxy() -> dict[str, str] | None:
+    """Translate the proxy URL into a Playwright/camoufox proxy config.
+
+    Kept as a helper for callers that need the parsed form; camoufox itself is
+    configured through build_camoufox_kwargs(proxy_url=...).
+    """
+    url = _get_proxy_url()
+    if not url:
+        return None
+    parsed = urlparse(url)
+    if not parsed.hostname:
+        return None
+    server = f"{parsed.scheme or 'http'}://{parsed.hostname}"
+    if parsed.port:
+        server += f":{parsed.port}"
+    cfg: dict[str, str] = {"server": server}
+    if parsed.username:
+        cfg["username"] = unquote(parsed.username)
+    if parsed.password:
+        cfg["password"] = unquote(parsed.password)
+    return cfg
+
+
+async def _launch_camoufox() -> tuple[Any, Any]:
+    """Launch camoufox (Firefox) through the proxy pool.
+
+    Chromium/Playwright crashes ("Target crashed", ERR_INSUFFICIENT_RESOURCES)
+    on CodeBuddy's Keycloak page on this VPS, even with --disable-dev-shm-usage
+    and JS disabled. Camoufox with OAUTH_FIREFOX_PREFS (fission off, COOP/COEP
+    off) loads the same page reliably, so every other CodeBuddy-family provider
+    in this repo uses it — this one does too.
+
+    Returns (manager, browser); the caller must call
+    ``await manager.__aexit__(None, None, None)``.
+    """
+    try:
+        from camoufox.async_api import AsyncCamoufox
+    except Exception as exc:
+        raise RetryableBatcherError(
+            ErrorCode.browser_start_failed,
+            f"camoufox import failed: {exc}",
+        ) from exc
+
+    kwargs = build_camoufox_kwargs(
+        proxy_url=_get_proxy_url() or "",
+        headless_default="true",
+        default_timeout=60000,
+        disable_coop=True,
+        firefox_user_prefs=OAUTH_FIREFOX_PREFS,
+    )
+    default_timeout = kwargs.pop("_default_timeout")
+
+    try:
+        manager = AsyncCamoufox(**kwargs)
+        browser = await manager.__aenter__()
+    except Exception as exc:
+        raise RetryableBatcherError(
+            ErrorCode.browser_start_failed,
+            f"camoufox launch failed: {exc}",
+        ) from exc
+
+    _debug(f"camoufox launched (proxy={'yes' if kwargs.get('proxy') else 'no'})")
+    return manager, browser, default_timeout
+
+
 class CodeBuddyGitHubProviderAdapter(ProviderAdapter):
-    """Adapter for creating GitHub accounts + logging into CodeBuddy via GitHub OAuth."""
+    """Adapter for logging into CodeBuddy via GitHub OAuth with an existing GitHub account."""
 
     name = "codebuddy-github"
 
@@ -73,21 +151,21 @@ class CodeBuddyGitHubProviderAdapter(ProviderAdapter):
         super().__init__()
 
     async def parse_account(self, raw_line: str) -> NormalizedAccount:
-        """Parse input line: github_email|github_password|imap_host|imap_port|imap_user|imap_pass"""
+        """Parse input line: github_email|github_password"""
         parts = [part.strip() for part in raw_line.split("|")]
 
-        if len(parts) != 6:
+        if len(parts) != 2:
             raise NonRetryableBatcherError(
                 ErrorCode.input_invalid_format,
-                "codebuddy-github account requires github_email|github_password|imap_host|imap_port|imap_user|imap_pass",
+                "codebuddy-github account requires github_email|github_password",
             )
 
-        github_email, github_password, imap_host, imap_port, imap_user, imap_pass = parts
+        github_email, github_password = parts
 
-        if not all([github_email, github_password, imap_host, imap_port, imap_user, imap_pass]):
+        if not github_email or not github_password:
             raise NonRetryableBatcherError(
                 ErrorCode.input_missing_required_field,
-                "All fields required: email, password, and full IMAP config",
+                "Both github_email and github_password are required",
             )
 
         # Validate email format
@@ -98,442 +176,264 @@ class CodeBuddyGitHubProviderAdapter(ProviderAdapter):
                 "GitHub email format is invalid",
             )
 
-        # Validate IMAP port
-        try:
-            port = int(imap_port)
-            if port < 1 or port > 65535:
-                raise ValueError("Invalid IMAP port")
-        except ValueError:
-            raise NonRetryableBatcherError(
-                ErrorCode.input_invalid_format,
-                f"IMAP port must be a valid number (1-65535), got: {imap_port}",
-            )
-
         metadata = {
             "github_email": github_email,
-            "created_via": "github_signup",
+            "github_password": github_password,
+            "created_via": "github_oauth",
         }
 
         return NormalizedAccount(
             provider=self.name,
-            id=f"github-{github_email.replace('@', '-').replace('.', '-')}",
             identifier=github_email,
+            secret=github_password,
             metadata=metadata,
+            raw=raw_line,
         )
 
     async def bootstrap_session(self, account: NormalizedAccount) -> dict[str, Any]:
-        """Create a new GitHub account via signup + verify email via IMAP."""
-        _debug("Starting GitHub account creation")
+        """No separate bootstrap needed — OAuth login happens in authenticate()."""
+        return {}
 
-        async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=True)
-            context = await browser.new_context(
-                viewport={"width": 1280, "height": 720},
-                cookies=[{"name": "logged_in", "value": "false", "domain": ".github.com"}],
-            )
-            page = await context.new_page()
-
-            # Step 1: Navigate to GitHub signup
-            _debug(f"Navigating to {GITHUB_BASE_URL}/signup")
-            await page.goto(f"{GITHUB_BASE_URL}/signup", wait_until="domcontentloaded")
-
-            # Extract email and set random username
-            github_email = account.metadata["github_email"]
-            # Generate username from email local part + timestamp
-            import time
-            username = f"user{int(time.time() * 1000)}"
-
-            # Fill signup form
-            _debug("Filling GitHub signup form")
-            await page.fill("#user_login", username)
-            await page.fill("#user_email", github_email)
-            await page.fill("#user_password", github_email)  # Temporary password, will be verified
-
-            # Look for "Continue" button and click
-            continue_btn = await page.query_selector('button[type="submit"], input[type="submit"]')
-            if continue_btn:
-                await continue_btn.click()
-                _debug("Clicked signup Continue button")
-
-            # Wait for "Verify your email address" page
-            try:
-                await page.wait_for_selector(".form-group.email-code", timeout=10000)
-                _debug("Email verification page detected")
-            except Exception:
-                # Try alternative selector
-                try:
-                    await page.wait_for_selector(".form-group input[name='code']", timeout=10000)
-                    _debug("Email verification page detected (alternative selector)")
-                except Exception:
-                    # If we can't find verification page, check if there was an error
-                    alert = await page.query_selector(".js-error-message, .error-summary")
-                    if alert:
-                        error_text = await alert.inner_text()
-                        raise NonRetryableBatcherError(
-                            ErrorCode.login_failed,
-                            f"GitHub signup failed: {error_text[:200]}",
-                        )
-                    raise NonRetryableBatcherError(
-                        ErrorCode.login_failed,
-                        "Could not detect email verification page after signup",
-                    )
-
-            # Step 2: Read verification email via IMAP
-            _debug(f"Checking IMAP inbox for GitHub verification email from {github_email}")
-            verification_code = await self._check_imap_for_verification(github_email, github_password, gh_imap_host, gh_imap_port, gh_imap_user, gh_imap_pass)
-
-            if not verification_code:
-                # Wait a bit more and retry
-                await asyncio.sleep(10)
-                verification_code = await self._check_imap_for_verification(github_email, github_password, gh_imap_host, gh_imap_port, gh_imap_user, gh_imap_pass)
-
-            if not verification_code:
-                raise RetryableBatcherError(
-                    ErrorCode.retry,
-                    "No GitHub verification email found in IMAP inbox after multiple attempts",
-                )
-
-            # Step 3: Enter verification code on page
-            _debug(f"Entering verification code: {verification_code}")
-            # Find the email code input field
-            code_input = await page.query_selector(".form-group.email-code input")
-            if code_input:
-                await code_input.fill(verification_code)
-            else:
-                # Alternative selector
-                code_input = await page.query_selector(".form-group input[name='code']")
-                if code_input:
-                    await code_input.fill(verification_code)
-
-            # Submit verification
-            verify_btn = await page.query_selector('button[type="submit"], button[value="verify"]')
-            if verify_btn:
-                await verify_btn.click()
-                _debug("Submitted email verification")
-
-            # Wait for successful verification
-            try:
-                await page.wait_for_timeout(5000)
-                # Check if we're on a success page
-                if await page.query_selector(".flash-success"):
-                    _debug("Email verified successfully")
-                else:
-                    _debug("Verification completed, waiting for redirect")
-            except Exception:
-                _debug("Verification may have redirected, continuing...")
-
-            # After verification, navigate to complete account setup if needed
-            # GitHub usually redirects to profile/setup after email verification
-
-            session = {"browser": browser, "context": context, "page": page}
-
-            _debug("GitHub account created and verified")
-            return session
-
-    async def _check_imap_for_verification(
-        self, github_email: str, github_password: str, imap_host: str, imap_port: str, imap_user: str, imap_pass: str
-    ) -> str | None:
-        """Check IMAP inbox for GitHub verification email and extract verification code/link."""
-        import imghashlib
-
-        try:
-            # Use aioimaplib for async IMAP operations
-            from aioimaplib import IOIMAP4
-
-            # Connect to IMAP server
-            imap = await IOIMAP4(imap_host, int(imap_port))
-            await imap.login(imap_user, imap_pass)
-            await imap.select("INBOX")
-
-            # Search for GitHub verification emails
-            status, messages = await imap.search(None, '(FROM "noreply@github.com" UNSEEN)')
-
-            if status != "OK" or not messages:
-                # Try broader search
-                status, messages = await imap.search(None, '(SUBJECT "verify" FROM "github.com")')
-
-            if status != "OK" or not messages:
-                await imap.close()
-                await imap.logout()
-                return None
-
-            # Get latest message ID
-            msg_uid = messages[-1].decode()
-
-            # Fetch the email
-            status, data = await imap.fetch(msg_uid, "(RFC822)")
-
-            if status != "OK":
-                await imap.close()
-                await imap.logout()
-                return None
-
-            # Parse email content
-            email_body = b"".join(data).decode("utf-8", errors="ignore")
-
-            # Extract verification code (GitHub sends a 6-digit code OR a URL)
-            # Pattern 1: Direct code like "Your verification code is XXXXXX"
-            code_pattern = r"(?i)(?:your verification code is|verification code)[:\s]+(\d{6})"
-            match = re.search(code_pattern, email_body)
-            if match:
-                await imap.close()
-                await imap.logout()
-                return match.group(1)
-
-            # Pattern 2: Verification URL like https://github.com/verify/email/xxx
-            url_pattern = r"https://github\.com/\S+confirm-email(?:[^\"'>\s]*)+"
-            match = re.search(url_pattern, email_body)
-            if match:
-                _debug("Found GitHub verification URL, but browser will need to follow it")
-                # For now, return empty string to indicate URL-based verification needed
-                await imap.close()
-                await imap.logout()
-                return ""
-
-            await imap.close()
-            await imap.logout()
-            return None
-
-        except ImportError:
-            # Fallback: use standard imaplib synchronously
-            import imaplib
-            import email
-            from email import policy
-            from email.parser import BytesParser
-
-            conn = imaplib.IMAP4_SSL(imap_host, int(imap_port))
-            conn.login(imap_user, imap_pass)
-            conn.select("INBOX")
-
-            status, data = conn.search(None, '(FROM "noreply@github.com" UNSEEN)')
-            if status != "OK" or not data[0]:
-                conn.close()
-                conn.logout()
-                return None
-
-            # Fetch latest email
-            latest_uid = data[0].split()[-1]
-            status, email_data = conn.fetch(latest_uid, "(RFC822)")
-
-            msg = BytesParser(policy=policy.default).parsebytes(email_data[1][1])
-
-            # Parse body
-            body = ""
-            if msg.is_multipart():
-                for part in msg.walk():
-                    content_type = part.get_content_type()
-                    content_disposition = str(part.get_content_disposition())
-                    if content_type == "text/plain" and "attachment" not in content_disposition:
-                        try:
-                            body += part.get_payload(decode=True).decode("utf-8", errors="ignore")
-                        except Exception:
-                            pass
-            else:
-                try:
-                    body = msg.get_payload(decode=True).decode("utf-8", errors="ignore")
-                except Exception:
-                    pass
-
-            # Extract code
-            code_pattern = r"(?i)(?:your verification code is|verification code)[:\s]+(\d{6})"
-            match = re.search(code_pattern, body)
-            if match:
-                conn.close()
-                conn.logout()
-                return match.group(1)
-
-            conn.close()
-            conn.logout()
-            return None
-
-    async def authenticate(self, account: NormalizedAccount, auth_state: dict[str, Any], session: Any) -> dict[str, str]:
-        """Login to CodeBuddy using GitHub OAuth."""
+    async def authenticate(self, account: NormalizedAccount, session: Any) -> dict[str, Any]:
+        """Login to CodeBuddy using GitHub OAuth. Returns tokens dict."""
         _debug("Starting CodeBuddy authentication via GitHub OAuth")
 
-        browser = session.get("browser")
-        context = session.get("context")
-        page = session.get("page")
+        github_email = account.metadata.get("github_email") or account.identifier
+        github_password = account.metadata.get("github_password") or account.secret
 
-        if not all([browser, context, page]):
+        if not github_email or not github_password:
             raise NonRetryableBatcherError(
-                ErrorCode.login_failed,
-                "Browser session not initialized",
+                ErrorCode.input_missing_required_field,
+                "codebuddy-github requires a GitHub email and password",
             )
 
-        # Step 1: Get state from CodeBuddy
-        _debug("Fetching CodeBuddy auth state")
-        state_data = None
+        manager, browser, default_timeout = await _launch_camoufox()
+        tokens: dict[str, str] = {}
+        try:
+            page = await browser.new_page()
+            page.set_default_timeout(default_timeout)
+            context = page.context
 
-        async with async_playwright() as p:
-            # New browser instance for clean OAuth flow
-            new_browser = await p.chromium.launch(headless=True)
-            new_context = await new_browser.new_context()
-            new_page = await new_context.new_page()
+            # ── Step 1: get device-flow state so the token can be claimed later ──
+            _emit_oauth_progress("Requesting CodeBuddy auth state")
+            state = ""
+            try:
+                resp = await page.request.post(CODEBUDDY_STATE_ENDPOINT, data="{}")
+                if resp.status == 200:
+                    payload = await resp.json()
+                    state = str((payload.get("data") or {}).get("state") or "")
+            except Exception as exc:
+                _debug(f"state request failed: {exc}")
 
-            _debug(f"Navigating to {CODEBUDDY_BASE_URL}")
-            await new_page.goto(CODEBUDDY_BASE_URL, wait_until="networkidle")
+            if not state:
+                raise RetryableBatcherError(
+                    ErrorCode.auth_temporary_failure,
+                    "codebuddy auth/state did not return a state",
+                )
+            _debug(f"state acquired: {state[:8]}…")
 
-            # Step 2: Find and click GitHub social button
-            _debug("Looking for GitHub sign-in button")
+            # ── Step 2: open Keycloak login directly ─────────────────────────
+            # The /login page renders the Keycloak form inside an iframe via a
+            # heavy SPA bundle. Navigating straight to the Keycloak endpoint
+            # skips the SPA entirely — it is plain server-rendered HTML that
+            # carries the social-login (broker) links.
+            redirect_uri = f"{CODEBUDDY_BASE_URL}/login?platform={CODEBUDDY_PLATFORM}&state={state}"
+            keycloak_url = (
+                f"{CODEBUDDY_BASE_URL}/auth/realms/copilot/protocol/openid-connect/auth"
+                f"?client_id=console&response_type=code"
+                f"&redirect_uri={quote(redirect_uri, safe='')}"
+                f"&v=2210&product=codebuddy"
+            )
+            _emit_oauth_progress("Opening CodeBuddy (Keycloak) login")
+            _debug("Navigating to Keycloak auth endpoint")
+            await page.goto(keycloak_url, wait_until="domcontentloaded", timeout=90000)
+            await page.wait_for_timeout(2500)
 
-            # Try multiple selectors for GitHub social button
-            github_buttons = [
-                'a[href*="/broker/github/login"]',
-                "#social-github",
-                'button[aria-label*="GitHub"]',
-                'button[data-testid="github-signin"]',
-                "text=GitHub",
-                "text=Sign in with GitHub",
-                "text=Continue with GitHub",
-            ]
+            # ── Step 3: follow the GitHub identity-provider (broker) link ────
+            # Clicking is unreliable: Keycloak renders two #social-github links
+            # (sign-up pane + login pane) and gates the click behind a policy
+            # checkbox whose own JS handler never fires headless. Reading the
+            # href and navigating to it directly carries the same session_code
+            # and lands on github.com.
+            broker_href = await page.evaluate(
+                """() => {
+                    const links = [...document.querySelectorAll(
+                        'a#social-github, a[href*="broker/github/login"]')];
+                    const visible = links.find(a => a.offsetParent !== null);
+                    return (visible || links[0] || {}).href || null;
+                }"""
+            )
 
-            clicked_github = False
-            for selector in github_buttons:
-                btn = await new_page.query_selector(selector)
-                if btn:
-                    text = await btn.inner_text() if await btn.evaluate("el => el.innerText") else ""
-                    if "Github" in text.capitalize() or "Github" in selector:
-                        await btn.click()
-                        clicked_github = True
-                        _debug(f"Clicked GitHub button via selector: {selector}")
-                        break
-                    elif any(keyword.lower() in text.lower() for keyword in ["github", "signin", "continue with"]):
-                        await btn.click()
-                        clicked_github = True
-                        _debug(f"Clicked button with text '{text}'")
-                        break
-
-            if not clicked_github:
+            if not broker_href:
                 raise NonRetryableBatcherError(
-                    ErrorCode.login_failed,
-                    "No GitHub sign-in button found on CodeBuddy login page",
+                    ErrorCode.browser_element_not_found,
+                    "No GitHub broker link found on CodeBuddy Keycloak login page",
                 )
 
-            # Step 3: Handle GitHub login page
-            _debug("At GitHub login page - entering credentials")
+            _debug(f"Following GitHub broker link: {broker_href[:70]}…")
+            await page.goto(broker_href, wait_until="domcontentloaded", timeout=90000)
+            await page.wait_for_timeout(3000)
 
+            # Wait for GitHub's own login form (github.com)
+            _emit_oauth_progress("GitHub login page")
             try:
-                # Wait for GitHub login form
-                await new_page.wait_for_selector("input[name='login']", timeout=10000)
+                await page.wait_for_selector("input[name='login']", timeout=30000)
+            except Exception:
+                current = page.url
+                raise NonRetryableBatcherError(
+                    ErrorCode.browser_unexpected_state,
+                    f"GitHub login page did not appear (at {current[:120]})",
+                )
 
-                # Fill GitHub credentials
-                github_email = account.metadata["github_email"]
+            await page.fill("input[name='login']", github_email)
+            await page.fill("input[name='password']", github_password)
 
-                # Clear existing value and fill
-                await new_page.fill("input[name='login']", github_email)
-                await new_page.fill("input[name='password']", github_email)  # Using same as signup password
+            signin_btn = await page.query_selector("input[type='submit'][name='commit']") or await page.query_selector("button[type='submit']")
+            if signin_btn:
+                await signin_btn.click()
+                _debug("Submitted GitHub login credentials")
 
-                # Click Sign in
-                signin_btn = await new_page.query_selector("button.btn-primary")
-                if not signin_btn:
-                    # Try alternative
-                    signin_btn = await new_page.query_selector('input[type="submit"][value*="Sign in"]')
+            # Wait for redirect back to CodeBuddy
+            try:
+                await page.wait_for_load_state("domcontentloaded", timeout=30000)
+            except Exception:
+                pass
 
-                if signin_btn:
-                    await signin_btn.click()
-                    _debug("Submitted GitHub login credentials")
-
-                # Wait for redirect back to CodeBuddy
-                await new_page.wait_for_load_state("domcontentloaded", timeout=30000)
-                _debug("Received OAuth callback from GitHub")
-
-            except Exception as e:
-                _debug(f"GitHub login encountered issue: {e}")
-                # Check if we're already redirected back
-                current_url = new_page.url
-                if CODEBUDDY_BASE_URL in current_url:
-                    _debug("Already redirected to CodeBuddy, checking for success")
-                else:
+            # GitHub 2FA / device verification blocks automation — fail clearly
+            try:
+                body_text = (await page.inner_text("body"))[:400].lower()
+                if "two-factor" in body_text or "verify your identity" in body_text or "device verification" in body_text:
                     raise NonRetryableBatcherError(
-                        ErrorCode.login_failed,
-                        f"GitHub OAuth flow failed - stuck on GitHub login page",
+                        ErrorCode.auth_invalid_credentials,
+                        "GitHub asked for 2FA / device verification — cannot automate this account",
                     )
+                if "incorrect username or password" in body_text:
+                    raise NonRetryableBatcherError(
+                        ErrorCode.auth_invalid_credentials,
+                        "GitHub rejected the credentials",
+                    )
+            except NonRetryableBatcherError:
+                raise
+            except Exception:
+                pass
 
-            # Step 4: Grab tokens from CodeBuddy session
-            _debug("Extracting tokens from CodeBuddy session")
-            tokens = {}
-
-            try:
-                # Get cookies
-                cookies = await new_context.cookies()
-                for cookie in cookies:
-                    if cookie["name"] in ["_ga", "_gid", "connect.sid", "__session", "session"]:
-                        tokens[cookie["name"]] = cookie["value"]
-
-                # Try to get access token from console API
+            # Handle potential "Authorize" screen on GitHub OAuth
+            _emit_oauth_progress("Authorizing CodeBuddy")
+            for sel in (
+                "button[type='submit'][name='authorize']",
+                "button[type='submit']:has-text('Authorize')",
+                "input[type='submit'][value*='Authorize']",
+            ):
                 try:
-                    response = await new_page.gocatch(
-                        f"{CODEBUDDY_BASE_URL}/console/accounts",
-                        method="GET",
-                        headers={"Authorization": f"Bearer placeholder"},  # Will be replaced
+                    authorize_btn = await page.query_selector(sel)
+                    if authorize_btn:
+                        await authorize_btn.click()
+                        _debug(f"Clicked Authorize via {sel}")
+                        await page.wait_for_load_state("domcontentloaded", timeout=30000)
+                        break
+                except Exception:
+                    continue
+
+            # Wait for CodeBuddy session to be established
+            await page.wait_for_timeout(5000)
+
+            # Extract tokens
+            try:
+                cookies = await context.cookies()
+                for cookie in cookies:
+                    name = cookie.get("name", "")
+                    if name in ["connect.sid", "__session", "session", "session_token", "web_cookie"] or name.startswith("session_"):
+                        tokens[name] = cookie.get("value", "")
+                tokens["web_cookie"] = "; ".join(
+                    [f"{c['name']}={c['value']}" for c in cookies if c.get("value")]
+                )
+            except Exception as e:
+                _debug(f"Cookie extraction error: {e}")
+
+            # Claim the device-flow token using the state minted in Step 1.
+            # The browser is now an authenticated CodeBuddy session, so the
+            # poll endpoint returns the accessToken bound to that state.
+            _emit_oauth_progress("Claiming access token")
+            for attempt in range(12):
+                try:
+                    token_resp = await page.request.get(
+                        f"{CODEBUDDY_BASE_URL}/v2/plugin/auth/token?state={state}"
                     )
-                    if response.status == 200:
-                        data = await response.json()
-                        if "userQuota" in data or "user_id" in data:
-                            _debug("Successfully authenticated - found user data")
+                    if token_resp.status == 200:
+                        tdata = await token_resp.json()
+                        t = tdata.get("data") or {}
+                        if t.get("accessToken"):
+                            tokens["access_token"] = t["accessToken"]
+                            if t.get("refreshToken"):
+                                tokens["refresh_token"] = t["refreshToken"]
+                            if t.get("expiresIn"):
+                                tokens["expires_in"] = str(t["expiresIn"])
+                            _debug(f"access_token claimed on attempt {attempt + 1}")
+                            break
+                except Exception as e:
+                    _debug(f"token poll error: {e}")
+                await page.wait_for_timeout(2500)
+
+            # Fallback: some builds stash the token in web storage
+            if not tokens.get("access_token"):
+                try:
+                    storage_token = await page.evaluate(
+                        """() => localStorage.getItem('access_token')
+                            || sessionStorage.getItem('access_token')
+                            || localStorage.getItem('codebuddy_access_token')
+                            || ''"""
+                    )
+                    if storage_token:
+                        tokens["access_token"] = storage_token
+                        _debug("access_token recovered from web storage")
                 except Exception:
                     pass
 
-                _debug("Session appears successful")
+        except NonRetryableBatcherError:
+            raise
+        except Exception as exc:
+            if is_browser_crash(exc):
+                raise RetryableBatcherError(
+                    ErrorCode.browser_start_failed,
+                    f"camoufox crashed during GitHub OAuth: {exc}",
+                ) from exc
+            raise
+        finally:
+            try:
+                await manager.__aexit__(None, None, None)
+            except Exception:
+                pass
 
-            except Exception as e:
-                _debug(f"Token extraction encountered: {e}")
+        if not tokens.get("access_token"):
+            raise NonRetryableBatcherError(
+                ErrorCode.auth_token_extraction_failed,
+                "Failed to capture access_token from CodeBuddy GitHub OAuth",
+            )
 
-            # Close the temp browser used for OAuth
-            await new_browser.close()
-
-            # Save cookies for reuse
-            await context.add_cookies(cookies)
+        if isinstance(session, dict):
             session["tokens"] = tokens
-            session["browser"] = new_browser
-            session["context"] = new_context
+        _debug(f"Tokens captured: {list(tokens.keys())}")
+        return {"authenticated": True, "state": "complete", "tokens": tokens}
 
-            _debug("GitHub OAuth authentication complete")
-            return {"authenticated": True, "state": "complete"}
-
-    async def fetch_tokens(self, account: NormalizedAccount, session: Any) -> dict[str, str]:
-        """
-        Fetch CodeBuddy tokens WITHOUT creating an API key.
-
-        Per user request: "jangan create apiket, pakai akses token aja"
-        We capture session/access tokens from the browser session.
-
-        Returns: {access_token, session_token, web_cookie, csrf_token}
-        """
+    async def fetch_tokens(
+        self,
+        account: NormalizedAccount,
+        auth_state: dict[str, Any],
+        session: Any,
+    ) -> dict[str, str]:
+        """Return the CodeBuddy tokens captured during authenticate() (NO API key creation)."""
         _debug("Fetching CodeBuddy tokens (NO API KEY CREATION)")
+        tokens = dict((auth_state or {}).get("tokens") or {})
+        if not tokens and isinstance(session, dict):
+            tokens = dict(session.get("tokens") or {})
 
-        cookies = []
-        try:
-            ctx = session.get("context")
-            if ctx:
-                cookies = await ctx.cookies()
-        except Exception:
-            pass
-
-        # Build tokens dict from cookies
-        tokens = {}
-        for cookie in cookies:
-            cookie_name = cookie.get("name", "")
-            if cookie_name.startswith(("connect.sid", "__session", "session_", "web_cookie")):
-                tokens[cookie_name] = cookie.get("value")
-
-        # Also try to grab access_token from localStorage or session storage
-        try:
-            page = session.get("page")
-            if page:
-                storage_token = await page.evaluate(
-                    () => localStorage.getItem('access_token') || sessionStorage.getItem('access_token')
-                )
-                if storage_token:
-                    tokens["access_token"] = storage_token
-        except Exception:
-            pass
-
-        # Store cookies for later use
-        tokens["web_cookie"] = "; ".join([f"{c['name']}={c['value']}" for c in cookies if c.get("value")])
+        if not tokens:
+            raise RetryableBatcherError(
+                ErrorCode.provider_token_exchange_failed,
+                "No tokens captured from CodeBuddy GitHub OAuth",
+            )
 
         _debug(f"Tokens captured: {list(tokens.keys())}")
-
         return tokens
 
     async def fetch_quota(self, account: NormalizedAccount, tokens: dict[str, str], session: Any) -> dict[str, Any] | None:
@@ -547,57 +447,52 @@ class CodeBuddyGitHubProviderAdapter(ProviderAdapter):
             "isQuotaExceeded": False,
         }
 
+        access_token = tokens.get("access_token")
+        if not access_token:
+            return None
+
+        manager = None
         try:
-            # Try to fetch quota from CodeBuddy console API
-            cookies_str = tokens.get("web_cookie", "")
-            if not cookies_str:
-                return None
-
-            # Use a temporary session to fetch quota
-            async with async_playwright() as p:
-                browser = await p.chromium.launch(headless=True)
-                context = await browser.new_context()
-
-                # Add existing cookies
-                await context.add_cookies([{
-                    "name": "connect.sid",
-                    "value": tokens.get("connect.sid", ""),
-                    "domain": ".codebuddy.ai",
-                    "path": "/"
-                }])
-
-                page = await context.new_page()
-                try:
-                    resp = await page.goto(f"{CODEBUDDY_BASE_URL}/console", wait_until="networkidle", timeout=15000)
-                    if resp and resp.status() == 200:
-                        # Try to parse quota from page
-                        quota_data = await page.evaluate("""() => {
-                            const meta = document.querySelector('meta[name="user-quota"]');
-                            if (meta) {
-                                return JSON.parse(meta.content);
-                            }
-                            return null;
-                        }""")
-                        if quota_data:
-                            quota = {
-                                "quotaLimit": quota_data.get("total", 0),
-                                "quotaRemaining": quota_data.get("remaining", 0),
-                                "plan": quota_data.get("plan", "Community"),
-                                "isQuotaExceeded": quota_data.get("exceeded", False),
-                            }
-                except Exception as e:
-                    _debug(f"Quota fetch error: {e}")
-                finally:
-                    await browser.close()
-
+            manager, browser, default_timeout = await _launch_camoufox()
+            page = await browser.new_page()
+            page.set_default_timeout(default_timeout)
+            try:
+                resp = await page.request.post(
+                    f"{CODEBUDDY_BASE_URL}/v2/billing/meter/get-user-resource",
+                    headers={
+                        "Content-Type": "application/json",
+                        "Accept": "application/json, text/plain, */*",
+                        "X-Requested-With": "XMLHttpRequest",
+                        "X-Domain": "www.codebuddy.ai",
+                        "Authorization": f"Bearer {access_token}",
+                    },
+                    data="{}",
+                )
+                if resp.status == 200:
+                    data = await resp.json()
+                    dd = data.get("data", {}).get("Response", {}).get("Data", {})
+                    quota = {
+                        "quotaLimit": dd.get("CapacitySize", 0) or dd.get("TotalDosage", 0),
+                        "quotaRemaining": dd.get("CapacityRemain", 0),
+                        "plan": dd.get("PackageName", "Community"),
+                        "isQuotaExceeded": (dd.get("CapacityRemain", 0) or 0) <= 0,
+                    }
+            except Exception as e:
+                _debug(f"Quota fetch error: {e}")
         except Exception as e:
             _debug(f"Quota fetch failed: {e}")
+        finally:
+            if manager is not None:
+                try:
+                    await manager.__aexit__(None, None, None)
+                except Exception:
+                    pass
 
         return quota
 
     async def cleanup_session(self, session: Any) -> None:
         """Cleanup browser session resources."""
-        if not session:
+        if not session or not isinstance(session, dict):
             return
 
         browser = session.get("browser")

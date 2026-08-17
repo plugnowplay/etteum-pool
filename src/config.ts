@@ -7,9 +7,10 @@ export const config = {
   dashboardPort: Number(process.env.DASHBOARD_PORT) || 1931,
   apiKey: process.env.API_KEY || "pool-proxy-secret-key",
   databasePath: process.env.DATABASE_PATH || path.join(projectRoot, "data/poolprox3.db"),
-  authScriptPath:
-    process.env.AUTH_SCRIPT_PATH ||
-    path.join(projectRoot, "scripts/auth/login.py"),
+  authScriptPath: path.resolve(
+    projectRoot,
+    process.env.AUTH_SCRIPT_PATH || "scripts/auth/login.py",
+  ),
   pythonPath:
     process.env.PYTHON_PATH ||
     path.join(
@@ -17,9 +18,10 @@ export const config = {
       "scripts/auth/.venv",
       process.platform === "win32" ? "Scripts/python.exe" : "bin/python",
     ),
-  authScriptCwd:
-    process.env.AUTH_SCRIPT_CWD ||
-    path.join(projectRoot, "scripts/auth"),
+  authScriptCwd: path.resolve(
+    projectRoot,
+    process.env.AUTH_SCRIPT_CWD || "scripts/auth",
+  ),
   proxyUrl: process.env.PROXY_URL || "",
   encryptionKey:
     process.env.ENCRYPTION_KEY || "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6",

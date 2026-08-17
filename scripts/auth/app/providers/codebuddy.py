@@ -2487,22 +2487,95 @@ class CodeBuddyProviderAdapter(ProviderAdapter):
         _codebuddy_auth_debug("ensuring region + trial activation before API key creation")
         await self._ensure_region_and_trial(page)
 
-        # ─── DIRECT API KEY CREATION ─────────────────────────────────────
-        # Directly create API key via page.evaluate() → fetch().
-        # Works even on restricted/error pages — session cookies are enough.
-        _codebuddy_auth_debug("creating API key directly")
-        api_key = await _create_api_key_fast(page)
+        # ─── DIRECT ACCESS TOKEN (NO API KEY CREATION) ────────────────
+        # Per user request: "login pakai gmail simpan akses token".
+        # After Gmail OAuth login, the browser holds a valid CodeBuddy session.
+        # Poll the device-flow token endpoint using the authenticated session
+        # cookies to obtain access_token + refresh_token. No API key is created.
+        _codebuddy_auth_debug("fetching access token via state/token endpoint (no API key)")
+        tokens = await self._fetch_access_token_via_state(page, state)
 
-        if not api_key:
+        if not tokens.get("access_token"):
             raise RetryableBatcherError(
                 ErrorCode.provider_token_exchange_failed,
-                "codebuddy failed to create API key",
+                "codebuddy failed to fetch access token after Gmail login",
             )
 
         await _save_cookies_to_file(page, account.identifier)
-        _codebuddy_auth_debug("done — cookies saved, browser can be closed")
+        _codebuddy_auth_debug("done — access token captured, cookies saved, browser can be closed")
 
-        return {"api_key": api_key, "state": state}
+        return {**tokens, "state": state}
+
+    async def _fetch_access_token_via_state(self, page: Any, state: str) -> dict[str, str]:
+        """Poll the CodeBuddy device-flow token endpoint using the browser's
+        authenticated session. Returns {access_token, refresh_token, ...} or {}."""
+        try:
+            # Poll token endpoint via page fetch (uses session cookies, credentials include)
+            result = await page.evaluate(
+                """async (state) => {
+                    const url = `/v2/plugin/auth/token?state=${encodeURIComponent(state)}`;
+                    const resp = await fetch(url, {
+                        method: 'GET',
+                        credentials: 'include',
+                        headers: {
+                            'Accept': 'application/json, text/plain, */*',
+                            'X-Requested-With': 'XMLHttpRequest',
+                            'X-Domain': 'www.codebuddy.ai',
+                        }
+                    });
+                    if (!resp.ok) return { status: resp.status };
+                    return await resp.json();
+                }""",
+                state,
+            )
+        except Exception as exc:
+            _codebuddy_auth_debug(f"token poll via page failed: {exc}")
+            return {}
+
+        code = result.get("code")
+        data = result.get("data") or {}
+
+        # If not authorized yet, wait briefly and retry a few times
+        for _ in range(5):
+            if data.get("accessToken"):
+                break
+            _codebuddy_auth_debug(f"token not ready yet (code={code}), waiting 3s")
+            await asyncio.sleep(3)
+            try:
+                result = await page.evaluate(
+                    """async (state) => {
+                        const url = `/v2/plugin/auth/token?state=${encodeURIComponent(state)}`;
+                        const resp = await fetch(url, {
+                            method: 'GET',
+                            credentials: 'include',
+                            headers: {
+                                'Accept': 'application/json, text/plain, */*',
+                                'X-Requested-With': 'XMLHttpRequest',
+                                'X-Domain': 'www.codebuddy.ai',
+                            }
+                        });
+                        if (!resp.ok) return { status: resp.status };
+                        return await resp.json();
+                    }""",
+                    state,
+                )
+            except Exception:
+                continue
+            code = result.get("code")
+            data = result.get("data") or {}
+
+        access_token = data.get("accessToken") or data.get("access_token") or ""
+        if not access_token:
+            _codebuddy_auth_debug(f"no access token after polling (code={code})")
+            return {}
+
+        tokens: dict[str, str] = {"access_token": str(access_token)}
+        if data.get("refreshToken"):
+            tokens["refresh_token"] = str(data["refreshToken"])
+        if data.get("expiresIn"):
+            tokens["expires_in"] = str(data["expiresIn"])
+        _codebuddy_auth_debug(f"access token captured (keys={list(tokens.keys())})")
+        return tokens
 
     async def _ensure_region_and_trial(self, page: Any) -> None:
         """Ensure region is set to Singapore and trial is activated.

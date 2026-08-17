@@ -17,6 +17,7 @@ from app.providers.yepapi import YepAPIAdapter
 from app.providers.codex import CodexProviderAdapter
 from app.providers.qoder import QoderProviderAdapter
 from app.providers.gitlab_duo import GitLabDuoProviderAdapter
+from app.providers.codebuddy_github import CodeBuddyGitHubProviderAdapter
 from app.providers.base import NormalizedAccount
 from app.errors.codes import ErrorCode
 from app.errors.exceptions import BatcherError, RetryableBatcherError
@@ -161,7 +162,7 @@ async def _run_provider_once(adapter, account: NormalizedAccount) -> dict:
 
         # Codebuddy: quota is mandatory — without it the account is unusable
         # (warmup will misidentify it as exhausted). Retry from scratch.
-        if provider_name == "codebuddy" and not _has_valid_quota(quota):
+        if provider_name in ("codebuddy", "codebuddy-github") and not _has_valid_quota(quota):
             raise RetryableBatcherError(
                 ErrorCode.provider_token_exchange_failed,
                 "codebuddy login succeeded but quota fetch failed — retrying",
@@ -216,7 +217,7 @@ async def run_provider(adapter, account: NormalizedAccount) -> dict:
         }
     )
 
-    if provider_name == "codebuddy":
+    if provider_name in ("codebuddy", "codebuddy-github"):
         max_retries = CODEBUDDY_MAX_RETRIES
     elif provider_name == "gitlab-duo":
         max_retries = GITLAB_DUO_MAX_RETRIES
@@ -227,7 +228,7 @@ async def run_provider(adapter, account: NormalizedAccount) -> dict:
         try:
             if provider_name == "kiro-pro":
                 timeout = KIRO_PRO_TIMEOUT
-            elif provider_name == "codebuddy":
+            elif provider_name in ("codebuddy", "codebuddy-github"):
                 timeout = CODEBUDDY_TIMEOUT
             elif provider_name == "gitlab-duo":
                 timeout = GITLAB_DUO_TIMEOUT
@@ -374,6 +375,7 @@ async def main(email: str, password: str):
         provider_specs = {
             "kiro": (KiroProviderAdapter(), NormalizedAccount(provider="kiro", identifier=email, secret=password)),
             "codebuddy": (CodeBuddyProviderAdapter(), NormalizedAccount(provider="codebuddy", identifier=email, secret=password)),
+            "codebuddy-github": (CodeBuddyGitHubProviderAdapter(), NormalizedAccount(provider="codebuddy-github", identifier=email, secret=password)),
             "canva": (CanvaProviderAdapter(), NormalizedAccount(provider="canva", identifier=email, secret=password)),
             "kiro-pro": (KiroProProviderAdapter(), NormalizedAccount(provider="kiro-pro", identifier=email, secret=password)),
             "codex": (CodexProviderAdapter(), NormalizedAccount(provider="codex", identifier=email, secret=password)),
@@ -382,14 +384,14 @@ async def main(email: str, password: str):
         }
         tasks = []
         task_names = []
-        for name in ["kiro", "kiro-pro", "codebuddy", "canva", "codex", "qoder", "gitlab-duo"]:
+        for name in ["kiro", "kiro-pro", "codebuddy", "codebuddy-github", "canva", "codex", "qoder", "gitlab-duo"]:
             if name in allowed_providers:
                 adapter, account = provider_specs[name]
                 tasks.append(run_provider(adapter, account))
                 task_names.append(name)
         results = await asyncio.gather(*tasks, return_exceptions=True)
         result = {"type": "result"}
-        for name in ["kiro", "kiro-pro", "codebuddy", "wavespeed", "canva", "yepapi", "codex", "qoder", "gitlab-duo"]:
+        for name in ["kiro", "kiro-pro", "codebuddy", "codebuddy-github", "wavespeed", "canva", "yepapi", "codex", "qoder", "gitlab-duo"]:
             result[name] = {"success": False, "provider": name, "error": "skipped"}
         for name, provider_result in zip(task_names, results):
             if isinstance(provider_result, BaseException):

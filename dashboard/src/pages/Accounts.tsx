@@ -114,7 +114,7 @@ export default function Accounts() {
   const [instantTokens, setInstantTokens] = useState("");
   const [cookieValue, setCookieValue] = useState("");
   const [bulkText, setBulkText] = useState("");
-  const [addMode, setAddMode] = useState<"single" | "bulk" | "instant" | "pat" | "apikey">("bulk");
+  const [addMode, setAddMode] = useState<"single" | "bulk" | "instant" | "pat" | "apikey" | "github" | "token">("bulk");
   const [bulkBrowserEngine, setBulkBrowserEngine] = useState("camoufox");
   const [bulkHeadless, setBulkHeadless] = useState(true);
   const [bulkConcurrency, setBulkConcurrency] = useState(3);
@@ -143,6 +143,7 @@ export default function Accounts() {
   const [grokCliBusy, setGrokCliBusy] = useState(false);
   const [codebuddyChinaApiKey, setCodebuddyChinaApiKey] = useState("");
   const [codebuddyChinaBulkApiKeys, setCodebuddyChinaBulkApiKeys] = useState("");
+  const [codebuddyChinaAccessTokens, setCodebuddyChinaAccessTokens] = useState("");
   const [codebuddyChinaBusy, setCodebuddyChinaBusy] = useState(false);
   const [codebuddyBulkApiKeys, setCodebuddyBulkApiKeys] = useState("");
   const [codebuddyBusy, setCodebuddyBusy] = useState(false);
@@ -367,7 +368,9 @@ export default function Accounts() {
   async function handleAdd() {
     if (!addDialogProvider) return;
     try {
-      const payload: any = { email: addForm.email, password: addForm.password, provider: addDialogProvider, headless: addForm.headless, browserEngine: addForm.browserEngine };
+      // GitHub OAuth login for CodeBuddy uses the codebuddy-github provider path
+      const provider = addMode === "github" ? "codebuddy-github" : addDialogProvider;
+      const payload: any = { email: addForm.email, password: addForm.password, provider, headless: addForm.headless, browserEngine: addForm.browserEngine };
       await createAccount(payload);
       showSuccess("Account added and bot login started.");
       setAddForm({ email: "", password: "", provider: "kiro", browserEngine: "camoufox", headless: false });
@@ -665,6 +668,42 @@ export default function Accounts() {
     } catch (err) { showError(err); }
     finally { setCodebuddyChinaBusy(false); }
   }
+
+  async function handleCodeBuddyChinaAccessTokens() {
+    const raw = codebuddyChinaAccessTokens.trim();
+    if (!raw) { showError(new Error("Paste CodeBuddy CN access tokens (one per line)")); return; }
+
+    const tokens = raw.split("\n").map((t) => t.trim()).filter(Boolean);
+    if (tokens.length === 0) { showError(new Error("No valid access tokens found")); return; }
+
+    for (const tok of tokens) {
+      if (tok.startsWith("ck_")) {
+        showError(new Error(`That looks like an API key (${tok.slice(0, 12)}...). Use the "Bulk API Key" tab instead.`));
+        return;
+      }
+      if (tok.length < 20) {
+        showError(new Error(`Access token too short (min 20 chars): ${tok.slice(0, 12)}...`));
+        return;
+      }
+    }
+
+    setCodebuddyChinaBusy(true);
+    try {
+      const res = await fetchApi<any>("/api/accounts", {
+        method: "POST",
+        body: JSON.stringify({
+          provider: "codebuddy-china",
+          accessTokens: raw,
+        }),
+      });
+      showSuccess(`Added ${res.count} CodeBuddy CN account(s) via access token`);
+      setCodebuddyChinaAccessTokens("");
+      setAddDialogProvider(null);
+      await load();
+    } catch (err) { showError(err); }
+    finally { setCodebuddyChinaBusy(false); }
+  }
+
 
   const cbIntlPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -1794,7 +1833,7 @@ export default function Accounts() {
                 : addDialogProvider === "codebuddy"
                 ? "Paste CodeBuddy API keys (cb-...). Satu key per baris untuk bulk import."
                 : addDialogProvider === "codebuddy-china"
-                ? "Paste CodeBuddy China API keys (ck_...). Satu key per baris untuk bulk import."
+                ? "Paste CodeBuddy China API keys (ck_...) atau raw access tokens. Satu per baris untuk bulk import."
                 : `Add account for ${addDialogProvider ? labelProvider(addDialogProvider) : "this provider"}.`}
             </DialogDescription>
           </DialogHeader>
@@ -1865,6 +1904,9 @@ export default function Accounts() {
               <button onClick={() => setAddMode("single")}
                 className={`flex-1 rounded px-3 py-1.5 text-xs font-medium transition-colors ${addMode === "single" ? "bg-[var(--background)] text-[var(--foreground)] shadow-sm" : "text-[var(--muted-foreground)]"}`}
               >Single</button>
+              <button onClick={() => setAddMode("github")}
+                className={`flex-1 rounded px-3 py-1.5 text-xs font-medium transition-colors ${addMode === "github" ? "bg-[var(--background)] text-[var(--foreground)] shadow-sm" : "text-[var(--muted-foreground)]"}`}
+              >GitHub</button>
               <button onClick={() => setAddMode("apikey")}
                 className={`flex-1 rounded px-3 py-1.5 text-xs font-medium transition-colors ${addMode === "apikey" ? "bg-[var(--background)] text-[var(--foreground)] shadow-sm" : "text-[var(--muted-foreground)]"}`}
               >OAuth / API Key</button>
@@ -1874,6 +1916,9 @@ export default function Accounts() {
               <button onClick={() => setAddMode("apikey")}
                 className={`flex-1 rounded px-3 py-1.5 text-xs font-medium transition-colors ${addMode === "apikey" ? "bg-[var(--background)] text-[var(--foreground)] shadow-sm" : "text-[var(--muted-foreground)]"}`}
               >Bulk API Key (ck_...)</button>
+              <button onClick={() => setAddMode("token")}
+                className={`flex-1 rounded px-3 py-1.5 text-xs font-medium transition-colors ${addMode === "token" ? "bg-[var(--background)] text-[var(--foreground)] shadow-sm" : "text-[var(--muted-foreground)]"}`}
+              >Access Token</button>
             </div>
 
           ) : (
@@ -2088,6 +2133,43 @@ export default function Accounts() {
             </div>
           )}
 
+          {addMode === "github" && addDialogProvider === "codebuddy" && (
+            <div className="space-y-4">
+              <div className="rounded-md border border-[var(--border)] bg-[var(--surface-2)] p-3 space-y-3">
+                <p className="text-sm font-medium text-[var(--foreground)]">Login via GitHub OAuth</p>
+                <p className="text-xs text-[var(--muted-foreground)]">
+                  Login dengan akun GitHub yang sudah ada → CodeBuddy. Hasilnya access token CodeBuddy (tanpa create API key), disimpan sebagai akun codebuddy.
+                </p>
+                <div className="grid gap-3">
+                  <div>
+                    <label className="text-sm text-[var(--foreground)]">GitHub Email</label>
+                    <input
+                      type="email"
+                      value={addForm.email}
+                      onChange={(e) => setAddForm({ ...addForm, email: e.target.value })}
+                      className="mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--background)] p-2.5 text-sm text-[var(--foreground)] focus:outline-none focus:ring-1 focus:ring-[var(--ring)]"
+                      placeholder="you@example.com"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-sm text-[var(--foreground)]">GitHub Password</label>
+                    <input
+                      type="password"
+                      value={addForm.password}
+                      onChange={(e) => setAddForm({ ...addForm, password: e.target.value })}
+                      className="mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--background)] p-2.5 text-sm text-[var(--foreground)] focus:outline-none focus:ring-1 focus:ring-[var(--ring)]"
+                      placeholder="••••••••"
+                    />
+                  </div>
+                </div>
+              </div>
+              <div className="flex justify-end gap-2">
+                <Button variant="outline" onClick={() => setAddDialogProvider(null)}>Cancel</Button>
+                <Button onClick={handleAdd} disabled={!addForm.email || !addForm.password}>Login via GitHub</Button>
+              </div>
+            </div>
+          )}
+
           {addMode === "apikey" && addDialogProvider === "codebuddy" && (
             <div className="space-y-4">
               <div className="rounded-md border border-[var(--border)] bg-[var(--surface-2)] p-3 space-y-3">
@@ -2183,6 +2265,35 @@ ck_xyz789ghi012..."
               <div className="flex justify-end gap-2">
                 <Button variant="outline" onClick={() => setAddDialogProvider(null)} disabled={codebuddyChinaBusy}>Cancel</Button>
                 <Button onClick={handleCodeBuddyChinaBulkApiKey} disabled={codebuddyChinaBusy || !codebuddyChinaBulkApiKeys.trim()}>
+                  {codebuddyChinaBusy ? (<><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Importing...</>) : "Add Accounts"}
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {addMode === "token" && addDialogProvider === "codebuddy-china" && (
+            <div className="space-y-4">
+              <div>
+                <label className="text-sm text-[var(--foreground)]">Access Tokens (satu per baris)</label>
+                <textarea
+                  value={codebuddyChinaAccessTokens}
+                  onChange={(e) => setCodebuddyChinaAccessTokens(e.target.value)}
+                  className="mt-1 w-full h-40 rounded-md border border-[var(--border)] bg-[var(--background)] p-3 text-sm font-mono text-[var(--foreground)] placeholder:text-[var(--muted-foreground)] focus:outline-none focus:ring-1 focus:ring-[var(--ring)] resize-none"
+                  placeholder="eyJhbGciOiJIUzI1NiIs...
+eyJraWQiOiJhYmMxMjMi...
+(paste raw Bearer access tokens dari session codebuddy.cn)"
+                  disabled={codebuddyChinaBusy}
+                />
+                <p className="mt-1 text-xs text-[var(--muted-foreground)]">
+                  Paste access token mentah (bukan <code>ck_</code> API key) — misal token yang di-capture dari
+                  header <code>Authorization: Bearer …</code> saat login manual di <code>codebuddy.cn</code>.
+                  Server akan simpan sebagai <code>tokens.access_token</code> dan pakai langsung sebagai Bearer
+                  ke upstream. Satu token per baris untuk bulk import.
+                </p>
+              </div>
+              <div className="flex justify-end gap-2">
+                <Button variant="outline" onClick={() => setAddDialogProvider(null)} disabled={codebuddyChinaBusy}>Cancel</Button>
+                <Button onClick={handleCodeBuddyChinaAccessTokens} disabled={codebuddyChinaBusy || !codebuddyChinaAccessTokens.trim()}>
                   {codebuddyChinaBusy ? (<><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Importing...</>) : "Add Accounts"}
                 </Button>
               </div>

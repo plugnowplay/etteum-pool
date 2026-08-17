@@ -1552,7 +1552,7 @@ accountsRouter.get("/:id", async (c) => {
  */
 accountsRouter.post("/", async (c) => {
   const body = await c.req.json<{
-    provider: "kiro" | "kiro-pro" | "codebuddy" | "codebuddy-china" | "canva" | "codex" | "qoder" | "gitlab-duo" | "youmind" | "grok" | "grok-cli";
+    provider: "kiro" | "kiro-pro" | "codebuddy" | "codebuddy-china" | "codebuddy-github" | "canva" | "codex" | "qoder" | "gitlab-duo" | "youmind" | "grok" | "grok-cli";
     accessToken?: string;
     refreshToken?: string;
     idToken?: string;
@@ -1562,6 +1562,7 @@ accountsRouter.post("/", async (c) => {
     personalToken?: string;
     apiKey?: string; // YouMind sk-ym-... / Grok xai-... key
     apiKeys?: string; // CodeBuddy China bulk: newline-separated ck_... keys
+    accessTokens?: string; // CodeBuddy China bulk: newline-separated raw access tokens (non ck_...) — stored as tokens.access_token
     tokens?: Record<string, unknown>;
     status?: "active" | "pending";
     browserEngine?: string;
@@ -1841,6 +1842,22 @@ accountsRouter.post("/", async (c) => {
     }
   }
 
+  // Compute the next available label suffix for a provider's auto-generated
+  // email labels (e.g. cbc-token-<N>, cbc-account-<N>, cb-account-<N>).
+  // Using max(existing suffix)+1 instead of row COUNT+1: rows get deleted
+  // over time, so COUNT can collide with an existing label and violate the
+  // UNIQUE(provider, email) constraint (SQLITE_CONSTRAINT_UNIQUE → HTTP 500).
+  const nextLabelSuffix = async (provider: string): Promise<number> => {
+    const rows = await db.select({ email: accounts.email }).from(accounts)
+      .where(eq(accounts.provider, provider));
+    let max = 0;
+    for (const row of rows) {
+      const m = /-(\d+)$/.exec(row.email || "");
+      if (m) max = Math.max(max, Number(m[1]));
+    }
+    return max + 1;
+  };
+
   // ── CodeBuddy: Bulk API key flow (cb-...) ──────────────────────────
   if (body.provider === "codebuddy" && body.apiKeys) {
     const keys = body.apiKeys
@@ -1860,13 +1877,11 @@ accountsRouter.post("/", async (c) => {
     }
 
     const created: Array<{ id: number; email: string }> = [];
-    const existingCount = await db.select().from(accounts)
-      .where(eq(accounts.provider, "codebuddy"))
-      .then((rows) => rows.length);
+    let suffix = await nextLabelSuffix("codebuddy");
 
     for (let i = 0; i < keys.length; i++) {
       const key = keys[i]!;
-      const email = `cb-account-${existingCount + i + 1}`;
+      const email = `cb-account-${suffix++}`;
       const encryptedKey = encrypt(key);
       const tokens = { api_key: key }; // drizzle column mode:"json" serializes automatically — do NOT JSON.stringify
 
@@ -1896,6 +1911,72 @@ accountsRouter.post("/", async (c) => {
     }, 201);
   }
 
+  // ── CodeBuddy China: Bulk Access Token flow ─────────────────────────
+  // Alternative to ck_ API keys: accept raw access tokens (Bearer values
+  // captured from browser session / other auth flows). Provider reads via
+  // tokens.access_token fallback (see codebuddy-china.ts:getApiKey).
+  if (body.provider === "codebuddy-china" && body.accessTokens) {
+    const tokensList = body.accessTokens
+      .split("\n")
+      .map((t: string) => t.trim())
+      .filter((t: string) => t.length > 0);
+
+    if (tokensList.length === 0) {
+      return c.json({ error: "accessTokens is empty" }, 400);
+    }
+
+    // Reject accidental ck_ keys here — those belong in the apiKeys flow so
+    // they get stored under tokens.api_key with the expected label prefix.
+    for (const tok of tokensList) {
+      if (tok.startsWith("ck_")) {
+        return c.json({
+          error: `Token looks like a ck_ API key: ${tok.substring(0, 12)}... — use the API Key tab instead.`,
+        }, 400);
+      }
+      if (tok.length < 20) {
+        return c.json({ error: `Access token too short (min 20 chars): ${tok.substring(0, 12)}...` }, 400);
+      }
+    }
+
+    const created: Array<{ id: number; email: string }> = [];
+    let suffix = await nextLabelSuffix("codebuddy-china");
+
+    for (let i = 0; i < tokensList.length; i++) {
+      const token = tokensList[i]!;
+      const email = `cbc-token-${suffix++}`;
+      const encryptedToken = encrypt(token);
+
+      // Provider's getApiKey() reads api_key → access_token → session_token
+      // in order. Storing under access_token keeps the ck_ vs raw-token
+      // distinction visible in the DB row.
+      const tokens = { access_token: token };
+
+      const inserted = await db.insert(accounts).values({
+        provider: "codebuddy-china",
+        email,
+        password: encryptedToken,
+        status: "active",
+        tokens,
+        quotaLimit: -1,
+        quotaRemaining: -1,
+        lastLoginAt: new Date(),
+      }).returning();
+
+      if (inserted[0]) {
+        created.push({ id: inserted[0].id, email });
+      }
+    }
+
+    pool.invalidate("codebuddy-china" as any);
+    broadcast({ type: "account_created", data: { provider: "codebuddy-china", count: created.length } });
+
+    return c.json({
+      success: true,
+      count: created.length,
+      accounts: created,
+    }, 201);
+  }
+
   // ── CodeBuddy China: Bulk API key flow (ck_...) ─────────────────────
   // Accept multiple API keys (one per line), validate format, and create
   // account per key with auto-generated email label.
@@ -1917,13 +1998,11 @@ accountsRouter.post("/", async (c) => {
     }
 
     const created: Array<{ id: number; email: string }> = [];
-    const existingCount = await db.select().from(accounts)
-      .where(eq(accounts.provider, "codebuddy-china"))
-      .then((rows) => rows.length);
+    let suffix = await nextLabelSuffix("codebuddy-china");
 
     for (let i = 0; i < keys.length; i++) {
       const key = keys[i]!;
-      const email = `cbc-account-${existingCount + i + 1}`;
+      const email = `cbc-account-${suffix++}`;
       const encryptedKey = encrypt(key);
 
       // Store API key in BOTH password (for encryption) and tokens (for provider to read)
