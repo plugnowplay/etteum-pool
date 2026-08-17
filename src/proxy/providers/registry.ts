@@ -85,6 +85,10 @@ const BUILTIN_MODEL_ALIASES: Record<string, string> = {
   "grok-4.5-high": "gcli-4.5-high",
   "grok-4.5-medium": "gcli-4.5-medium",
   "grok-4.5-low": "gcli-4.5-low",
+  "grok-4": "gcli-4",
+  "grok-4-fast": "gcli-4-fast",
+  "grok-4-fast-reasoning": "gcli-4-fast-reasoning",
+  "grok-3": "gcli-3",
 };
 
 interface ParsedModelId {

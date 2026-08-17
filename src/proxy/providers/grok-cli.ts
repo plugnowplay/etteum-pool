@@ -263,6 +263,42 @@ const GROK_CLI_MODELS: GrokCliModelDef[] = [
     vision: false,
     creditRate: 0.009 / 1000,
   },
+  {
+    id: "gcli-4",
+    upstream: "grok-4",
+    context_window: 500000,
+    max_output: 64000,
+    thinking: false,
+    vision: false,
+    creditRate: 0.009 / 1000,
+  },
+  {
+    id: "gcli-4-fast",
+    upstream: "grok-4-fast",
+    context_window: 500000,
+    max_output: 64000,
+    thinking: false,
+    vision: false,
+    creditRate: 0.009 / 1000,
+  },
+  {
+    id: "gcli-4-fast-reasoning",
+    upstream: "grok-4-fast-reasoning",
+    context_window: 500000,
+    max_output: 64000,
+    thinking: true,
+    vision: false,
+    creditRate: 0.009 / 1000,
+  },
+  {
+    id: "gcli-3",
+    upstream: "grok-3",
+    context_window: 131072,
+    max_output: 32000,
+    thinking: false,
+    vision: false,
+    creditRate: 0.005 / 1000,
+  },
 ];
 
 export const MODEL_BY_ID: Record<string, GrokCliModelDef> = Object.fromEntries(
