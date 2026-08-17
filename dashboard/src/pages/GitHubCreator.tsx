@@ -40,6 +40,24 @@ export default function GitHubCreator() {
   const [accounts, setAccounts] = useState<GithubAccount[]>([]);
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState<Record<string, boolean>>({});
+  const [progressLogs, setProgressLogs] = useState<Record<number, { step: string; detail?: string; ts: string }[]>>({});
+
+  // Listen for WebSocket progress events
+  useEffect(() => {
+    function onMsg(e: MessageEvent) {
+      try {
+        const msg = JSON.parse(e.data);
+        if (msg.type === "github_creator.progress" && msg.data?.id) {
+          setProgressLogs(prev => {
+            const logs = prev[msg.data.id] || [];
+            return { ...prev, [msg.data.id]: [...logs, { step: msg.data.step, detail: msg.data.detail, ts: msg.data.ts }] };
+          });
+        }
+      } catch {}
+    }
+    window.addEventListener("message", onMsg);
+    return () => window.removeEventListener("message", onMsg);
+  }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -119,12 +137,12 @@ export default function GitHubCreator() {
 
   // ── Bulk create state ──
   const [bulkForm, setBulkForm] = useState({
-    imap_server_id: "", count: "5", username_prefix: "user", password: "",
+    imap_server_id: "", count: "5", password: "",
   });
 
   async function handleBulkCreate() {
-    if (!bulkForm.imap_server_id || !bulkForm.count || !bulkForm.username_prefix) {
-      toast.warning("Select IMAP server, count, and username prefix");
+    if (!bulkForm.imap_server_id || !bulkForm.count) {
+      toast.warning("Select IMAP server and count");
       return;
     }
     setBusy(b => ({ ...b, bulk: true }));
@@ -134,7 +152,6 @@ export default function GitHubCreator() {
         { method: "POST", body: JSON.stringify({
           imap_server_id: Number(bulkForm.imap_server_id),
           count: Number(bulkForm.count),
-          username_prefix: bulkForm.username_prefix,
           password: bulkForm.password || undefined,
         })}
       );
@@ -332,7 +349,7 @@ export default function GitHubCreator() {
         <div className="max-w-lg rounded-lg border border-[var(--border)] bg-[var(--card)] p-4 space-y-4">
           <h3 className="text-sm font-semibold">Bulk Create GitHub Accounts</h3>
           <p className="text-xs text-[var(--muted-foreground)]">
-            Generates <code className="text-[var(--foreground)]">prefix+001@domain</code>, <code className="text-[var(--foreground)]">prefix+002@domain</code>, etc.
+            Generates human-like emails: <code className="text-[var(--foreground)]">john.smith847@domain</code>, <code className="text-[var(--foreground)]">maria.garcia312@domain</code>, etc.
             Each gets a random username and password.
           </p>
           <div className="space-y-3">
@@ -345,15 +362,9 @@ export default function GitHubCreator() {
                 ))}
               </select>
             </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className={labelCls}>Count</label>
-                <input className={inputCls} type="number" min="1" max="100" value={bulkForm.count} onChange={e => setBulkForm(f => ({ ...f, count: e.target.value }))} />
-              </div>
-              <div>
-                <label className={labelCls}>Username Prefix</label>
-                <input className={inputCls} value={bulkForm.username_prefix} onChange={e => setBulkForm(f => ({ ...f, username_prefix: e.target.value }))} placeholder="user" />
-              </div>
+            <div>
+              <label className={labelCls}>Count</label>
+              <input className={inputCls} type="number" min="1" max="100" value={bulkForm.count} onChange={e => setBulkForm(f => ({ ...f, count: e.target.value }))} />
             </div>
             <div>
               <label className={labelCls}>Password (optional — auto-generate if empty)</label>
@@ -386,35 +397,52 @@ export default function GitHubCreator() {
               {accounts.length === 0 ? (
                 <tr><td colSpan={7} className="px-3 py-8 text-center text-[var(--muted-foreground)]">No accounts yet — use Bulk Create tab</td></tr>
               ) : accounts.map(a => (
-                <tr key={a.id} className="border-b border-[var(--border)] last:border-0">
-                  <td className="px-3 py-2 font-mono text-xs text-[var(--foreground)]">{a.email}</td>
-                  <td className="px-3 py-2 text-[var(--muted-foreground)]">{a.username}</td>
-                  <td className="px-3 py-2">{statusBadge(a.status)}</td>
-                  <td className="px-3 py-2 font-mono text-xs text-[var(--foreground)]">{a.verification_code || "—"}</td>
-                  <td className="px-3 py-2 font-mono text-xs text-[var(--muted-foreground)]">
-                    {a.proxyUrl ? a.proxyUrl.match(/@([^:/]+)/)?.[1] || a.proxyUrl.slice(0, 20) : "—"}
-                  </td>
-                  <td className="px-3 py-2 text-xs text-[var(--error)] max-w-[200px] truncate" title={a.error_message || ""}>
-                    {a.error_message || "—"}
-                  </td>
-                  <td className="px-3 py-2 text-right">
-                    <div className="flex justify-end gap-1">
-                      {a.status !== "verified" && (
-                        <Button variant="ghost" size="sm" onClick={() => handleRegister(a.id)} disabled={busy[`reg-${a.id}`]}>
-                          {busy[`reg-${a.id}`] ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+                <>
+                  <tr key={a.id} className="border-b border-[var(--border)] last:border-0">
+                    <td className="px-3 py-2 font-mono text-xs text-[var(--foreground)]">{a.email}</td>
+                    <td className="px-3 py-2 text-[var(--muted-foreground)]">{a.username}</td>
+                    <td className="px-3 py-2">{statusBadge(a.status)}</td>
+                    <td className="px-3 py-2 font-mono text-xs text-[var(--foreground)]">{a.verification_code || "—"}</td>
+                    <td className="px-3 py-2 font-mono text-xs text-[var(--muted-foreground)]">
+                      {a.proxyUrl ? a.proxyUrl.match(/@([^:/]+)/)?.[1] || a.proxyUrl.slice(0, 20) : "—"}
+                    </td>
+                    <td className="px-3 py-2 text-xs text-[var(--error)] max-w-[200px] truncate" title={a.error_message || ""}>
+                      {a.error_message || "—"}
+                    </td>
+                    <td className="px-3 py-2 text-right">
+                      <div className="flex justify-end gap-1">
+                        {a.status !== "verified" && (
+                          <Button variant="ghost" size="sm" onClick={() => handleRegister(a.id)} disabled={busy[`reg-${a.id}`]}>
+                            {busy[`reg-${a.id}`] ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+                          </Button>
+                        )}
+                        {a.status === "error" && (
+                          <Button variant="ghost" size="sm" onClick={() => handleRetry(a.id)} disabled={busy[`retry-${a.id}`]}>
+                            {busy[`retry-${a.id}`] ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+                          </Button>
+                        )}
+                        <Button variant="ghost" size="sm" onClick={() => handleDeleteAccount(a.id)}>
+                          <Trash2 className="w-3.5 h-3.5" />
                         </Button>
-                      )}
-                      {a.status === "error" && (
-                        <Button variant="ghost" size="sm" onClick={() => handleRetry(a.id)} disabled={busy[`retry-${a.id}`]}>
-                          {busy[`retry-${a.id}`] ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
-                        </Button>
-                      )}
-                      <Button variant="ghost" size="sm" onClick={() => handleDeleteAccount(a.id)}>
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </Button>
-                    </div>
-                  </td>
-                </tr>
+                      </div>
+                    </td>
+                  </tr>
+                  {progressLogs[a.id]?.length > 0 && (
+                    <tr key={`${a.id}-log`} className="bg-[var(--surface-2)]">
+                      <td colSpan={7} className="px-3 py-2">
+                        <div className="space-y-0.5">
+                          {progressLogs[a.id].map((log, i) => (
+                            <div key={i} className="text-[10px] font-mono text-[var(--muted-foreground)]">
+                              <span className="text-[var(--info)]">{new Date(log.ts).toLocaleTimeString()}</span>{" "}
+                              <span className="text-[var(--foreground)]">{log.step}</span>
+                              {log.detail && <span className="text-[var(--muted-foreground)]"> — {log.detail}</span>}
+                            </div>
+                          ))}
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </>
               ))}
             </tbody>
           </table>

@@ -15,6 +15,19 @@ import { ImapFlow } from "imapflow";
 
 export const githubCreatorRoutes = new Hono();
 
+// ── Helpers ──────────────────────────────────────────────────────────
+// ImapFlow errors have .message = "Command failed" (useless). The real
+// error is in .responseText / .response. Extract it for display.
+function imapError(err: unknown): string {
+  if (err && typeof err === "object") {
+    const e = err as any;
+    if (e.responseText) return e.responseText;
+    if (e.response) return e.response;
+    if (e.message && e.message !== "Command failed") return e.message;
+  }
+  return err instanceof Error ? err.message : String(err);
+}
+
 // ── Runtime table creation ────────────────────────────────────────────
 // The drizzle migration journal in this repo is inconsistent, so we guarantee
 // the tables exist at runtime with idempotent CREATE statements — same pattern
@@ -108,11 +121,47 @@ function randomPassword(len = 16): string {
   return out;
 }
 
-function randomUsername(): string {
-  const adjectives = ["swift", "bright", "calm", "lunar", "solar", "noble", "vivid", "quiet", "bold", "crisp"];
-  const nouns = ["dev", "coder", "hacker", "builder", "maker", "dev", "coder", "hacker", "builder", "maker"];
-  const num = Math.floor(Math.random() * 9000 + 1000);
-  return `${adjectives[Math.floor(Math.random() * adjectives.length)]}${nouns[Math.floor(Math.random() * nouns.length)]}${num}`;
+// Human-like names: firstname.lastname + random 3-digit number
+// e.g. "john.smith847", "maria.garcia312"
+const FIRST_NAMES = [
+  "john", "mary", "david", "sarah", "michael", "jennifer", "chris", "lisa",
+  "robert", "emily", "james", "anna", "mark", "susan", "paul", "karen",
+  "daniel", "nancy", "steve", "linda", "brian", "patricia", "kevin", "helen",
+  "jason", "sandra", "ryan", "ashley", "eric", "donna", "alex", "carol",
+  "nick", "ruth", "tom", "sharon", "tim", "michelle", "jeff", "laura",
+  "scott", "amanda", "phil", "melissa", "greg", "deborah", "doug", "stephanie",
+  "brandon", "rebecca", "justin", "shirley", "alan", "cynthia", "mario", "kathryn",
+  "frank", "pamela", "ray", "nicole", "seth", "theresa", "brett", "diane",
+  "ivan", "julie", "leon", "joyce", "marco", "rachel", "nina", "tina",
+  "oscar", "olivia", "pablo", "victoria", "ricardo", "sofia", "diego", "elena",
+];
+const LAST_NAMES = [
+  "smith", "johnson", "williams", "brown", "jones", "garcia", "miller", "davis",
+  "rodriguez", "martinez", "hernandez", "lopez", "gonzalez", "wilson", "anderson",
+  "thomas", "taylor", "moore", "jackson", "martin", "lee", "perez", "thompson",
+  "white", "harris", "clark", "lewis", "walker", "hall", "allen", "young",
+  "king", "wright", "scott", "green", "baker", "adams", "nelson", "hill",
+  "rivera", "cooper", "murray", "reed", "bailey", "bell", "gomez", "sanchez",
+  "patel", "khan", "mehta", "singh", "kumar", "shah", "gupta", "sharma",
+  "chen", "wang", "liu", "zhang", "kim", "park", "suzuki", "tanaka",
+  "silva", "santos", "ferreira", "almeida", "pereira", "costa", "oliveira",
+  "novak", "kovac", "horvat", "muller", "schmidt", "weber", "wagner", "becker",
+];
+
+function randomHumanName(): string {
+  const first = FIRST_NAMES[Math.floor(Math.random() * FIRST_NAMES.length)];
+  const last = LAST_NAMES[Math.floor(Math.random() * LAST_NAMES.length)];
+  const num = Math.floor(Math.random() * 900 + 100); // 100-999
+  return `${first}.${last}${num}`;
+}
+
+// Generate N unique human-like names
+function generateUniqueNames(count: number): string[] {
+  const names = new Set<string>();
+  while (names.size < count) {
+    names.add(randomHumanName());
+  }
+  return [...names];
 }
 
 // ── IMAP connection helpers ──────────────────────────────────────────
@@ -285,8 +334,20 @@ async function registerGitHubAccount(account: GithubAccount): Promise<{
 
   const proxyUrl = proxy.url;
 
+  // Progress log helper — broadcasts step to dashboard
+  const logStep = (step: string, detail?: string) => {
+    broadcast({
+      type: "github_creator.progress",
+      data: { id: account.id, email: account.email, step, detail, ts: new Date().toISOString() },
+    });
+    console.log(`[GitHubCreator] ${account.email}: ${step}${detail ? ` — ${detail}` : ""}`);
+  };
+
+  logStep("proxy_assigned", `proxy ${proxy.id}`);
+
   try {
     // 2. Fetch the signup page to extract authenticity_token (CSRF)
+    logStep("fetching_signup_page");
     const signupPageRes = await fetch("https://github.com/signup", {
       method: "GET",
       headers: {
@@ -320,6 +381,7 @@ async function registerGitHubAccount(account: GithubAccount): Promise<{
     }
 
     // 3. Submit the signup form
+    logStep("submitting_signup");
     const formData = new URLSearchParams();
     formData.append("authenticity_token", authenticityToken);
     formData.append("user[email]", account.email);
@@ -364,6 +426,7 @@ async function registerGitHubAccount(account: GithubAccount): Promise<{
     }
 
     // Update status to registered
+    logStep("signup_submitted", "waiting for verification email");
     await db
       .update(githubAccounts)
       .set({ status: "registered", updatedAt: new Date() })
@@ -378,6 +441,7 @@ async function registerGitHubAccount(account: GithubAccount): Promise<{
     const lookbackMinutes = 10;
 
     for (let attempt = 0; attempt < maxPollAttempts; attempt++) {
+      logStep("polling_imap", `attempt ${attempt + 1}/${maxPollAttempts}`);
       try {
         verificationResult = await readVerificationCode(
           imapCfg,
@@ -395,6 +459,7 @@ async function registerGitHubAccount(account: GithubAccount): Promise<{
     }
 
     if (!verificationResult?.code) {
+      logStep("no_code_found", "verification email not received");
       await markProxySuccess(proxy.id);
       return {
         ok: false,
@@ -404,6 +469,7 @@ async function registerGitHubAccount(account: GithubAccount): Promise<{
     }
 
     // Store the verification code
+    logStep("code_found", verificationResult.code);
     await db
       .update(githubAccounts)
       .set({
@@ -433,7 +499,7 @@ async function registerGitHubAccount(account: GithubAccount): Promise<{
     };
   } catch (err) {
     await markProxyFail(proxy.id);
-    const errorMsg = err instanceof Error ? err.message : String(err);
+    const errorMsg = imapError(err);
     return { ok: false, status: "error", error: errorMsg };
   }
 }
@@ -582,7 +648,7 @@ githubCreatorRoutes.post("/imap/:id/test", async (c) => {
       try { await imapClient.logout(); } catch {}
     }
   } catch (err) {
-    const errorMsg = err instanceof Error ? err.message : String(err);
+    const errorMsg = imapError(err);
 
     await db
       .update(imapServers)
@@ -622,7 +688,7 @@ githubCreatorRoutes.post("/imap/:id/read-code", async (c) => {
 
     return c.json(result);
   } catch (err) {
-    const errorMsg = err instanceof Error ? err.message : String(err);
+    const errorMsg = imapError(err);
     return c.json({ code: null, error: errorMsg });
   }
 });
@@ -661,12 +727,11 @@ githubCreatorRoutes.post("/accounts", async (c) => {
   const body = await c.req.json<{
     imap_server_id: number;
     count: number;
-    username_prefix: string;
     password?: string;
   }>();
 
-  if (!body.imap_server_id || !body.count || !body.username_prefix) {
-    return c.json({ error: "imap_server_id, count, and username_prefix are required" }, 400);
+  if (!body.imap_server_id || !body.count) {
+    return c.json({ error: "imap_server_id and count are required" }, 400);
   }
 
   if (body.count > 100) {
@@ -685,11 +750,15 @@ githubCreatorRoutes.post("/accounts", async (c) => {
   const plainPassword = body.password || randomPassword();
   const encryptedPassword = encrypt(plainPassword);
 
+  // Generate human-like names: firstname.lastname123@domain
+  // e.g. john.smith847@mcoreconnect.com, maria.garcia312@mcoreconnect.com
+  const names = generateUniqueNames(body.count);
+
   const created: number[] = [];
   for (let i = 0; i < body.count; i++) {
-    const padded = String(i + 1).padStart(3, "0"); // 001, 002, ...
-    const email = `${body.username_prefix}+${padded}@${domain}`;
-    const username = randomUsername();
+    const name = names[i]!;
+    const email = `${name}@${domain}`;
+    const username = name.replace(".", ""); // john.smith847 → johnsmith847
 
     const [row] = await db
       .insert(githubAccounts)
