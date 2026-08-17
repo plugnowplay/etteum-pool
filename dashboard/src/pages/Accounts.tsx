@@ -1285,7 +1285,7 @@ export default function Accounts() {
         error: rows.filter((a) => a.status === "error").length,
         unlimitedCount,
         usedTotal,
-        credits: { used: Math.max(0, quotaLimit - quotaRemaining), total: quotaLimit, remaining: quotaRemaining },
+        credits: { used: provider === "grok-cli" ? usedTotal : Math.max(0, quotaLimit - quotaRemaining), total: quotaLimit, remaining: quotaRemaining },
       };
     });
   }, [accounts]);
@@ -1379,12 +1379,12 @@ export default function Accounts() {
                 </div>
               </div>
 
-              {/* Credits remaining */}
+              {/* Credits used */}
               <div className="space-y-1.5">
                 <div className="flex justify-between text-xs">
                   <span className="text-[var(--muted-foreground)]">Credits</span>
                   <span className="text-[var(--foreground)]">
-                    {stat.credits.remaining.toFixed(1)} / {stat.credits.total.toFixed(1)} remaining
+                    {stat.credits.used.toFixed(1)} / {stat.credits.total.toFixed(1)} used
                     {stat.unlimitedCount > 0 && (
                       <span className="ml-1.5 text-[var(--muted-foreground)]" title={`${stat.unlimitedCount} unlimited account(s) — usage reported, no cap`}>
                         ∞ ×{stat.unlimitedCount}
@@ -1393,7 +1393,7 @@ export default function Accounts() {
                   </span>
                 </div>
                 <Progress
-                  value={stat.credits.total > 0 ? Math.round((stat.credits.remaining / stat.credits.total) * 100) : 0}
+                  value={stat.credits.total > 0 ? Math.round((stat.credits.used / stat.credits.total) * 100) : 0}
                   className="h-2"
                 />
               </div>
