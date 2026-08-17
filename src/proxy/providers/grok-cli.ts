@@ -1429,13 +1429,17 @@ export class GrokCliProvider extends BaseProvider {
       const monthlyLimit = valOf(cfg.monthlyLimit);
       const onDemandCap = valOf(cfg.onDemandCap);
       const legacyLimit = Number(billingData?.limit ?? billingData?.total_credits ?? NaN);
-      // monthlyLimit.val = 0 means "no monthly cap" (unlimited) on this
-      // endpoint — keep the -1 sentinel in that case so the warmup runner
-      // leaves the DB quota columns untouched for unlimited accounts.
+      // Grok Build accounts include ~500K tokens/day, but the billing endpoint
+      // reports monthlyLimit=0 (cap not surfaced server-side). Fall back to the
+      // plan default so the dashboard shows a meaningful 500k/500k style quota
+      // instead of the "unlimited" -1 sentinel. Free allowance resets DAILY.
+      const GROK_CLI_PLAN_TOKEN_LIMIT = 500_000;
+      const usedPlanDefault = !(monthlyLimit > 0 || onDemandCap > 0
+        || (Number.isFinite(legacyLimit) && legacyLimit > 0));
       const limit = monthlyLimit > 0 ? monthlyLimit
         : onDemandCap > 0 ? onDemandCap
         : Number.isFinite(legacyLimit) && legacyLimit > 0 ? legacyLimit
-        : -1;
+        : GROK_CLI_PLAN_TOKEN_LIMIT;
 
       const legacyRemaining = Number(billingData?.remaining ?? billingData?.credits_remaining ?? NaN);
       const remaining = limit > 0
@@ -1444,7 +1448,12 @@ export class GrokCliProvider extends BaseProvider {
 
       const resetRaw = cfg.billingPeriodEnd ?? cfg.currentPeriod?.end ?? null;
       let resetAt: Date | null = null;
-      if (resetRaw) {
+      if (usedPlanDefault) {
+        // Daily reset for the Grok Build free allowance — next midnight UTC.
+        const next = new Date();
+        next.setUTCHours(24, 0, 0, 0);
+        resetAt = next;
+      } else if (resetRaw) {
         const d = new Date(resetRaw);
         if (!Number.isNaN(d.getTime())) resetAt = d;
       }
