@@ -2023,7 +2023,7 @@ export default function Accounts() {
                     <div className="flex flex-wrap gap-2">
                       <Button
                         onClick={() => {
-                          void navigator.clipboard?.writeText(grokCliDeviceCode.userCode).catch(() => {});
+                          void safeCopyText(grokCliDeviceCode.userCode, "Kode disalin");
                           window.open(grokCliDeviceCode.verificationUriComplete || grokCliDeviceCode.verificationUri, "_blank", "noopener");
                         }}
                       >
@@ -2031,7 +2031,7 @@ export default function Accounts() {
                       </Button>
                       <Button
                         variant="outline"
-                        onClick={() => void navigator.clipboard?.writeText(grokCliDeviceCode.verificationUriComplete || grokCliDeviceCode.verificationUri).catch(() => {})}
+                        onClick={() => void safeCopyText(grokCliDeviceCode.verificationUriComplete || grokCliDeviceCode.verificationUri, "Link disalin")}
                       >
                         Salin Link
                       </Button>
@@ -2201,7 +2201,7 @@ export default function Accounts() {
                       </Button>
                       <Button
                         variant="outline"
-                        onClick={() => void navigator.clipboard?.writeText(cbIntlDeviceCode.verificationUriComplete || cbIntlDeviceCode.verificationUri).catch(() => {})}
+                        onClick={() => void safeCopyText(cbIntlDeviceCode.verificationUriComplete || cbIntlDeviceCode.verificationUri, "Link disalin")}
                       >
                         Salin Link
                       </Button>
