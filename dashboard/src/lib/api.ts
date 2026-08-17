@@ -399,6 +399,25 @@ export async function restoreClientConfig(
   });
 }
 
+// ── Grok CLI Real Usage & Validity ───────────────────────────────
+export interface GrokRealUsageResult {
+  accountId: number;
+  email: string;
+  used: number;
+  remaining: number;
+  limit: number;
+  valid: boolean;
+  tokenExpired?: boolean;
+  errorMsg: string | null;
+  resetAt: string;
+}
+
+export async function fetchGrokCliRealUsage(accountId: number): Promise<GrokRealUsageResult> {
+  return fetchApi(`/api/accounts/${accountId}/grok-real-usage`, {
+    method: "POST",
+  });
+}
+
 export async function fetchSettings() {
   return fetchApi("/api/settings");
 }

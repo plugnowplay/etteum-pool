@@ -3261,8 +3261,12 @@ accountsRouter.post("/:id/grok-real-usage", async (c) => {
     let limit = 500_000; // plan default fallback
     let remaining = limit;
     let resetAt: string | null = null;
-    let valid = false;
+    // `valid` = token is alive (billing returned 200, or probe failed
+    // transiently but token is not confirmed dead). Only a 401/403 from
+    // the billing endpoint sets valid=false.
+    let valid = true;
     let errorMsg: string | null = null;
+    let tokenExpired = false;
 
     if (provider?.fetchQuota) {
       const probe = await provider.fetchQuota(account);
@@ -3273,8 +3277,10 @@ accountsRouter.post("/:id/grok-real-usage", async (c) => {
         if (probe.quota.resetAt) {
           resetAt = new Date(probe.quota.resetAt as string | number | Date).toISOString();
         }
-        valid = true; // billing 200 ⇒ token is alive
+        // billing 200 ⇒ token is alive
+        valid = true;
       } else if (probe.error && /^expired:/i.test(probe.error)) {
+        tokenExpired = true;
         valid = false;
         errorMsg = "Token expired or revoked";
         await db.update(accounts)
@@ -3282,12 +3288,18 @@ accountsRouter.post("/:id/grok-real-usage", async (c) => {
           .where(eq(accounts.id, account.id));
         pool.invalidate("grok-cli");
         broadcast({ type: "account_updated", data: { id: account.id, provider: "grok-cli", status: "error", errorMessage: errorMsg } });
+      } else {
+        // Probe failed for non-auth reasons (proxy error, network, 429
+        // from rate-limiter, etc.). Token may still be valid — fall
+        // through to local credits and keep valid=true so the dashboard
+        // doesn't show a misleading EXPIRED badge.
+        errorMsg = probe.error || "Probe failed (transient)";
       }
     }
 
-    // 2) Fallback: local credits_used from request_logs if the probe failed
-    //    (e.g. transient network error) but the token is still valid.
-    if (!valid) {
+    // 2) Fallback: local credits_used from request_logs if the probe
+    //    didn't return authoritative data (or failed transiently).
+    if (!serverUsed && !tokenExpired) {
       const [logs] = await db
         .select({ sum: db.sql`COALESCE(SUM(credits_used), 0)` })
         .from(requestLogs)
@@ -3304,6 +3316,7 @@ accountsRouter.post("/:id/grok-real-usage", async (c) => {
       remaining,
       limit,
       valid,
+      tokenExpired,
       errorMsg,
       resetAt,
     });

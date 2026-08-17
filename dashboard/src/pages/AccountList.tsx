@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -20,6 +20,7 @@ import {
   toggleAllAccounts,
   warmupAccount,
   warmupAllAccounts,
+  fetchGrokCliRealUsage,
 } from "@/lib/api";
 
 type Provider = "kiro" | "kiro-pro" | "codebuddy" | "codebuddy-china" | "canva" | "codex" | "qoder" | "gitlab-duo" | "youmind" | "grok" | "grok-cli";
@@ -259,35 +260,74 @@ function QoderQuotaCell({
 }
 
 function GrokCliQuotaCell({ account }: { account: Account }) {
+  const [usage, setUsage] = useState<GrokRealUsageResult | null>(null);
+  const [loading, setLoading] = useState(false);
+  const fetchUsage = async () => {
+    if (account.status === "error") return; // let error handler show why
+    setLoading(true);
+    try {
+      const res = await fetchGrokCliRealUsage(account.id);
+      setUsage(res);
+    } catch {} finally {
+      setLoading(false);
+    }
+  };
+  useEffect(() => {
+    void fetchUsage();
+  }, []);
+
+  // Parse metadata.serverQuota fallback
   const q = account.metadata?.serverQuota;
-  if (!q) {
-    return <span className="text-xs text-[var(--muted-foreground)] opacity-60">n/a</span>;
+  const unlimited = q?.limit == null || q?.limit < 0;
+  const localUsed = Math.max(0, Number(q?.used ?? usage?.used ?? 0));
+  const limit = usage ? usage.limit : (unlimited ? null : Math.max(0, Number(q?.limit ?? 0)));
+  const remaining = usage ? usage.remaining : (unlimited ? null : Math.max(0, Number(q?.remaining ?? 0)));
+  const valid = usage?.valid ?? account.status !== "error";
+  const tokenExpired = usage?.tokenExpired ?? false;
+  const errorMsg = usage?.errorMsg ?? account.errorMessage ?? null;
+  const pct = remaining != null && limit != null && limit > 0 ? Math.min(100, Math.round((remaining / limit) * 100)) : null;
+  const tone = pct == null ? "bg-[var(--primary)]" : pct <= 10 ? "bg-[var(--error)]" : pct <= 40 ? "bg-[var(--warning)]" : "bg-[var(--success)]";
+  const resetSec = usage?.resetAt ? Math.round((Date.parse(usage.resetAt) - Date.now()) / 1000) : null;
+  const reset = resetSec ? formatResetIn(resetSec) : null;
+
+  // Badge logic: distinguish token-expired from quota-exhausted from probe-error.
+  // - tokenExpired (401/403 from billing) → red EXPIRED
+  // - valid but remaining <= 0           → orange EXHAUSTED
+  // - valid but probe had transient err  → yellow PROBE ERR
+  // - valid                              → green VALID
+  let badge: ReactNode = null;
+  if (loading && !valid) {
+    badge = <span className="text-[var(--warning)]">…</span>;
+  } else if (tokenExpired) {
+    badge = <span className="inline-flex items-center gap-1 px-1 py-0 rounded bg-[var(--error)] text-white"><XCircle className="w-2 h-2" /> EXPIRED</span>;
+  } else if (valid && remaining != null && remaining <= 0) {
+    badge = <span className="inline-flex items-center gap-1 px-1 py-0 rounded bg-[var(--warning)] text-white"><AlertTriangle className="w-2 h-2" /> EXHAUSTED</span>;
+  } else if (valid && errorMsg && !loading) {
+    badge = <span className="inline-flex items-center gap-1 px-1 py-0 rounded bg-[var(--warning)] text-white"><AlertTriangle className="w-2 h-2" /> PROBE ERR</span>;
+  } else if (valid) {
+    badge = <span className="inline-flex items-center gap-1 px-1 py-0 rounded bg-[var(--success)] text-white"><CheckCircle2 className="w-2 h-2" /> VALID</span>;
   }
 
-  const unlimited = q.limit == null || q.limit < 0;
-  const used = Math.max(0, Number(q.used ?? 0));
-  const remaining = unlimited
-    ? null
-    : Math.max(0, Number(q.remaining ?? 0));
-  const limit = unlimited ? null : Math.max(0, Number(q.limit ?? 0));
-  const pct = !unlimited && limit! > 0 ? Math.min(100, Math.round((remaining! / limit!) * 100)) : null;
-  const tone = pct == null ? "bg-[var(--primary)]" : pct <= 10 ? "bg-[var(--error)]" : pct <= 40 ? "bg-[var(--warning)]" : "bg-[var(--success)]";
-  const reset = q.resetAt ? formatResetIn(Math.round((Date.parse(q.resetAt) - Date.now()) / 1000)) : null;
-
   return (
-    <div className="space-y-1 min-w-[110px]">
+    <div className="space-y-1 min-w-[160px]" onMouseEnter={fetchUsage}>
+      <div className="flex items-center justify-between text-[10px] text-[var(--muted-foreground)]">
+        <span className="truncate">{account.email.split("@")[0]}</span>
+        {badge}
+      </div>
       <div className="flex items-center justify-between text-[10px] text-[var(--muted-foreground)]">
         <span>Used</span>
         <span>
-          {unlimited
-            ? <>{formatCredit(used)}{reset ? ` · reset ${reset}` : ""}</>
-            : <>{formatCredit(remaining)}/{formatCredit(limit)}</>}
+          {remaining != null && limit != null
+            ? `${formatCredit(remaining)} / ${formatCredit(limit)}`
+            : formatCredit(localUsed)}
+          {reset ? ` · reset ${reset}` : ""}
         </span>
       </div>
       <div className="h-1.5 w-full rounded-full bg-[var(--secondary)] overflow-hidden">
         {pct != null && <div className={`h-full ${tone}`} style={{ width: `${pct}%` }} />}
-        {unlimited && <div className={`h-full ${tone} opacity-60`} style={{ width: "100%" }} />}
+        {pct == null && <div className={`h-full ${tone} opacity-60`} style={{ width: "100%" }} />}
       </div>
+      {errorMsg && !tokenExpired && <div className="text-[9px] text-[var(--warning)] truncate" title={errorMsg}>{errorMsg.slice(0, 40)}</div>}
     </div>
   );
 }
