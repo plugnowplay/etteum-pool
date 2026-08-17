@@ -20,7 +20,9 @@
     "drizzle-orm": "^0.45.2",
     "hono": "^4.12.17",
     "imapflow": "^1.7.1",
-    "playwright": "^1.40.0"
+    "playwright": "^1.62.1",
+    "playwright-extra": "^4.3.6",
+    "puppeteer-extra-plugin-stealth": "^2.11.2"
   },
   "devDependencies": {
     "@types/bun": "latest",

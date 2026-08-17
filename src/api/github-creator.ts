@@ -12,6 +12,7 @@ import { encrypt, decrypt } from "../utils/crypto";
 import { broadcast } from "../ws/index";
 import { getNextProxy, markProxySuccess, markProxyFail } from "../services/proxy-pool";
 import { ImapFlow } from "imapflow";
+import path from "path";
 
 export const githubCreatorRoutes = new Hono();
 
@@ -174,11 +175,15 @@ interface ImapConfig {
 }
 
 async function openImap(cfg: ImapConfig): Promise<ImapFlow> {
+  // Normalize password: replace non-breaking spaces (U+00A0) with regular
+  // spaces, then trim. Google App Passwords pasted from the web sometimes
+  // contain NBSP instead of regular spaces, causing auth failures.
+  const cleanPass = cfg.password.replace(/\u00A0/g, " ").trim();
   const client = new ImapFlow({
     host: cfg.host,
     port: cfg.port,
     secure: cfg.port === 993,
-    auth: { user: cfg.username, pass: cfg.password },
+    auth: { user: cfg.username, pass: cleanPass },
     logger: false,
   });
   await client.connect();
@@ -288,13 +293,13 @@ async function readVerificationCode(
 // ── GitHub registration flow ─────────────────────────────────────────
 
 /**
- * Register a GitHub account. Steps:
- *  1. Get a proxy from proxy_pool via getNextProxy("github")
- *  2. Fetch the signup page to extract the CSRF authenticity_token
- *  3. POST the signup form with the account email + password
- *  4. Poll IMAP for the verification code
- *  5. POST the verification code to GitHub
- *  6. Update github_accounts status
+ * Register a GitHub account using Camoufox (headless Firefox with anti-detect).
+ * Calls scripts/camoufox_register.py which:
+ *  1. Launches Camoufox with proxy + geoip
+ *  2. Loads GitHub signup page (bypasses DataDome)
+ *  3. Fills + submits the form
+ *  4. Polls IMAP for verification code
+ *  5. Enters verification code on GitHub
  */
 async function registerGitHubAccount(account: GithubAccount): Promise<{
   ok: boolean;
@@ -332,8 +337,6 @@ async function registerGitHubAccount(account: GithubAccount): Promise<{
     .set({ proxyId: proxy.id, updatedAt: new Date() })
     .where(eq(githubAccounts.id, account.id));
 
-  const proxyUrl = proxy.url;
-
   // Progress log helper — broadcasts step to dashboard
   const logStep = (step: string, detail?: string) => {
     broadcast({
@@ -345,161 +348,101 @@ async function registerGitHubAccount(account: GithubAccount): Promise<{
 
   logStep("proxy_assigned", `proxy ${proxy.id}`);
 
+  // Build the command to run camoufox_register.py
+  const scriptPath = path.join(process.cwd(), "scripts", "camoufox_register.py");
+  const imapPass = imapCfg.password.replace(/\u00A0/g, " ").trim();
+
+  const args = [
+    scriptPath,
+    "--email", account.email,
+    "--password", plainPassword,
+    "--proxy", proxy.url,
+    "--imap-host", imapCfg.host,
+    "--imap-port", String(imapCfg.port),
+    "--imap-user", imapCfg.username,
+    "--imap-pass", imapPass,
+    "--domain", imapCfg.catchAllDomain || "",
+  ];
+
+  logStep("launching_camoufox", `python3 ${scriptPath}`);
+
   try {
-    // 2. Fetch the signup page to extract authenticity_token (CSRF)
-    logStep("fetching_signup_page");
-    const signupPageRes = await fetch("https://github.com/signup", {
-      method: "GET",
-      headers: {
-        "User-Agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
-        Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.9",
-      },
-      // @ts-expect-error — Bun supports the `proxy` option on fetch
-      proxy: proxyUrl,
-      redirect: "manual",
-    });
+    const result = await new Promise<{ ok: boolean; status: string; verificationCode?: string | null; error?: string }>((resolve) => {
+      const proc = Bun.spawn(["python3.12", ...args], {
+        stdout: "pipe",
+        stderr: "pipe",
+      });
 
-    const signupHtml = await signupPageRes.text();
-    const tokenMatch =
-      signupHtml.match(/name="authenticity_token"\s+value="([^"]+)"/) ||
-      signupHtml.match(/authenticity_token"[^>]*value="([^"]+)"/);
-    const authenticityToken = tokenMatch?.[1];
-
-    // Extract cookies from the signup page response
-    const setCookies = signupPageRes.headers.getSetCookie?.() || [];
-    const cookieHeader = setCookies.map((c: string) => c.split(";")[0]).join("; ");
-
-    if (!authenticityToken) {
-      await markProxyFail(proxy.id);
-      return {
-        ok: false,
-        status: "error",
-        error: "Could not extract authenticity_token from GitHub signup page",
+      // Read stderr for progress lines, broadcast them
+      const stderrReader = async () => {
+        const reader = proc.stderr.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split("\n");
+            buffer = lines.pop() || "";
+            for (const line of lines) {
+              const trimmed = line.trim();
+              if (!trimmed) continue;
+              try {
+                const msg = JSON.parse(trimmed);
+                if (msg.progress) {
+                  logStep(msg.progress, msg.url || msg.code || undefined);
+                }
+              } catch {
+                // Not JSON — log raw
+                console.log(`[Camoufox] ${trimmed}`);
+              }
+            }
+          }
+        } catch {}
       };
-    }
+      void stderrReader();
 
-    // 3. Submit the signup form
-    logStep("submitting_signup");
-    const formData = new URLSearchParams();
-    formData.append("authenticity_token", authenticityToken);
-    formData.append("user[email]", account.email);
-    formData.append("user[password]", plainPassword);
-    formData.append("source", "form-signup");
-    formData.append("required_field_0d96", ""); // honeypot — must be empty
-    formData.append("timestamp", String(Date.now()));
-    formData.append("timestamp_secret", "");
+      // Read stdout for final JSON result
+      const stdoutReader = async () => {
+        const reader = proc.stdout.getReader();
+        const decoder = new TextDecoder();
+        let output = "";
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            output += decoder.decode(value, { stream: true });
+          }
+        } catch {}
 
-    const signupRes = await fetch("https://github.com/signup", {
-      method: "POST",
-      headers: {
-        "User-Agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
-        Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.9",
-        "Content-Type": "application/x-www-form-urlencoded",
-        Origin: "https://github.com",
-        Referer: "https://github.com/signup",
-        ...(cookieHeader ? { Cookie: cookieHeader } : {}),
-      },
-      body: formData.toString(),
-      // @ts-expect-error — Bun supports the `proxy` option on fetch
-      proxy: proxyUrl,
-      redirect: "manual",
-    });
-
-    // GitHub responds with a redirect to /account/verify-email after successful signup
-    const location = signupRes.headers.get("location") || "";
-    const signupOk =
-      signupRes.status === 302 || location.includes("verify") || location.includes("account");
-
-    if (!signupOk) {
-      const body = await signupRes.text().catch(() => "");
-      // Check for known error patterns
-      const errorMatch =
-        body.match(/<div[^>]*class="[^"]*flash[^"]*"[^>]*>([^<]+)</) ||
-        body.match(/"error"[^>]*>([^<]+)</);
-      const errorMsg = errorMatch?.[1]?.trim() || `Signup failed (HTTP ${signupRes.status})`;
-      await markProxyFail(proxy.id);
-      return { ok: false, status: "error", error: errorMsg };
-    }
-
-    // Update status to registered
-    logStep("signup_submitted", "waiting for verification email");
-    await db
-      .update(githubAccounts)
-      .set({ status: "registered", updatedAt: new Date() })
-      .where(eq(githubAccounts.id, account.id));
-
-    broadcast({ type: "github_creator.account_updated", data: { id: account.id, status: "registered" } });
-
-    // 4. Poll IMAP for verification code (try up to 3 times with 10s intervals)
-    let verificationResult: { code: string | null; subject: string; from: string; date: string } | null = null;
-    const maxPollAttempts = 3;
-    const pollIntervalMs = 15_000;
-    const lookbackMinutes = 10;
-
-    for (let attempt = 0; attempt < maxPollAttempts; attempt++) {
-      logStep("polling_imap", `attempt ${attempt + 1}/${maxPollAttempts}`);
-      try {
-        verificationResult = await readVerificationCode(
-          imapCfg,
-          account.email,
-          lookbackMinutes,
-        );
-        if (verificationResult?.code) break;
-      } catch (imapErr) {
-        // IMAP read error — keep trying
-        console.error(`[GitHubCreator] IMAP poll attempt ${attempt + 1} failed:`, imapErr);
-      }
-      if (attempt < maxPollAttempts - 1) {
-        await new Promise((r) => setTimeout(r, pollIntervalMs));
-      }
-    }
-
-    if (!verificationResult?.code) {
-      logStep("no_code_found", "verification email not received");
-      await markProxySuccess(proxy.id);
-      return {
-        ok: false,
-        status: "error",
-        error: "Registered but no verification code found in IMAP after polling",
+        const exitCode = await proc.exited;
+        // Parse last JSON line from stdout
+        const lines = output.trim().split("\n");
+        const jsonLine = lines[lines.length - 1] || "{}";
+        try {
+          const result = JSON.parse(jsonLine);
+          resolve(result);
+        } catch {
+          resolve({ ok: false, status: "error", error: `Script output: ${output.slice(0, 500)}` });
+        }
       };
-    }
-
-    // Store the verification code
-    logStep("code_found", verificationResult.code);
-    await db
-      .update(githubAccounts)
-      .set({
-        verificationCode: verificationResult.code,
-        status: "verified",
-        errorMessage: null,
-        updatedAt: new Date(),
-      })
-      .where(eq(githubAccounts.id, account.id));
-
-    await markProxySuccess(proxy.id);
-
-    broadcast({
-      type: "github_creator.account_updated",
-      data: {
-        id: account.id,
-        status: "verified",
-        verificationCode: verificationResult.code,
-      },
+      void stdoutReader();
     });
 
-    return {
-      ok: true,
-      status: "verified",
-      verificationCode: verificationResult.code,
-      username: account.username,
-    };
+    if (result.ok) {
+      logStep(result.status === "verified" ? "verified" : "registered", result.verificationCode || undefined);
+      if (proxy) void markProxySuccess(proxy.id);
+    } else {
+      logStep("error", result.error);
+      if (proxy) void markProxyFail(proxy.id);
+    }
+
+    return result;
   } catch (err) {
-    await markProxyFail(proxy.id);
+    if (proxy) void markProxyFail(proxy.id);
     const errorMsg = imapError(err);
+    logStep("error", errorMsg);
     return { ok: false, status: "error", error: errorMsg };
   }
 }
@@ -616,11 +559,12 @@ githubCreatorRoutes.post("/imap/:id/test", async (c) => {
   }
 
   try {
+    const cleanPass = password.replace(/\u00A0/g, " ").trim();
     const imapClient = new ImapFlow({
       host: row.host,
       port: row.port,
       secure: row.port === 993,
-      auth: { user: row.username, pass: password },
+      auth: { user: row.username, pass: cleanPass },
       logger: false,
     });
     await imapClient.connect();
