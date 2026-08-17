@@ -21,6 +21,7 @@ import {
   warmupAccount,
   warmupAllAccounts,
   fetchGrokCliRealUsage,
+  type GrokRealUsageResult,
 } from "@/lib/api";
 
 type Provider = "kiro" | "kiro-pro" | "codebuddy" | "codebuddy-china" | "canva" | "codex" | "qoder" | "gitlab-duo" | "youmind" | "grok" | "grok-cli";
@@ -285,22 +286,31 @@ function GrokCliQuotaCell({ account }: { account: Account }) {
   const valid = usage?.valid ?? account.status !== "error";
   const tokenExpired = usage?.tokenExpired ?? false;
   const errorMsg = usage?.errorMsg ?? account.errorMessage ?? null;
-  const pct = remaining != null && limit != null && limit > 0 ? Math.min(100, Math.round((remaining / limit) * 100)) : null;
-  const tone = pct == null ? "bg-[var(--primary)]" : pct <= 10 ? "bg-[var(--error)]" : pct <= 40 ? "bg-[var(--warning)]" : "bg-[var(--success)]";
+  const isExhausted = account.status === "exhausted";
+  // When exhausted, show the bar as full (500k/500k) with red tone —
+  // matches how Grok's own UI shows it: quota is full but locked until
+  // the daily reset, not zeroed out.
+  const displayRemaining = isExhausted ? limit : remaining;
+  const displayPct = isExhausted ? 100
+    : remaining != null && limit != null && limit > 0 ? Math.min(100, Math.round((remaining / limit) * 100)) : null;
+  const tone = isExhausted ? "bg-[var(--error)]"
+    : displayPct == null ? "bg-[var(--primary)]"
+    : displayPct <= 10 ? "bg-[var(--error)]"
+    : displayPct <= 40 ? "bg-[var(--warning)]" : "bg-[var(--success)]";
   const resetSec = usage?.resetAt ? Math.round((Date.parse(usage.resetAt) - Date.now()) / 1000) : null;
   const reset = resetSec ? formatResetIn(resetSec) : null;
 
   // Badge logic: distinguish token-expired from quota-exhausted from probe-error.
   // - tokenExpired (401/403 from billing) → red EXPIRED
-  // - valid but remaining <= 0           → orange EXHAUSTED
+  // - exhausted                         → orange EXHAUSTED
   // - valid but probe had transient err  → yellow PROBE ERR
   // - valid                              → green VALID
   let badge: ReactNode = null;
-  if (loading && !valid) {
+  if (loading && !valid && !isExhausted) {
     badge = <span className="text-[var(--warning)]">…</span>;
   } else if (tokenExpired) {
     badge = <span className="inline-flex items-center gap-1 px-1 py-0 rounded bg-[var(--error)] text-white"><XCircle className="w-2 h-2" /> EXPIRED</span>;
-  } else if (valid && remaining != null && remaining <= 0) {
+  } else if (isExhausted || (valid && remaining != null && remaining <= 0)) {
     badge = <span className="inline-flex items-center gap-1 px-1 py-0 rounded bg-[var(--warning)] text-white"><AlertTriangle className="w-2 h-2" /> EXHAUSTED</span>;
   } else if (valid && errorMsg && !loading) {
     badge = <span className="inline-flex items-center gap-1 px-1 py-0 rounded bg-[var(--warning)] text-white"><AlertTriangle className="w-2 h-2" /> PROBE ERR</span>;
@@ -317,15 +327,15 @@ function GrokCliQuotaCell({ account }: { account: Account }) {
       <div className="flex items-center justify-between text-[10px] text-[var(--muted-foreground)]">
         <span>Used</span>
         <span>
-          {remaining != null && limit != null
-            ? `${formatCredit(remaining)} / ${formatCredit(limit)}`
+          {displayRemaining != null && limit != null
+            ? `${formatCredit(displayRemaining)} / ${formatCredit(limit)}`
             : formatCredit(localUsed)}
           {reset ? ` · reset ${reset}` : ""}
         </span>
       </div>
       <div className="h-1.5 w-full rounded-full bg-[var(--secondary)] overflow-hidden">
-        {pct != null && <div className={`h-full ${tone}`} style={{ width: `${pct}%` }} />}
-        {pct == null && <div className={`h-full ${tone} opacity-60`} style={{ width: "100%" }} />}
+        {displayPct != null && <div className={`h-full ${tone}`} style={{ width: `${displayPct}%` }} />}
+        {displayPct == null && <div className={`h-full ${tone} opacity-60`} style={{ width: "100%" }} />}
       </div>
       {errorMsg && !tokenExpired && <div className="text-[9px] text-[var(--warning)] truncate" title={errorMsg}>{errorMsg.slice(0, 40)}</div>}
     </div>

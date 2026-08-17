@@ -919,6 +919,28 @@ export class GrokCliProvider extends BaseProvider {
     }
 
     if (resp.status === 429) {
+      // xAI 429 body shape:
+      //   {"code":"subscription:free-usage-exhausted","error":"...tokens (actual/limit): 540959/500000..."}
+      // Parse actual/limit to decide: is this a hard quota exhaustion
+      // (actual >= limit) or a soft rate-limit (retry-able)?
+      const m = text.match(/tokens\s*\(actual\/limit\)\s*:\s*(\d+)\s*\/\s*(\d+)/i);
+      if (m) {
+        const actual = Number(m[1]);
+        const limit = Number(m[2]);
+        if (actual >= limit) {
+          // Daily free-usage quota genuinely exhausted — mark as
+          // quotaExhausted so the router marks the account and zeroes
+          // quota_remaining. The billing endpoint reports a DIFFERENT
+          // (monthly token-count) number, so without this the dashboard
+          // would show e.g. 499676/500000 forever even though the
+          // rate-limiter has already cut off the account.
+          return {
+            success: false,
+            error: `Grok CLI free usage exhausted (HTTP 429): ${actual}/${limit} tokens used in 24h window`,
+            quotaExhausted: true,
+          };
+        }
+      }
       return {
         success: false,
         error: `Rate limited by Grok CLI (HTTP 429): ${text.slice(0, 160)}`,
