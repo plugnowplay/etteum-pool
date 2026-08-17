@@ -1791,11 +1791,33 @@ accountsRouter.post("/", async (c) => {
     }
   }
 
+  // Decode a JWT payload (without signature verification) to extract the real
+  // account email. CodeBuddy access tokens carry `email`/`preferred_username`
+  // claims — using them keeps account labels human-recognizable instead of the
+  // synthetic `codebuddy-intl-XXXXXXXX@device` form.
+  const emailFromJwt = (token: string): string | null => {
+    try {
+      const parts = token.split(".");
+      if (parts.length < 2) return null;
+      const payload = JSON.parse(Buffer.from(parts[1]!, "base64").toString("utf-8"));
+      const email = String(payload.email || "").trim();
+      if (email && email.includes("@")) return email;
+      // CN tokens only carry a numeric username — synthesize a mail-style label.
+      const uname = String(payload.preferred_username || "").trim();
+      if (uname) return `${uname}@codebuddy.cn`;
+      return null;
+    } catch {
+      return null;
+    }
+  };
+
   // ── CodeBuddy Intl: OAuth device code token import ─────────────────
   if (body.provider === "codebuddy" && body.accessToken) {
     const accessToken = String(body.accessToken).trim();
     const refreshToken = String(body.refreshToken || "").trim();
-    const email = String(body.email || "").trim() || `codebuddy-intl-${accessToken.slice(-8)}@device`;
+    // Prefer the real email embedded in the JWT payload; fall back to the
+    // synthetic device label only when decoding fails.
+    const email = String(body.email || "").trim() || emailFromJwt(accessToken) || `codebuddy-intl-${accessToken.slice(-8)}@device`;
 
     try {
       const tokens = {
@@ -1939,17 +1961,57 @@ accountsRouter.post("/", async (c) => {
     }
 
     const created: Array<{ id: number; email: string }> = [];
+    const updated: Array<{ id: number; email: string }> = [];
     let suffix = await nextLabelSuffix("codebuddy-china");
+
+    // Existing accounts by decoded JWT `sub` — paste of a rotated token for a
+    // known account updates that row instead of creating a duplicate.
+    const existingCbc = await db.select().from(accounts)
+      .where(eq(accounts.provider, "codebuddy-china"));
+    const subToAccount = new Map<string, typeof existingCbc[number]>();
+    for (const acc of existingCbc) {
+      const t = typeof acc.tokens === "string" ? JSON.parse(acc.tokens) : acc.tokens;
+      const raw = t?.access_token || t?.api_key;
+      if (typeof raw !== "string") continue;
+      try {
+        const payload = JSON.parse(Buffer.from(raw.split(".")[1]!, "base64").toString("utf-8"));
+        if (payload.sub) subToAccount.set(String(payload.sub), acc);
+      } catch { /* not a JWT — skip */ }
+    }
 
     for (let i = 0; i < tokensList.length; i++) {
       const token = tokensList[i]!;
-      const email = `cbc-token-${suffix++}`;
+      // Real account identity from the JWT — e.g. `46594197@codebuddy.cn`.
+      const email = emailFromJwt(token) || `cbc-token-${suffix++}`;
       const encryptedToken = encrypt(token);
 
       // Provider's getApiKey() reads api_key → access_token → session_token
       // in order. Storing under access_token keeps the ck_ vs raw-token
       // distinction visible in the DB row.
       const tokens = { access_token: token };
+
+      // Upsert by JWT `sub`: refresh-token rows for an existing account
+      // instead of inserting a duplicate.
+      let sub: string | null = null;
+      try {
+        const payload = JSON.parse(Buffer.from(token.split(".")[1]!, "base64").toString("utf-8"));
+        sub = payload.sub ? String(payload.sub) : null;
+      } catch { /* non-JWT — fall through to insert */ }
+      const existing = sub ? subToAccount.get(sub) : undefined;
+
+      if (existing) {
+        await db.update(accounts).set({
+          email,
+          password: encryptedToken,
+          status: "active",
+          tokens,
+          errorMessage: null,
+          lastLoginAt: new Date(),
+          updatedAt: new Date(),
+        }).where(eq(accounts.id, existing.id));
+        updated.push({ id: existing.id, email });
+        continue;
+      }
 
       const inserted = await db.insert(accounts).values({
         provider: "codebuddy-china",
@@ -1973,7 +2035,9 @@ accountsRouter.post("/", async (c) => {
     return c.json({
       success: true,
       count: created.length,
+      updated: updated.length,
       accounts: created,
+      updatedAccounts: updated,
     }, 201);
   }
 

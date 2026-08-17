@@ -740,9 +740,19 @@ oauthRouter.post("/codebuddy-intl/poll", async (c) => {
       method: "device_code",
     };
 
+    // Real email from the JWT payload (falls back to the synthetic device
+    // label server-side when decoding fails) — keeps account list readable.
+    let email: string | undefined;
+    try {
+      const jwt = tokens.access_token!.split(".");
+      const payload = JSON.parse(Buffer.from(jwt[1]!, "base64").toString("utf-8"));
+      const real = String(payload.email || payload.preferred_username || "").trim();
+      if (real) email = real.includes("@") ? real : `${real}@codebuddy.cn`;
+    } catch { /* non-fatal */ }
+
     return c.json({
       status: "done",
-      email: `codebuddy-intl-${data.data.accessToken.slice(-8)}@device`,
+      email: email || `codebuddy-intl-${data.data.accessToken.slice(-8)}@device`,
       tokens,
     });
   } catch (error) {
