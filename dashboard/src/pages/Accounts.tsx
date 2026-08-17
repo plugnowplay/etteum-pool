@@ -858,7 +858,19 @@ export default function Accounts() {
 
   async function safeCopyText(text: string, successMessage: string) {
     try {
-      await navigator.clipboard.writeText(text);
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        // Fallback for non-secure contexts (HTTP) or disabled clipboard API
+        const ta = document.createElement("textarea");
+        ta.value = text;
+        ta.style.position = "fixed";
+        ta.style.left = "-9999px";
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand("copy");
+        document.body.removeChild(ta);
+      }
       showSuccess(successMessage);
     } catch (err) {
       showError(err);
@@ -995,7 +1007,7 @@ export default function Accounts() {
 
   async function handleCodexOAuthPasteCallback() {
     try {
-      const text = await navigator.clipboard.readText();
+      const text = await (navigator.clipboard?.readText?.() ?? Promise.resolve(""));
       setCodexOauthCallbackUrl(text);
     } catch (err) {
       showError(err);
@@ -1230,9 +1242,7 @@ export default function Accounts() {
   }
 
   function copyByokModel(model: string) {
-    navigator.clipboard?.writeText(model).then(() => {
-      showSuccess(`Copied ${model}`);
-    }).catch(() => showError(new Error("Clipboard not available")));
+    void safeCopyText(model, `Copied ${model}`);
   }
 
   function handleEditByok(provider: ByokProvider) {
