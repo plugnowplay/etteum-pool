@@ -52,7 +52,12 @@ Bun.serve({
 
     if (await file.exists()) {
       return new Response(file, {
-        headers: { "Content-Type": getMimeType(pathname) },
+        headers: {
+          "Content-Type": getMimeType(pathname),
+          // Hashed assets are immutable; index.html must always revalidate
+          // or users get stuck on stale chunks that no longer exist.
+          "Cache-Control": pathname === "/index.html" ? "no-cache" : "public, max-age=31536000, immutable",
+        },
       });
     }
 

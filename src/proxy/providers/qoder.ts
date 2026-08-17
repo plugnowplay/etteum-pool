@@ -382,6 +382,9 @@ const QODER_MODELS: QoderModelDef[] = [
   // reject requests it actually can't serve, which is the right place to
   // enforce the real ceiling.
   { id: "qd-Qwen3.7-Max",       upstream: "qmodel_latest", display_name: "Qwen3.7-Max",       max_input_tokens: 1000000, is_vl: true,  is_reasoning: false, price_factor: 0.2 },
+  // Qwen3.8-Max — promo bucket qmodel_38max (800 free calls during the
+  // activity window, announced via /activity). Same 1M window as 3.7-Max.
+  { id: "qd-Qwen3.8-Max",       upstream: "qmodel_38max",  display_name: "Qwen3.8-Max",       max_input_tokens: 1000000, is_vl: true,  is_reasoning: false, price_factor: 0.2 },
   { id: "qd-Qwen3.6-Plus",      upstream: "qmodel",        display_name: "Qwen3.6-Plus",      max_input_tokens: 180000, is_vl: true,  is_reasoning: false, price_factor: 0.2 },
   { id: "qd-DeepSeek-V4-Pro",   upstream: "dmodel",        display_name: "DeepSeek-V4-Pro",   max_input_tokens: 180000, is_vl: true,  is_reasoning: true,  price_factor: 0.5 },
   { id: "qd-DeepSeek-V4-Flash", upstream: "dfmodel",       display_name: "DeepSeek-V4-Flash", max_input_tokens: 180000, is_vl: true,  is_reasoning: true,  price_factor: 0.1 },
@@ -1319,14 +1322,15 @@ export class QoderProvider extends BaseProvider {
 
   /**
    * Whether a given Qoder model id is covered by a Free-promo bucket on
-   * `/activity`. Currently only `qmodel_latest` (Qwen3.7-Max) has a promo;
-   * other models hit the account-wide credit pool from `/quota/usage`.
+   * `/activity` (e.g. qmodel_latest for Qwen3.7-Max, qmodel_38max for
+   * Qwen3.8-Max). Models without a promo bucket hit the account-wide credit
+   * pool from `/quota/usage`.
    *
    * Used by the proxy to route per-request decrement to the correct counter.
    */
   isFreeModel(modelId: string): boolean {
     const def = MODEL_CONFIGS[modelId];
-    return def?.upstream === "qmodel_latest";
+    return def?.upstream === "qmodel_latest" || def?.upstream === "qmodel_38max";
   }
 
   /**

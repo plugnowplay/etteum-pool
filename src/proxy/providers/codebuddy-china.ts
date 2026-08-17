@@ -826,6 +826,7 @@ export class CodeBuddyChinaProvider extends BaseProvider {
 
         const decoder = new TextDecoder();
         let buffer = "";
+        let reasoningBuffer = "";
 
         try {
           while (true) {
@@ -850,7 +851,47 @@ export class CodeBuddyChinaProvider extends BaseProvider {
                 const choice = parsed.choices?.[0];
                 const delta = choice?.delta || {};
 
-                const chunk: StreamChunk = {
+                // Coalesce reasoning deltas: upstream streams reasoning_content
+                // token-by-token; forwarding each one makes clients (opencode)
+                // render hundreds of tiny "Thought" blocks. Buffer and flush as
+                // a few large blocks instead — content deltas pass through.
+                if (typeof delta.reasoning_content === "string" && delta.reasoning_content && !delta.content) {
+                  reasoningBuffer += delta.reasoning_content;
+                  if (reasoningBuffer.length >= 512 || choice?.finish_reason) {
+                    const flushed = reasoningBuffer;
+                    reasoningBuffer = "";
+                    const chunk: StreamChunk = {
+                      id: parsed.id || id,
+                      object: "chat.completion.chunk",
+                      created: Math.floor(Date.now() / 1000),
+                      model,
+                      choices: [{
+                        index: choice?.index ?? 0,
+                        delta: { reasoning_content: flushed },
+                        finish_reason: null,
+                      }],
+                    };
+                    controller.enqueue(encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`));
+                  }
+                } else {
+                  if (reasoningBuffer) {
+                    const flushed = reasoningBuffer;
+                    reasoningBuffer = "";
+                    const flushChunk: StreamChunk = {
+                      id: parsed.id || id,
+                      object: "chat.completion.chunk",
+                      created: Math.floor(Date.now() / 1000),
+                      model,
+                      choices: [{
+                        index: choice?.index ?? 0,
+                        delta: { reasoning_content: flushed },
+                        finish_reason: null,
+                      }],
+                    };
+                    controller.enqueue(encoder.encode(`data: ${JSON.stringify(flushChunk)}\n\n`));
+                  }
+
+                  const chunk: StreamChunk = {
                   id: parsed.id || id,
                   object: "chat.completion.chunk",
                   created: Math.floor(Date.now() / 1000),
@@ -875,6 +916,7 @@ export class CodeBuddyChinaProvider extends BaseProvider {
                 }
 
                 controller.enqueue(encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`));
+                }
               } catch {
                 // skip malformed chunk
               }
@@ -883,6 +925,18 @@ export class CodeBuddyChinaProvider extends BaseProvider {
         } catch (error) {
           console.error("[CodeBuddy China] Stream error:", error instanceof Error ? error.message : String(error));
         } finally {
+          // Flush any remaining buffered reasoning before closing.
+          if (reasoningBuffer) {
+            const flushChunk: StreamChunk = {
+              id,
+              object: "chat.completion.chunk",
+              created: Math.floor(Date.now() / 1000),
+              model,
+              choices: [{ index: 0, delta: { reasoning_content: reasoningBuffer }, finish_reason: null }],
+            };
+            reasoningBuffer = "";
+            try { controller.enqueue(encoder.encode(`data: ${JSON.stringify(flushChunk)}\n\n`)); } catch { /* closed */ }
+          }
           try { controller.close(); } catch { /* already closed */ }
         }
       },

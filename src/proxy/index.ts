@@ -16,7 +16,7 @@ import { isBadUpstreamRequest, isInvalidModelError } from "./errors";
 import { prepareLogBody } from "./logging";
 import { resolveModelAlias } from "./model-mapping";
 import { and, eq, sql } from "drizzle-orm";
-import { providerList, refreshByokModels } from "./providers/registry";
+import { providerList, refreshByokModels, refreshGitlabDuoModels, refreshCustomModels } from "./providers/registry";
 
 export const proxyRouter = new Hono();
 
@@ -151,6 +151,12 @@ function extractUsageFromSsePayload(payload: string) {
       promptTokens: Number(usage?.prompt_tokens || usage?.input_tokens || 0),
       completionTokens: Number(usage?.completion_tokens || usage?.output_tokens || 0),
       totalTokens: Number(usage?.total_tokens || 0),
+      cachedTokens: Number(
+        usage?.cache_read_input_tokens ??
+        usage?.cache_creation_input_tokens ??
+        usage?.prompt_tokens_details?.cached_tokens ??
+        0
+      ),
       creditsUsed: Number(usage?.credits_used || usage?.creditsUsed || usage?.credit || parsed.credits_used || parsed.creditsUsed || 0),
     };
   } catch {
@@ -263,6 +269,7 @@ function wrapStreamWithUsageFinalizer(
   let completionTokens = 0;
   let totalTokens = 0;
   let upstreamCredits = 0;
+  let cachedTokens = 0;
   let finalized = false;
   let streamError = false;
 
@@ -378,6 +385,7 @@ function wrapStreamWithUsageFinalizer(
               promptTokens: finalPromptTokens,
               completionTokens: finalCompletionTokens,
               totalTokens: finalTotalTokens,
+              cachedTokens,
               creditsUsed,
               durationMs,
               accountQuotaAfter: quotaAfter,
@@ -398,6 +406,7 @@ function wrapStreamWithUsageFinalizer(
             completionTokens: finalCompletionTokens,
             totalTokens: finalTotalTokens,
             creditsUsed,
+            cachedTokens,
             status: "success",
             durationMs,
             accountQuotaBefore: context.quotaBefore,
@@ -486,8 +495,11 @@ async function handleChatCompletion(body: ChatCompletionRequest) {
 
   try {
     const promptTokens = result.promptTokens || result.response?.usage?.prompt_tokens || estimateMessagesTokens(body.messages);
-    const completionTokens = result.completionTokens || result.response?.usage?.completion_tokens || 0;
+    const completionTokens = result.promptTokens === 0 && !result.response?.usage ? estimateTokensFromText(String(result.response?.choices?.[0]?.message?.content ?? "")) : (result.completionTokens || result.response?.usage?.completion_tokens || 0);
     const totalTokens = result.tokensUsed || result.response?.usage?.total_tokens || promptTokens + completionTokens;
+    const cachedTokens =
+      Number((result.response?.usage as any)?.cache_read_input_tokens || 0) ||
+      Number((result.response?.usage as any)?.prompt_tokens_details?.cached_tokens || 0);
 
   const { creditsUsed, creditSource } = computeCredits(
     provider,
@@ -533,6 +545,7 @@ async function handleChatCompletion(body: ChatCompletionRequest) {
     promptTokens,
     completionTokens,
     totalTokens,
+    cachedTokens,
     creditsUsed,
     status: "success" as const,
     durationMs,
@@ -607,9 +620,10 @@ async function handleChatCompletion(body: ChatCompletionRequest) {
  * fail with "No active accounts available".
  */
 proxyRouter.get("/v1/models", async (c) => {
-  // Ensure BYOK cache is fresh before listing models.
-  // Without this, the sync getModels() returns stale/empty supportedModels.
-  await refreshByokModels();
+  // Rebuild the DB-backed model caches on every listing so newly added or
+  // disabled accounts are reflected immediately — both refreshes are cheap
+  // DB reads, no upstream traffic.
+  await Promise.all([refreshByokModels(), refreshGitlabDuoModels(), refreshCustomModels()]);
 
   const usable = new Set(
     (

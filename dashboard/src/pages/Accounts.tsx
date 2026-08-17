@@ -54,6 +54,23 @@ type ByokFormKey = {
   errorMessage?: string | null;
 };
 
+interface ServerQuota {
+  limit?: number;
+  remaining?: number;
+  used?: number;
+  resetAt?: string | null;
+  source?: string | null;
+  reportedAt?: string;
+}
+
+interface ServerQuota {
+  limit?: number;
+  remaining?: number;
+  used?: number;
+  resetAt?: string | null;
+  source?: string | null;
+}
+
 interface Account {
   id: number;
   email: string;
@@ -61,6 +78,7 @@ interface Account {
   status: string;
   quotaLimit?: number;
   quotaRemaining?: number;
+  metadata?: { serverQuota?: ServerQuota | null } | null;
 }
 
 const providers: Provider[] = ["kiro", "kiro-pro", "codebuddy", "codebuddy-china", "canva", "codex", "qoder", "gitlab-duo", "youmind", "grok", "grok-cli"];
@@ -115,9 +133,11 @@ export default function Accounts() {
     deviceCode: string;
     userCode: string;
     verificationUri: string;
+    verificationUriComplete: string;
     expiresIn: number;
     interval: number;
   } | null>(null);
+  const [grokCliAutoPolling, setGrokCliAutoPolling] = useState(false);
   const [grokCliAccessToken, setGrokCliAccessToken] = useState("");
   const [grokCliError, setGrokCliError] = useState<string | null>(null);
   const [grokCliBusy, setGrokCliBusy] = useState(false);
@@ -126,6 +146,17 @@ export default function Accounts() {
   const [codebuddyChinaBusy, setCodebuddyChinaBusy] = useState(false);
   const [codebuddyBulkApiKeys, setCodebuddyBulkApiKeys] = useState("");
   const [codebuddyBusy, setCodebuddyBusy] = useState(false);
+  const [cbIntlDeviceCode, setCbIntlDeviceCode] = useState<{
+    deviceCode: string;
+    userCode: string;
+    verificationUri: string;
+    verificationUriComplete: string;
+    expiresIn: number;
+    interval: number;
+  } | null>(null);
+  const [cbIntlAutoPolling, setCbIntlAutoPolling] = useState(false);
+  const [cbIntlError, setCbIntlError] = useState<string | null>(null);
+  const [cbIntlBusy, setCbIntlBusy] = useState(false);
   const [loginPendingDialog, setLoginPendingDialog] = useState(false);
   const [loginPendingConcurrency, setLoginPendingConcurrency] = useState(2);
   const [byokProviders, setByokProviders] = useState<ByokProvider[]>([]);
@@ -242,6 +273,7 @@ export default function Accounts() {
   useEffect(() => () => {
     if (reloadRef.current) clearTimeout(reloadRef.current);
     if (warmupReloadRef.current) clearTimeout(warmupReloadRef.current);
+    if (grokCliPollRef.current) clearInterval(grokCliPollRef.current);
     if (codexOauthPollRef.current) clearInterval(codexOauthPollRef.current);
     if (codexOauthStateRef.current) {
       stopCodexOAuth(codexOauthStateRef.current).catch(() => {});
@@ -457,17 +489,31 @@ export default function Accounts() {
     finally { setGrokBusy(false); }
   }
 
+  const grokCliPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  function stopGrokCliAutoPoll() {
+    if (grokCliPollRef.current) {
+      clearInterval(grokCliPollRef.current);
+      grokCliPollRef.current = null;
+    }
+    setGrokCliAutoPolling(false);
+  }
+
   async function handleGrokCliDeviceCode() {
     setGrokCliBusy(true);
     setGrokCliDeviceCode(null);
     setGrokCliError(null);
     try {
       const res = await fetchApi<any>("/api/oauth/grok-cli/device-code", { method: "POST" });
+      if (!res?.state || !res?.userCode || !res?.verificationUri) {
+        throw new Error(res?.error || "Device code response missing fields");
+      }
       setGrokCliDeviceCode({
-        deviceCode: res.device_code,
-        userCode: res.user_code,
-        verificationUri: res.verification_uri,
-        expiresIn: res.expires_in || 600,
+        deviceCode: res.state,
+        userCode: res.userCode,
+        verificationUri: res.verificationUri,
+        verificationUriComplete: res.verificationUriComplete || res.verificationUri,
+        expiresIn: res.expiresIn || 600,
         interval: res.interval || 5,
       });
     } catch (err) {
@@ -477,9 +523,9 @@ export default function Accounts() {
     }
   }
 
-  async function handleGrokCliPoll() {
+  async function handleGrokCliPoll(auto = false) {
     if (!grokCliDeviceCode) return;
-    setGrokCliBusy(true);
+    if (!auto) setGrokCliBusy(true);
     setGrokCliError(null);
     try {
       const res = await fetchApi<any>("/api/oauth/grok-cli/poll", {
@@ -488,19 +534,52 @@ export default function Accounts() {
       });
       if (res.status === "pending") return;
       if (res.status === "done") {
-        showSuccess(`Grok CLI ${res.email || "account"} added successfully`);
+        stopGrokCliAutoPoll();
+        const act = await fetchApi<any>("/api/accounts", {
+          method: "POST",
+          body: JSON.stringify({
+            provider: "grok-cli",
+            accessToken: res.tokens?.access_token || "",
+            refreshToken: res.tokens?.refresh_token || "",
+            idToken: res.tokens?.id_token || "",
+            email: res.email || "",
+            expiresIn: res.tokens?.expires_at
+              ? Math.round((Date.parse(res.tokens.expires_at) - Date.now()) / 1000)
+              : undefined,
+          }),
+        });
+        showSuccess(`Grok CLI ${act?.email || res.email || "account"} added successfully`);
         setGrokCliDeviceCode(null);
         setAddDialogProvider(null);
         await load();
       } else if (res.error) {
+        stopGrokCliAutoPoll();
         setGrokCliError(res.error);
       }
     } catch (err) {
+      stopGrokCliAutoPoll();
       setGrokCliError(err instanceof Error ? err.message : String(err));
     } finally {
       setGrokCliBusy(false);
     }
   }
+
+  useEffect(() => {
+    if (!grokCliDeviceCode) return;
+    const seconds = Math.max(3, grokCliDeviceCode.interval || 5);
+    setGrokCliAutoPolling(true);
+    grokCliPollRef.current = setInterval(() => {
+      void handleGrokCliPoll(true);
+    }, seconds * 1000);
+    return () => {
+      if (grokCliPollRef.current) {
+        clearInterval(grokCliPollRef.current);
+        grokCliPollRef.current = null;
+      }
+      setGrokCliAutoPolling(false);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [grokCliDeviceCode?.deviceCode]);
 
   async function handleGrokCliAccessTokenLogin() {
     const token = grokCliAccessToken.trim();
@@ -586,6 +665,94 @@ export default function Accounts() {
     } catch (err) { showError(err); }
     finally { setCodebuddyChinaBusy(false); }
   }
+
+  const cbIntlPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  function stopCbIntlAutoPoll() {
+    if (cbIntlPollRef.current) {
+      clearInterval(cbIntlPollRef.current);
+      cbIntlPollRef.current = null;
+    }
+    setCbIntlAutoPolling(false);
+  }
+
+  async function handleCbIntlDeviceCode() {
+    setCbIntlBusy(true);
+    setCbIntlDeviceCode(null);
+    setCbIntlError(null);
+    try {
+      const res = await fetchApi<any>("/api/oauth/codebuddy-intl/device-code", { method: "POST" });
+      if (!res?.state || !res?.verificationUri) {
+        throw new Error(res?.error || "Device code response missing fields");
+      }
+      setCbIntlDeviceCode({
+        deviceCode: res.state,
+        userCode: res.userCode || "",
+        verificationUri: res.verificationUri,
+        verificationUriComplete: res.verificationUriComplete || res.verificationUri,
+        expiresIn: res.expiresIn || 600,
+        interval: res.interval || 5,
+      });
+    } catch (err) {
+      setCbIntlError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setCbIntlBusy(false);
+    }
+  }
+
+  async function handleCbIntlPoll(auto = false) {
+    if (!cbIntlDeviceCode) return;
+    if (!auto) setCbIntlBusy(true);
+    setCbIntlError(null);
+    try {
+      const res = await fetchApi<any>("/api/oauth/codebuddy-intl/poll", {
+        method: "POST",
+        body: JSON.stringify({ state: cbIntlDeviceCode.deviceCode }),
+      });
+      if (res.status === "pending") return;
+      if (res.status === "done") {
+        stopCbIntlAutoPoll();
+        const act = await fetchApi<any>("/api/accounts", {
+          method: "POST",
+          body: JSON.stringify({
+            provider: "codebuddy",
+            accessToken: res.tokens?.access_token || "",
+            refreshToken: res.tokens?.refresh_token || "",
+            email: res.email || "",
+          }),
+        });
+        showSuccess(`CodeBuddy Intl ${act?.email || res.email || "account"} added successfully`);
+        setCbIntlDeviceCode(null);
+        setAddDialogProvider(null);
+        await load();
+      } else if (res.error) {
+        stopCbIntlAutoPoll();
+        setCbIntlError(res.error);
+      }
+    } catch (err) {
+      stopCbIntlAutoPoll();
+      setCbIntlError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setCbIntlBusy(false);
+    }
+  }
+
+  useEffect(() => {
+    if (!cbIntlDeviceCode) return;
+    const seconds = Math.max(3, cbIntlDeviceCode.interval || 5);
+    setCbIntlAutoPolling(true);
+    cbIntlPollRef.current = setInterval(() => {
+      void handleCbIntlPoll(true);
+    }, seconds * 1000);
+    return () => {
+      if (cbIntlPollRef.current) {
+        clearInterval(cbIntlPollRef.current);
+        cbIntlPollRef.current = null;
+      }
+      setCbIntlAutoPolling(false);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cbIntlDeviceCode?.deviceCode]);
 
 
   async function handleBulkImport() {
@@ -1059,8 +1226,17 @@ export default function Accounts() {
   const providerStats = useMemo(() => {
     return providers.map((provider) => {
       const rows = accounts.filter((a) => a.provider === provider);
-      const quotaLimit = rows.reduce((sum, a) => sum + (a.quotaLimit || 0), 0);
-      const quotaRemaining = rows.reduce((sum, a) => sum + (a.quotaRemaining || 0), 0);
+      let quotaLimit = rows.reduce((sum, a) => sum + (a.quotaLimit || 0), 0);
+      let quotaRemaining = rows.reduce((sum, a) => sum + (a.quotaRemaining || 0), 0);
+      let unlimitedCount = 0;
+      let usedTotal = 0;
+      if (provider === "grok-cli") {
+        const reported = rows.filter((a) => a.metadata?.serverQuota);
+        unlimitedCount = reported.filter((a) => Number(a.metadata!.serverQuota!.limit ?? -1) <= 0).length;
+        usedTotal = reported.reduce((sum, a) => sum + Math.max(0, Number(a.metadata!.serverQuota!.used ?? 0)), 0);
+        quotaLimit = reported.reduce((sum, a) => sum + Math.max(0, Number(a.metadata!.serverQuota!.limit ?? 0)), 0);
+        quotaRemaining = reported.reduce((sum, a) => sum + Math.max(0, Number(a.metadata!.serverQuota!.remaining ?? 0)), 0);
+      }
       return {
         provider,
         total: rows.length,
@@ -1068,6 +1244,8 @@ export default function Accounts() {
         exhausted: rows.filter((a) => a.status === "exhausted").length,
         pending: rows.filter((a) => a.status === "pending").length,
         error: rows.filter((a) => a.status === "error").length,
+        unlimitedCount,
+        usedTotal,
         credits: { used: Math.max(0, quotaLimit - quotaRemaining), total: quotaLimit, remaining: quotaRemaining },
       };
     });
@@ -1168,6 +1346,11 @@ export default function Accounts() {
                   <span className="text-[var(--muted-foreground)]">Credits</span>
                   <span className="text-[var(--foreground)]">
                     {stat.credits.remaining.toFixed(1)} / {stat.credits.total.toFixed(1)} remaining
+                    {stat.unlimitedCount > 0 && (
+                      <span className="ml-1.5 text-[var(--muted-foreground)]" title={`${stat.unlimitedCount} unlimited account(s) — usage reported, no cap`}>
+                        ∞ ×{stat.unlimitedCount}
+                      </span>
+                    )}
                   </span>
                 </div>
                 <Progress
@@ -1405,7 +1588,7 @@ export default function Accounts() {
                   className={`focus:ring-1 focus:ring-[var(--ring)] ${byokEditId ? 'bg-[var(--muted)] opacity-60' : ''}`}
                 />
                 <p className="text-xs text-[var(--muted-foreground)]">
-                  {byokEditId ? 'Prefix cannot be changed after creation' : 'Used as model prefix (e.g., "openrouter-gpt-4")'}
+                  {byokEditId ? 'Prefix cannot be changed after creation' : 'Used as model prefix (e.g., "openrouter/gpt-4o")'}
                 </p>
               </div>
 
@@ -1676,9 +1859,15 @@ export default function Accounts() {
             </div>
           ) : addDialogProvider === "codebuddy" ? (
             <div className="flex gap-1 rounded-md bg-[var(--secondary)] p-1">
+              <button onClick={() => setAddMode("bulk")}
+                className={`flex-1 rounded px-3 py-1.5 text-xs font-medium transition-colors ${addMode === "bulk" ? "bg-[var(--background)] text-[var(--foreground)] shadow-sm" : "text-[var(--muted-foreground)]"}`}
+              >Bulk (Email|Pass)</button>
+              <button onClick={() => setAddMode("single")}
+                className={`flex-1 rounded px-3 py-1.5 text-xs font-medium transition-colors ${addMode === "single" ? "bg-[var(--background)] text-[var(--foreground)] shadow-sm" : "text-[var(--muted-foreground)]"}`}
+              >Single</button>
               <button onClick={() => setAddMode("apikey")}
                 className={`flex-1 rounded px-3 py-1.5 text-xs font-medium transition-colors ${addMode === "apikey" ? "bg-[var(--background)] text-[var(--foreground)] shadow-sm" : "text-[var(--muted-foreground)]"}`}
-              >Bulk API Key (cb-...)</button>
+              >OAuth / API Key</button>
             </div>
           ) : addDialogProvider === "codebuddy-china" ? (
             <div className="flex gap-1 rounded-md bg-[var(--secondary)] p-1">
@@ -1742,6 +1931,79 @@ export default function Accounts() {
                   {grokBusy ? "Validating..." : "Add Account"}
                 </Button>
               </div>
+            </div>
+          )}
+
+          {addMode === "pat" && addDialogProvider === "grok-cli" && (
+            <div className="space-y-4">
+              {!grokCliDeviceCode ? (
+                <>
+                  <div>
+                    <label className="text-sm text-[var(--foreground)]">Grok CLI Access Token (opsional)</label>
+                    <textarea
+                      value={grokCliAccessToken}
+                      onChange={(e) => setGrokCliAccessToken(e.target.value)}
+                      className="mt-1 w-full h-24 rounded-md border border-[var(--border)] bg-[var(--background)] p-3 text-sm font-mono text-[var(--foreground)] placeholder:text-[var(--muted-foreground)] focus:outline-none focus:ring-1 focus:ring-[var(--ring)] resize-none"
+                      placeholder="eyJ0eXAiOiJhdCtqd3Qi…"
+                      disabled={grokCliBusy}
+                    />
+                    <p className="mt-1 text-xs text-[var(--muted-foreground)]">
+                      Sign in with your xAI/Grok account via device code. Uses Grok Build subscription credits (cli-chat-proxy.grok.com).
+                    </p>
+                  </div>
+                  {grokCliError && <p className="text-xs text-[var(--error)]">{grokCliError}</p>}
+                  <div className="flex justify-end gap-2">
+                    <Button variant="outline" onClick={() => setAddDialogProvider(null)} disabled={grokCliBusy}>Cancel</Button>
+                    {grokCliAccessToken.trim() && (
+                      <Button variant="outline" onClick={handleGrokCliAccessTokenLogin} disabled={grokCliBusy}>
+                        {grokCliBusy ? "Adding..." : "Add via Token"}
+                      </Button>
+                    )}
+                    <Button onClick={handleGrokCliDeviceCode} disabled={grokCliBusy}>
+                      {grokCliBusy ? "Requesting..." : "Get Device Code"}
+                    </Button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="rounded-md border border-[var(--border)] bg-[var(--surface-2)] p-3 space-y-3">
+                    <div className="space-y-1.5">
+                      <p className="text-xs text-[var(--muted-foreground)]">
+                        Buka link di bawah — kode <span className="font-mono text-[var(--foreground)]">{grokCliDeviceCode.userCode}</span> sudah terisi otomatis, tinggal konfirmasi di x.ai.
+                      </p>
+                      <p className="text-[10px] text-[var(--muted-foreground)] opacity-70">
+                        (Kalau tab baru terblokir popup, salin: <span className="font-mono break-all">{grokCliDeviceCode.verificationUriComplete || grokCliDeviceCode.verificationUri}</span>)
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <Button
+                        onClick={() => {
+                          void navigator.clipboard?.writeText(grokCliDeviceCode.userCode).catch(() => {});
+                          window.open(grokCliDeviceCode.verificationUriComplete || grokCliDeviceCode.verificationUri, "_blank", "noopener");
+                        }}
+                      >
+                        Open &amp; Authorize
+                      </Button>
+                      <Button
+                        variant="outline"
+                        onClick={() => void navigator.clipboard?.writeText(grokCliDeviceCode.verificationUriComplete || grokCliDeviceCode.verificationUri).catch(() => {})}
+                      >
+                        Salin Link
+                      </Button>
+                    </div>
+                    <p className="text-xs text-[var(--muted-foreground)] flex items-center gap-1.5">
+                      {grokCliAutoPolling
+                        ? <><Loader2 className="h-3 w-3 animate-spin" /> Menunggu otorisasi… (cek otomatis tiap {Math.max(3, grokCliDeviceCode.interval || 5)}s, kode berlaku {Math.round(grokCliDeviceCode.expiresIn / 60)} menit)</>
+                        : <>Klik <span className="font-medium">Poll Status</span> untuk cek manual.</>}
+                    </p>
+                    {grokCliError && <p className="text-xs text-[var(--error)]">{grokCliError}</p>}
+                  </div>
+                  <div className="flex justify-end gap-2">
+                    <Button variant="outline" onClick={() => { stopGrokCliAutoPoll(); setGrokCliDeviceCode(null); }} disabled={grokCliBusy}>Batal</Button>
+                    {!grokCliAutoPolling && <Button onClick={() => handleGrokCliPoll(false)} disabled={grokCliBusy}>{grokCliBusy ? "Checking…" : "Poll Status"}</Button>}
+                  </div>
+                </>
+              )}
             </div>
           )}
 
@@ -1828,27 +2090,74 @@ export default function Accounts() {
 
           {addMode === "apikey" && addDialogProvider === "codebuddy" && (
             <div className="space-y-4">
-              <div>
-                <label className="text-sm text-[var(--foreground)]">API Keys (satu per baris, prefix cb-)</label>
-                <textarea
-                  value={codebuddyBulkApiKeys}
-                  onChange={(e) => setCodebuddyBulkApiKeys(e.target.value)}
-                  className="mt-1 w-full h-40 rounded-md border border-[var(--border)] bg-[var(--background)] p-3 text-sm font-mono text-[var(--foreground)] placeholder:text-[var(--muted-foreground)] focus:outline-none focus:ring-1 focus:ring-[var(--ring)] resize-none"
-                  placeholder="cb-xxxxxxxxxxxxxxxx...
-cb-yyyyyyyyyyyyyyyy...
-cb-zzzzzzzzzzzzzzzz..."
-                  disabled={codebuddyBusy}
-                />
-                <p className="mt-1 text-xs text-[var(--muted-foreground)]">
-                  Paste satu atau lebih CodeBuddy API key (prefix <code>cb-</code>), satu per baris.
-                  Model tersedia: <code>cb-opus-4.8</code>, <code>cb-sonnet-4.6</code>, <code>cb-gpt-5.5</code>, <code>cb-gemini-2.5-pro</code>, dll.
-                </p>
+              <div className="rounded-md border border-[var(--border)] bg-[var(--surface-2)] p-3 space-y-3">
+                <div className="flex items-center justify-between gap-2">
+                  <div>
+                    <p className="text-sm font-medium text-[var(--foreground)]">Login via OAuth (Device Flow)</p>
+                    <p className="text-xs text-[var(--muted-foreground)]">
+                      Login dengan akun CodeBuddy (codebuddy.ai) — dapat access token otomatis, valid setahun. Tanpa perlu paste API key.
+                    </p>
+                  </div>
+                </div>
+                {!cbIntlDeviceCode ? (
+                  <Button onClick={handleCbIntlDeviceCode} disabled={cbIntlBusy} className="w-full">
+                    {cbIntlBusy ? (<><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Requesting...</>) : "Login dengan CodeBuddy Intl"}
+                  </Button>
+                ) : (
+                  <div className="space-y-3">
+                    <p className="text-xs text-[var(--muted-foreground)]">
+                      Buka link di bawah, login &amp; konfirmasi di codebuddy.ai. (Popup terblokir? Salin link:{" "}
+                      <span className="font-mono break-all">{cbIntlDeviceCode.verificationUriComplete || cbIntlDeviceCode.verificationUri}</span>)
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      <Button
+                        onClick={() => {
+                          window.open(cbIntlDeviceCode.verificationUriComplete || cbIntlDeviceCode.verificationUri, "_blank", "noopener");
+                        }}
+                      >
+                        Open &amp; Authorize
+                      </Button>
+                      <Button
+                        variant="outline"
+                        onClick={() => void navigator.clipboard?.writeText(cbIntlDeviceCode.verificationUriComplete || cbIntlDeviceCode.verificationUri).catch(() => {})}
+                      >
+                        Salin Link
+                      </Button>
+                    </div>
+                    <p className="text-xs text-[var(--muted-foreground)] flex items-center gap-1.5">
+                      {cbIntlAutoPolling
+                        ? <><Loader2 className="h-3 w-3 animate-spin" /> Menunggu otorisasi… (cek otomatis tiap {Math.max(3, cbIntlDeviceCode.interval || 5)}s)</>
+                        : <>Klik <span className="font-medium">Poll Status</span> untuk cek manual.</>}
+                    </p>
+                    {cbIntlError && <p className="text-xs text-[var(--error)]">{cbIntlError}</p>}
+                    <div className="flex justify-end gap-2">
+                      <Button variant="outline" onClick={() => { stopCbIntlAutoPoll(); setCbIntlDeviceCode(null); }} disabled={cbIntlBusy}>Batal</Button>
+                      {!cbIntlAutoPolling && <Button onClick={() => handleCbIntlPoll(false)} disabled={cbIntlBusy}>{cbIntlBusy ? "Checking…" : "Poll Status"}</Button>}
+                    </div>
+                  </div>
+                )}
               </div>
-              <div className="flex justify-end gap-2">
-                <Button variant="outline" onClick={() => setAddDialogProvider(null)} disabled={codebuddyBusy}>Cancel</Button>
-                <Button onClick={handleCodeBuddyBulkApiKey} disabled={codebuddyBusy || !codebuddyBulkApiKeys.trim()}>
-                  {codebuddyBusy ? (<><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Importing...</>) : "Add Accounts"}
-                </Button>
+              <div className="border-t border-[var(--border)] pt-3">
+                <div>
+                  <label className="text-sm text-[var(--foreground)]">API Keys (satu per baris, prefix cb-)</label>
+                  <textarea
+                    value={codebuddyBulkApiKeys}
+                    onChange={(e) => setCodebuddyBulkApiKeys(e.target.value)}
+                    className="mt-1 w-full h-32 rounded-md border border-[var(--border)] bg-[var(--background)] p-3 text-sm font-mono text-[var(--foreground)] placeholder:text-[var(--muted-foreground)] focus:outline-none focus:ring-1 focus:ring-[var(--ring)] resize-none"
+                    placeholder={"cb-xxxxxxxxxxxxxxxx...\ncb-yyyyyyyyyyyyyyyy..."}
+                    disabled={codebuddyBusy}
+                  />
+                  <p className="mt-1 text-xs text-[var(--muted-foreground)]">
+                    Alternatif: paste CodeBuddy API key (prefix <code>cb-</code>), satu per baris.
+                    Model: <code>cb-opus-4.8</code>, <code>cb-sonnet-4.6</code>, <code>cb-gpt-5.5</code>, dll.
+                  </p>
+                </div>
+                <div className="flex justify-end gap-2 mt-3">
+                  <Button variant="outline" onClick={() => setAddDialogProvider(null)} disabled={codebuddyBusy}>Cancel</Button>
+                  <Button onClick={handleCodeBuddyBulkApiKey} disabled={codebuddyBusy || !codebuddyBulkApiKeys.trim()}>
+                    {codebuddyBusy ? (<><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Importing...</>) : "Add Accounts"}
+                  </Button>
+                </div>
               </div>
             </div>
           )}

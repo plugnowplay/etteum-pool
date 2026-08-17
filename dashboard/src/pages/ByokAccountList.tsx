@@ -323,7 +323,7 @@ export default function ByokAccountList() {
           <div className="space-y-1.5">
             <label className="text-sm font-medium text-[var(--foreground)]">Models</label>
             <textarea value={form.models} onChange={(e) => setForm({ ...form, models: e.target.value })} className="w-full h-24 rounded-md border border-[var(--border)] bg-[var(--background)] p-3 text-sm font-mono text-[var(--foreground)]" placeholder="gpt-4o, claude-sonnet, llama-3" />
-            <p className="text-xs text-[var(--muted-foreground)]">Comma-separated model IDs. Public model IDs become <span className="font-mono">{prefix || "prefix"}-model</span>.</p>
+            <p className="text-xs text-[var(--muted-foreground)]">Comma-separated model IDs. Public model IDs become <span className="font-mono">{prefix || "prefix"}/model</span>.</p>
           </div>
         </CardContent>
       </Card>

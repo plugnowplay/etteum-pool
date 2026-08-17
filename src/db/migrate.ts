@@ -21,6 +21,30 @@ const IDEMPOTENT_COLUMNS: Array<{ table: string; column: string; ddl: string }> 
   { table: "accounts", column: "free_limit",     ddl: "ALTER TABLE accounts ADD COLUMN free_limit REAL DEFAULT 0" },
   { table: "accounts", column: "free_remaining", ddl: "ALTER TABLE accounts ADD COLUMN free_remaining REAL DEFAULT 0" },
   { table: "accounts", column: "free_reset_at",  ddl: "ALTER TABLE accounts ADD COLUMN free_reset_at INTEGER" },
+  // 2026-08-15 — upstream prompt-cache hit tokens per request (usage.cache_read_input_tokens
+  // / prompt_tokens_details.cached_tokens). 0 = provider tidak melaporkan cache.
+  { table: "request_logs", column: "cached_tokens", ddl: "ALTER TABLE request_logs ADD COLUMN cached_tokens INTEGER DEFAULT 0" },
+  // 2026-08-16 — cached_tokens (upstream prompt-cache hits in request logs).
+  { table: "request_logs", column: "cached_tokens", ddl: "ALTER TABLE request_logs ADD COLUMN cached_tokens INTEGER DEFAULT 0" },
+];
+
+// Whole-table additions that predate the drizzle journal or ship without it.
+// Idempotent CREATE ... IF NOT EXISTS — safe on every boot.
+const IDEMPOTENT_TABLES: Array<{ name: string; ddl: string }> = [
+  {
+    name: "custom_models",
+    ddl: `CREATE TABLE IF NOT EXISTS custom_models (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      provider TEXT NOT NULL,
+      model TEXT NOT NULL,
+      context_window INTEGER DEFAULT 200000,
+      max_output INTEGER DEFAULT 8192,
+      thinking INTEGER DEFAULT 0,
+      vision INTEGER DEFAULT 0,
+      created_at INTEGER NOT NULL,
+      UNIQUE(provider, model)
+    )`,
+  },
 ];
 
 function tableHasColumn(table: string, column: string): boolean {

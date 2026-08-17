@@ -130,7 +130,6 @@ class AccountPool {
     if (activeAccounts.length === 0) {
       return null;
     }
-
     const method = await this.getLoadBalancingMethod(provider);
 
     if (method === "sequential") {
@@ -162,6 +161,12 @@ class AccountPool {
 
     this.state.lastIndex.set(provider, selectedIdx);
     return selected || null;
+  }
+
+  /** Number of currently usable (active+enabled) accounts for a provider. */
+  async getActiveAccountCount(provider: ProviderName): Promise<number> {
+    const activeAccounts = await this.getActiveAccounts(provider);
+    return activeAccounts.length;
   }
 
   getInFlightCount(accountId: number): number {
@@ -508,25 +513,6 @@ class AccountPool {
     accountId: number,
     patch: Record<string, unknown>,
   ): Promise<void> {
-    const [account] = await db.select().from(accounts).where(eq(accounts.id, accountId));
-    if (!account) return;
-
-    const existing = (typeof account.metadata === "string"
-      ? JSON.parse(account.metadata || "{}")
-      : account.metadata || {}) as Record<string, unknown>;
-    const merged = { ...existing, ...patch };
-
-    await db
-      .update(accounts)
-      .set({ metadata: merged, updatedAt: new Date() })
-      .where(eq(accounts.id, accountId));
-  }
-
-  /**
-   * Update account metadata (JSON field). Merges with existing metadata.
-   * Used for provider-specific flags like plenger probe results.
-   */
-  async updateMetadata(accountId: number, patch: Record<string, unknown>): Promise<void> {
     const [account] = await db.select().from(accounts).where(eq(accounts.id, accountId));
     if (!account) return;
 

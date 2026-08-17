@@ -618,6 +618,182 @@ oauthRouter.post("/grok-cli/poll", async (c) => {
   }
 });
 
+// ── CodeBuddy International: Device Code OAuth Flow ─────────────────────
+// Reference: decolua/9router — open-sse/providers/registry/codebuddy-intl.js
+//   stateUrl:  POST /v2/plugin/auth/state?platform=ide → {state, authUrl}
+//   tokenUrl:  GET  /v2/plugin/auth/token?state=...     → {accessToken, refreshToken, expiresIn}
+//   refreshUrl: POST /v2/plugin/auth/token/refresh      → {accessToken, refreshToken, expiresIn}
+
+const CODEBUDDY_INTL_STATE_URL = "https://www.codebuddy.ai/v2/plugin/auth/state";
+const CODEBUDDY_INTL_TOKEN_URL = "https://www.codebuddy.ai/v2/plugin/auth/token";
+const CODEBUDDY_INTL_REFRESH_URL = "https://www.codebuddy.ai/v2/plugin/auth/token/refresh";
+const CODEBUDDY_INTL_USER_AGENT = "IDE/2.63.2 CodeBuddy/2.63.2";
+
+const codebuddyIntlDeviceSessions = new Map<string, { state: string; createdAt: number }>();
+
+function codebuddyIntlHeaders(extra: Record<string, string> = {}): Record<string, string> {
+  return {
+    Accept: "application/json",
+    "Content-Type": "application/json",
+    "User-Agent": CODEBUDDY_INTL_USER_AGENT,
+    "X-Requested-With": "XMLHttpRequest",
+    "X-Domain": "www.codebuddy.ai",
+    "X-Product": "SaaS",
+    ...extra,
+  };
+}
+
+oauthRouter.post("/codebuddy-intl/device-code", async (c) => {
+  try {
+    const response = await fetch(`${CODEBUDDY_INTL_STATE_URL}?platform=ide`, {
+      method: "POST",
+      headers: codebuddyIntlHeaders({
+        "X-No-Authorization": "true",
+        "X-No-User-Id": "true",
+      }),
+      body: "{}",
+    });
+
+    const text = await response.text().catch(() => "");
+    if (!response.ok) {
+      return c.json({ error: `CodeBuddy Intl state request failed: ${text.slice(0, 200)}` }, 400);
+    }
+
+    const data = JSON.parse(text) as { code: number; data?: { state?: string; authUrl?: string }; msg?: string };
+    if (data.code !== 0 || !data.data?.state || !data.data?.authUrl) {
+      return c.json({ error: `CodeBuddy Intl state error: ${data.msg || "missing state/authUrl"}` }, 400);
+    }
+
+    const state = randomBytes(32).toString("base64url");
+    codebuddyIntlDeviceSessions.set(state, {
+      state: data.data.state,
+      createdAt: Date.now(),
+    });
+    // Cleanup stale sessions (>15 min)
+    const now = Date.now();
+    for (const [key, val] of codebuddyIntlDeviceSessions) {
+      if (now - val.createdAt > 15 * 60 * 1000) codebuddyIntlDeviceSessions.delete(key);
+    }
+
+    return c.json({
+      state,
+      userCode: "",
+      verificationUri: data.data.authUrl,
+      verificationUriComplete: data.data.authUrl,
+      expiresIn: 600,
+      interval: 5,
+    });
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    return c.json({ error: `CodeBuddy Intl device code failed: ${msg}` }, 500);
+  }
+});
+
+oauthRouter.post("/codebuddy-intl/poll", async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    const state = body.state as string;
+    if (!state) return c.json({ error: "state is required" }, 400);
+
+    const session = codebuddyIntlDeviceSessions.get(state);
+    if (!session) return c.json({ error: "Device code session expired or not found" }, 400);
+
+    const response = await fetch(
+      `${CODEBUDDY_INTL_TOKEN_URL}?state=${encodeURIComponent(session.state)}`,
+      {
+        method: "GET",
+        headers: codebuddyIntlHeaders({
+          "X-No-Authorization": "true",
+          "X-No-User-Id": "true",
+          "X-No-Enterprise-Id": "true",
+          "X-No-Department-Info": "true",
+        }),
+      }
+    );
+
+    const text = await response.text().catch(() => "");
+    if (!response.ok) {
+      return c.json({ status: "error", error: `Token poll failed (HTTP ${response.status})` }, 502);
+    }
+
+    const data = JSON.parse(text) as {
+      code: number;
+      data?: { accessToken?: string; refreshToken?: string; expiresIn?: number };
+      msg?: string;
+    };
+
+    // authorization_pending (code 11217) — keep polling
+    if (data.code === 11217) {
+      return c.json({ status: "pending", error: "authorization_pending" });
+    }
+
+    if (data.code !== 0 || !data.data?.accessToken) {
+      return c.json({ status: "error", error: data.msg || "unknown_error" }, 400);
+    }
+
+    codebuddyIntlDeviceSessions.delete(state);
+
+    const tokens = {
+      access_token: data.data.accessToken,
+      refresh_token: data.data.refreshToken || "",
+      expires_in: data.data.expiresIn || 86400,
+      method: "device_code",
+    };
+
+    return c.json({
+      status: "done",
+      email: `codebuddy-intl-${data.data.accessToken.slice(-8)}@device`,
+      tokens,
+    });
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    return c.json({ error: `CodeBuddy Intl token poll failed: ${msg}` }, 500);
+  }
+});
+
+oauthRouter.post("/codebuddy-intl/refresh", async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    const refreshToken = body.refreshToken as string;
+    if (!refreshToken) return c.json({ error: "refreshToken is required" }, 400);
+
+    const response = await fetch(CODEBUDDY_INTL_REFRESH_URL, {
+      method: "POST",
+      headers: codebuddyIntlHeaders({
+        "X-Refresh-Token": refreshToken,
+        "X-Auth-Refresh-Source": "plugin",
+      }),
+      body: "{}",
+    });
+
+    const text = await response.text().catch(() => "");
+    if (!response.ok) {
+      return c.json({ error: `Refresh failed (HTTP ${response.status}): ${text.slice(0, 200)}` }, 502);
+    }
+
+    const data = JSON.parse(text) as {
+      code: number;
+      data?: { accessToken?: string; refreshToken?: string; expiresIn?: number };
+      msg?: string;
+    };
+    if (data.code !== 0 || !data.data?.accessToken) {
+      return c.json({ error: `Refresh error: ${data.msg || "unknown"}` }, 400);
+    }
+
+    return c.json({
+      success: true,
+      tokens: {
+        access_token: data.data.accessToken,
+        refresh_token: data.data.refreshToken || refreshToken,
+        expires_in: data.data.expiresIn || 86400,
+      },
+    });
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    return c.json({ error: `CodeBuddy Intl refresh failed: ${msg}` }, 500);
+  }
+});
+
 oauthRouter.post("/:provider/poll", (c) => {
   return c.json({ error: "Unsupported provider/action" }, 400);
 });

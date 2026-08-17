@@ -63,6 +63,7 @@ const CB_MODEL_MAP: Record<string, string> = {
   "cb-opus-4.7-1m": "claude-opus-4.7-1m",
   "cb-opus-4.8": "claude-opus-4.8",
   "cb-opus-4.8-1m": "claude-opus-4.8-1m",
+  "cb-opus-5": "claude-opus-5",
   "cb-sonnet-4.6": "claude-sonnet-4.6",
   "cb-haiku-4.5": "claude-haiku-4.5",
   // GPT
@@ -87,6 +88,13 @@ const CB_MODEL_MAP: Record<string, string> = {
   "cb-deepseek-v3-2": "deepseek-v3-2-volc",
   // Kimi
   "cb-kimi-k2.5": "kimi-k2.5",
+  "cb-kimi-k3": "kimi-k3",
+  // GLM (Zhipu)
+  "cb-glm-4.7": "glm-4.7",
+  "cb-glm-5.1": "glm-5.1",
+  "cb-glm-5.2": "glm-5.2",
+  "cb-glm-5.3": "glm-5.3",
+  "cb-glm-5v-turbo": "glm-5v-turbo",
   // Other
   "cb-enowx": "enowx-default",
 };
@@ -113,7 +121,11 @@ export class CodeBuddyProvider extends BaseProvider {
     const isThinking = model.endsWith("-thinking");
     const base = isThinking ? model.replace(/-thinking$/, "") : model;
     const resolved = CB_MODEL_MAP[base.toLowerCase()] || base;
-    return isThinking ? `${resolved}-thinking` : resolved;
+    // Fallback: strip cb- prefix so unknown cb-* models pass through as bare names
+    const finalResolved = resolved.startsWith("cb-")
+      ? resolved.replace(/^cb-/, "")
+      : resolved;
+    return isThinking ? `${finalResolved}-thinking` : finalResolved;
   }
 
   private baseUrl = "https://www.codebuddy.ai";
@@ -129,6 +141,7 @@ export class CodeBuddyProvider extends BaseProvider {
     // All models exposed with cb- prefix only
     { id: "cb-opus-4.8", object: "model", created: Date.now(), owned_by: "codebuddy", context_window: 1000000, max_output: 64000, thinking: true, vision: true, creditUnit: "token", creditRate: 0.027 / 1000, creditSource: "estimated" },
     { id: "cb-opus-4.8-1m", object: "model", created: Date.now(), owned_by: "codebuddy", context_window: 1000000, max_output: 64000, thinking: true, vision: true, creditUnit: "token", creditRate: 0.030 / 1000, creditSource: "estimated" },
+    { id: "cb-opus-5", object: "model", created: Date.now(), owned_by: "codebuddy", context_window: 1000000, max_output: 64000, thinking: true, vision: true, creditUnit: "token", creditRate: 0.030 / 1000, creditSource: "estimated" },
     { id: "cb-opus-4.7", object: "model", created: Date.now(), owned_by: "codebuddy", context_window: 1000000, max_output: 64000, thinking: true, vision: true, creditUnit: "token", creditRate: 0.027 / 1000, creditSource: "estimated" },
     { id: "cb-opus-4.7-1m", object: "model", created: Date.now(), owned_by: "codebuddy", context_window: 1000000, max_output: 64000, thinking: true, vision: true, creditUnit: "token", creditRate: 0.030 / 1000, creditSource: "estimated" },
     { id: "cb-opus-4.6", object: "model", created: Date.now(), owned_by: "codebuddy", context_window: 1000000, max_output: 64000, thinking: true, vision: true, creditUnit: "token", creditRate: 0.027 / 1000, creditSource: "estimated" },
@@ -152,6 +165,11 @@ export class CodeBuddyProvider extends BaseProvider {
     { id: "cb-gemini-3.5-flash", object: "model", created: Date.now(), owned_by: "codebuddy", thinking: true, vision: true, creditUnit: "token", creditRate: 0.004 / 1000, creditSource: "estimated" },
     { id: "cb-deepseek-v3-2", object: "model", created: Date.now(), owned_by: "codebuddy", thinking: false, vision: false, creditUnit: "token", creditRate: 0.002 / 1000, creditSource: "estimated" },
     { id: "cb-kimi-k2.5", object: "model", created: Date.now(), owned_by: "codebuddy", thinking: false, vision: false, creditUnit: "token", creditRate: 0.005 / 1000, creditSource: "estimated" },
+    { id: "cb-kimi-k3", object: "model", created: Date.now(), owned_by: "codebuddy", thinking: false, vision: false, creditUnit: "token", creditRate: 0.005 / 1000, creditSource: "estimated" },
+    // GLM (Zhipu) — verified on upstream: glm-5.1, glm-5.2, glm-5v-turbo valid (glm-5.3/glm-4.7 not found)
+    { id: "cb-glm-5.1", object: "model", created: Date.now(), owned_by: "codebuddy", thinking: true, vision: false, creditUnit: "token", creditRate: 0.005 / 1000, creditSource: "estimated" },
+    { id: "cb-glm-5.2", object: "model", created: Date.now(), owned_by: "codebuddy", thinking: true, vision: false, creditUnit: "token", creditRate: 0.005 / 1000, creditSource: "estimated" },
+    { id: "cb-glm-5v-turbo", object: "model", created: Date.now(), owned_by: "codebuddy", thinking: false, vision: true, creditUnit: "token", creditRate: 0.005 / 1000, creditSource: "estimated" },
     { id: "cb-enowx", object: "model", created: Date.now(), owned_by: "codebuddy", thinking: false, vision: true, creditUnit: "token", creditRate: 0.01 / 1000, creditSource: "estimated" },
   ];
 
@@ -388,10 +406,52 @@ export class CodeBuddyProvider extends BaseProvider {
   }
 
   async refreshToken(
-    _account: Account
+    account: Account
   ): Promise<{ success: boolean; tokens?: string; error?: string }> {
-    // CodeBuddy doesn't support token refresh - requires re-login
-    return { success: false, error: "CodeBuddy requires re-login" };
+    const tokens = this.getTokens(account);
+    if (!tokens?.refresh_token) {
+      // API keys can't be refreshed — requires re-login
+      return { success: false, error: "CodeBuddy requires re-login" };
+    }
+
+    try {
+      const response = await fetch("https://www.codebuddy.ai/v2/plugin/auth/token/refresh", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+          "User-Agent": "IDE/2.63.2 CodeBuddy/2.63.2",
+          "X-Requested-With": "XMLHttpRequest",
+          "X-Domain": "www.codebuddy.ai",
+          "X-Refresh-Token": tokens.refresh_token,
+          "X-Auth-Refresh-Source": "plugin",
+          "X-Product": "SaaS",
+        },
+        body: "{}",
+      });
+
+      if (!response.ok) {
+        return { success: false, error: `Refresh failed (HTTP ${response.status})` };
+      }
+
+      const data = await response.json() as {
+        code: number;
+        data?: { accessToken?: string; refreshToken?: string; expiresIn?: number };
+        msg?: string;
+      };
+      if (data.code !== 0 || !data.data?.accessToken) {
+        return { success: false, error: data.msg || "Refresh returned no token" };
+      }
+
+      const newTokens = {
+        ...tokens,
+        access_token: data.data.accessToken,
+        refresh_token: data.data.refreshToken || tokens.refresh_token,
+      };
+      return { success: true, tokens: JSON.stringify(newTokens) };
+    } catch (error) {
+      return { success: false, error: `CodeBuddy refresh failed: ${error instanceof Error ? error.message : String(error)}` };
+    }
   }
 
   async validateAccount(account: Account): Promise<boolean> {
@@ -641,10 +701,21 @@ export class CodeBuddyProvider extends BaseProvider {
       "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
     };
 
+    // OAuth access_token (device flow) needs the IDE headers — without them
+    // CodeBuddy Intl returns 403 "request illegal" (code 11140).
+    if (tokens.access_token && !tokens.api_key) {
+      headers["User-Agent"] = "IDE/2.108.1 CodeBuddy/2.108.1";
+      headers["X-IDE-Type"] = "IDE";
+      headers["X-IDE-Name"] = "IDE";
+      headers["x-codebuddy-request"] = "1";
+    }
+
     const apiKey = tokens.api_key || tokens.access_token || tokens.session_token;
     if (apiKey) {
       headers["Authorization"] = `Bearer ${apiKey}`;
-      headers["X-Api-Key"] = apiKey;
+      // X-Api-Key only for real API keys (cb-...) — sending it with an OAuth
+      // access_token makes CodeBuddy Intl reject with 401 {"message":"not_found"}.
+      if (tokens.api_key) headers["X-Api-Key"] = apiKey;
     }
 
     // Use cookies if available
@@ -665,7 +736,7 @@ export class CodeBuddyProvider extends BaseProvider {
 
     // Clean messages: convert Anthropic format to OpenAI format for CodeBuddy API
     // Apply pudidil filters to remove Claude Code CLI detection patterns
-    const cleanedMessages: any[] = [];
+    let cleanedMessages: any[] = [];
 
     for (const msg of request.messages) {
       let content = msg.content;
@@ -800,6 +871,22 @@ export class CodeBuddyProvider extends BaseProvider {
     const hasSystemMsg = cleanedMessages.some((m: any) => m.role === "system");
     if (!hasSystemMsg) {
       cleanedMessages.unshift({ role: "system", content: "You are a helpful AI assistant." });
+    }
+
+    // OAuth access_token (device flow) — CodeBuddy Intl rejects plain OpenAI shape
+    // (11101 invalid request): needs a leading system prompt "You are CodeBuddy Code."
+    // and user content as typed blocks, not bare strings.
+    const isOAuth = !!tokens.access_token && !tokens.api_key;
+    if (isOAuth) {
+      cleanedMessages = cleanedMessages.map((m: any) => {
+        if (m.role === "system") {
+          return { ...m, content: "You are CodeBuddy Code." };
+        }
+        if (m.role === "user" && typeof m.content === "string") {
+          return { ...m, content: [{ type: "text", text: m.content }] };
+        }
+        return m;
+      });
     }
 
     const body: Record<string, unknown> = {

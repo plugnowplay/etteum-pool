@@ -36,6 +36,8 @@ export const requestLogs = sqliteTable("request_logs", {
   promptTokens: integer("prompt_tokens").default(0),
   completionTokens: integer("completion_tokens").default(0),
   totalTokens: integer("total_tokens").default(0),
+  /** Upstream prompt-cache hit tokens (usage.cache_read_input_tokens / prompt_tokens_details.cached_tokens). */
+  cachedTokens: integer("cached_tokens").default(0),
   creditsUsed: real("credits_used").default(0),
   status: text("status").notNull(), // success | error
   durationMs: integer("duration_ms"),
@@ -54,6 +56,20 @@ export const requestLogs = sqliteTable("request_logs", {
   index("request_logs_provider_created_at_idx").on(table.provider, table.createdAt),
   index("request_logs_provider_model_status_idx").on(table.provider, table.model, table.status),
   index("request_logs_account_idx").on(table.accountId),
+]);
+
+export const customModels = sqliteTable("custom_models", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  provider: text("provider").notNull(),
+  /** Bare model id WITHOUT the provider prefix (e.g. "Qwen3.8-Max", "grok-5"). */
+  model: text("model").notNull(),
+  contextWindow: integer("context_window").default(200000),
+  maxOutput: integer("max_output").default(8192),
+  thinking: integer("thinking", { mode: "boolean" }).default(false),
+  vision: integer("vision", { mode: "boolean" }).default(false),
+  createdAt: integer("created_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
+}, (table) => [
+  uniqueIndex("custom_models_provider_model_idx").on(table.provider, table.model),
 ]);
 
 export const settings = sqliteTable("settings", {

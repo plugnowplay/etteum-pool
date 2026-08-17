@@ -26,8 +26,9 @@ import { decrypt } from "../../utils/crypto";
  *
  * Model routing via prefix:
  * - User define label "openrouter" + models ["gpt-4o", "claude-sonnet-4.6"]
- * - Available: "openrouter-gpt-4o", "openrouter-claude-sonnet-4.6"
- * - Request { model: "openrouter-gpt-4o" } → forward ke base_url dengan model "gpt-4o"
+ * - Available: "openrouter/gpt-4o", "openrouter/claude-sonnet-4.6"
+ * - Request { model: "openrouter/gpt-4o" } → forward ke base_url dengan model "gpt-4o"
+ * - Legacy dash form ("openrouter-gpt-4o") masih diterima untuk config klien lama
  */
 
 interface ByokTokens {
@@ -55,6 +56,10 @@ interface ByokSelectionOptions {
   excludeAccountIds?: Set<number>;
   loadBalancingMethod?: string;
   getInFlightCount?: (accountId: number) => number;
+}
+
+export function formatByokModelId(prefix: string, model: string): string {
+  return `${prefix}/${model}`;
 }
 
 export class ByokProvider extends BaseProvider {
@@ -121,7 +126,7 @@ export class ByokProvider extends BaseProvider {
       newPrefixSet.add(prefix);
 
       for (const model of tokens.models) {
-        const modelId = `${prefix}-${model}`;
+        const modelId = formatByokModelId(prefix, model);
         if (modelIds.has(modelId)) continue;
         modelIds.add(modelId);
         newSupportedModels.push({
@@ -201,18 +206,20 @@ export class ByokProvider extends BaseProvider {
 
   /**
    * Strip the BYOK prefix from a model name.
-   * "openrouter-gpt-4o" → "gpt-4o"
+   * Canonical: "openrouter/gpt-4o" → "gpt-4o".
+   * Legacy dash form ("openrouter-gpt-4o") still accepted so existing
+   * client configs keep routing after the switch.
    */
   private extractModel(prefixedModel: string, prefix: string): string {
-    return prefixedModel.startsWith(`${prefix}-`)
-      ? prefixedModel.slice(prefix.length + 1)
-      : prefixedModel;
+    if (prefixedModel.startsWith(`${prefix}/`)) return prefixedModel.slice(prefix.length + 1);
+    if (prefixedModel.startsWith(`${prefix}-`)) return prefixedModel.slice(prefix.length + 1);
+    return prefixedModel;
   }
 
-  /** Find which BYOK prefix a model belongs to. */
+  /** Find which BYOK prefix a model belongs to. Slash is canonical; dash is legacy. */
   private findPrefix(model: string): string | null {
     for (const prefix of this.prefixes) {
-      if (model.startsWith(`${prefix}-`)) return prefix;
+      if (model.startsWith(`${prefix}/`) || model.startsWith(`${prefix}-`)) return prefix;
     }
     return null;
   }

@@ -73,6 +73,9 @@ const PLENGER_EXPECTED = "407";
 const PLENGER_DISABLE_MS = 5 * 60 * 60 * 1000; // 5 hours
 const PLENGER_PROBE_TIMEOUT_MS = 90_000;
 const PLENGER_PROBE_MODEL = "grok-4.6";
+// A fresh "valid" verdict is trusted for this long — without it every chat
+// request would pay the probe round-trip.
+const PLENGER_VALID_TTL_MS = 10 * 60 * 1000;
 
 interface PlengerMeta {
   plenger?: boolean;
@@ -97,6 +100,13 @@ function isPlengerActive(account: Account, now = Date.now()): boolean {
   if (meta.plenger !== true) return false;
   const until = Date.parse(meta.plengerDisabledUntil || "");
   return Number.isFinite(until) && until > now;
+}
+
+function isPlengerCheckFresh(account: Account, now = Date.now()): boolean {
+  const meta = getPlengerMeta(account);
+  if (meta.plenger === true) return false;
+  const checkedAt = Date.parse(meta.plengerCheckedAt || "");
+  return Number.isFinite(checkedAt) && now - checkedAt < PLENGER_VALID_TTL_MS;
 }
 
 /** Parse SSE stream text from Responses API and return final answer text. */
@@ -941,32 +951,6 @@ export class GrokCliProvider extends BaseProvider {
    * Result is cached in account.metadata and persisted to DB.
    * Inflight dedup: concurrent calls for the same account share one probe.
    */
-  async checkGrokCliPlenger(account: Account): Promise<PlengerProbeResult> {
-    const accountId = account.id;
-    if (!accountId) return { status: "error", error: "missing account id" };
-
-    // Return cached result if still active
-    if (isPlengerActive(account)) {
-      const meta = getPlengerMeta(account);
-      return {
-        status: "plenger",
-        cached: true as any,
-        disabledUntil: meta.plengerDisabledUntil,
-      } as PlengerProbeResult;
-    }
-
-    // Dedup inflight probes
-    if (plengerInflight.has(accountId)) {
-      return plengerInflight.get(accountId)!;
-    }
-
-    const promise = this._runPlengerProbe(account).finally(() =>
-      plengerInflight.delete(accountId),
-    );
-    plengerInflight.set(accountId, promise);
-    return promise;
-  }
-
   private async checkGrokCliPlenger(account: Account): Promise<PlengerProbeResult> {
     const accountId = account.id;
     if (!accountId) return { status: "error", error: "missing account id" };
@@ -979,6 +963,10 @@ export class GrokCliProvider extends BaseProvider {
         cached: true as any,
         disabledUntil: meta.plengerDisabledUntil,
       } as PlengerProbeResult;
+    }
+
+    if (isPlengerCheckFresh(account)) {
+      return { status: "valid", answer: getPlengerMeta(account).plengerProbeAnswer };
     }
 
     // Dedup inflight probes
@@ -1003,18 +991,17 @@ export class GrokCliProvider extends BaseProvider {
     const accessToken = this.getAccessToken(account);
     if (!accessToken) return { success: false, error: "No access token" };
 
-    // Check plenger probe before serving (DISABLED)
-    // const plengerResult = await this.checkGrokCliPlenger(account);
-    // if (plengerResult.status === "plenger") {
-    //   return {
-    //     success: false,
-    //     error: `Account disabled by plenger probe (until ${plengerResult.disabledUntil})`,
-    //   };
-    // }
-    // if (plengerResult.status === "error") {
-    //   // Transport errors don't block the account
-    //   logger.log("PLENGER", `${account.email}: plenger probe failed but not disabling: ${plengerResult.error}`);
-    // }
+    // Plenger probe DISABLED (2026-08-15): upstream no longer answers "407"
+    // to the control prompt — every account returns "202" now, so the probe
+    // would flag the whole pool as plenger. Re-enable only after re-capturing
+    // a working prompt/expected pair. When re-enabling:
+    //   const plengerResult = await this.checkGrokCliPlenger(account);
+    //   if (plengerResult.status === "plenger") {
+    //     return { success: false, error: `Account disabled by plenger probe (until ${plengerResult.disabledUntil})` };
+    //   }
+    //   if (plengerResult.status === "error") {
+    //     console.log(`[PLENGER] ${account.email}: probe failed, not disabling: ${plengerResult.error}`);
+    //   }
 
     // cli-chat-proxy forces streaming, so we make a streaming request and
     // aggregate the full response.
@@ -1247,18 +1234,7 @@ export class GrokCliProvider extends BaseProvider {
     const accessToken = this.getAccessToken(account);
     if (!accessToken) return { success: false, error: "No access token" };
 
-    // Check plenger probe before serving (DISABLED)
-    // const plengerResult = await this.checkGrokCliPlenger(account);
-    // if (plengerResult.status === "plenger") {
-    //   return {
-    //     success: false,
-    //     error: `Account disabled by plenger probe (until ${plengerResult.disabledUntil})`,
-    //   };
-    // }
-    // if (plengerResult.status === "error") {
-    //   logger.log("PLENGER", `${account.email}: plenger probe failed but not disabling: ${plengerResult.error}`);
-    // }
-
+    // Plenger probe DISABLED — see note in chatCompletion().
     const body = this.toResponsesBody(request, def);
     const headers = this.buildHeaders(account, def.upstream);
 
@@ -1268,9 +1244,6 @@ export class GrokCliProvider extends BaseProvider {
         headers,
         body: JSON.stringify(body),
       });
-
-      const errResult = await this.handleErrorResponse(resp);
-      if (errResult) return errResult;
 
       if (!resp.body) {
         return { success: false, error: "No response body from Grok CLI" };
@@ -1424,15 +1397,61 @@ export class GrokCliProvider extends BaseProvider {
         };
       }
 
-      // Parse billing data
+      // Parse billing data.
+      //
+      // Real wire shape (captured against cli-chat-proxy.grok.com/v1/billing):
+      //   Monthly (premium): { config: { monthlyLimit: { val }, used: { val },
+      //                          onDemandCap: { val }, billingPeriodStart/End,
+      //                          history[] } }
+      //   Unified (free):    { config: { currentPeriod: { start, end },
+      //                          onDemandCap: { val }, onDemandUsed: { val },
+      //                          isUnifiedBillingUser, prepaidBalance: { val } } }
+      //
+      // There is NO `remaining`/`limit` at the root — the legacy field names
+      // below are kept only as a defensive fallback.
       const billingData = await billingResp.json().catch(() => null) as any;
-      const remaining = Number(billingData?.remaining ?? billingData?.credits_remaining ?? -1);
-      const limit = Number(billingData?.limit ?? billingData?.total_credits ?? -1);
-      const used = limit > 0 && remaining >= 0 ? limit - remaining : 0;
+      const cfg = billingData?.config ?? {};
+
+      // xAI wraps every number as { val: number }.
+      const valOf = (v: unknown): number => {
+        const n = Number((v as { val?: unknown } | null | undefined)?.val ?? v);
+        return Number.isFinite(n) ? n : 0;
+      };
+
+      // Prefer the field that exists (presence check, not truthiness — a
+      // legit 0 `used` must not fall through to onDemandUsed).
+      const used = Math.max(0,
+        cfg.used !== undefined ? valOf(cfg.used)
+        : cfg.onDemandUsed !== undefined ? valOf(cfg.onDemandUsed)
+        : Number.isFinite(Number(billingData?.used)) ? Number(billingData.used)
+        : 0);
+
+      const monthlyLimit = valOf(cfg.monthlyLimit);
+      const onDemandCap = valOf(cfg.onDemandCap);
+      const legacyLimit = Number(billingData?.limit ?? billingData?.total_credits ?? NaN);
+      // monthlyLimit.val = 0 means "no monthly cap" (unlimited) on this
+      // endpoint — keep the -1 sentinel in that case so the warmup runner
+      // leaves the DB quota columns untouched for unlimited accounts.
+      const limit = monthlyLimit > 0 ? monthlyLimit
+        : onDemandCap > 0 ? onDemandCap
+        : Number.isFinite(legacyLimit) && legacyLimit > 0 ? legacyLimit
+        : -1;
+
+      const legacyRemaining = Number(billingData?.remaining ?? billingData?.credits_remaining ?? NaN);
+      const remaining = limit > 0
+        ? Math.max(0, limit - used)
+        : Number.isFinite(legacyRemaining) ? legacyRemaining : -1;
+
+      const resetRaw = cfg.billingPeriodEnd ?? cfg.currentPeriod?.end ?? null;
+      let resetAt: Date | null = null;
+      if (resetRaw) {
+        const d = new Date(resetRaw);
+        if (!Number.isNaN(d.getTime())) resetAt = d;
+      }
 
       return {
         success: true,
-        quota: { limit, remaining, used, resetAt: null },
+        quota: { limit, remaining, used, resetAt },
       };
     } catch (err) {
       return { success: false, error: err instanceof Error ? err.message : String(err) };
@@ -1590,10 +1609,11 @@ export async function pollGrokCliToken(deviceCode: string): Promise<{
  * Step 3: Post-exchange — fetch user profile from cli-chat-proxy.
  * Best-effort: non-fatal if it fails.
  */
-async function fetchGrokCliUserProfile(accessToken: string): Promise<{
+export async function fetchGrokCliUserProfile(accessToken: string): Promise<{
   email?: string;
   userId?: string;
   subscriptionTier?: string;
+  hasGrokCodeAccess?: boolean;
 }> {
   try {
     const resp = await fetch(GROK_CLI_USER_URL, {

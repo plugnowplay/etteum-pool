@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { db } from "../db/index";
-import { accounts, requestLogs, vccCards, vccTransactions, settings } from "../db/schema";
-import { eq, inArray } from "drizzle-orm";
+import { accounts, requestLogs, vccCards, vccTransactions, settings, customModels } from "../db/schema";
+import { eq, inArray, and } from "drizzle-orm";
 import { encrypt, decrypt } from "../utils/crypto";
 import { broadcast } from "../ws/index";
 import type { NewAccount } from "../db/schema";
@@ -12,7 +12,10 @@ import { pool, type ProviderName } from "../proxy/pool";
 import { activateQoderPat } from "../proxy/providers/qoder";
 import { activateYouMindKey } from "../proxy/providers/youmind";
 import { activateGrokKey } from "../proxy/providers/grok";
-import { activateGrokCliToken } from "../proxy/providers/grok-cli";
+import { fetchGrokCliUserProfile } from "../proxy/providers/grok-cli";
+import { getAllModels, refreshCustomModels } from "../proxy/providers/registry";
+import { config } from "../config";
+import { getActiveApiKey } from "./keys";
 
 export const accountsRouter = new Hono();
 
@@ -248,7 +251,7 @@ accountsRouter.post("/byok", async (c) => {
       id: createdRows[0]?.id,
       label,
       key_count: createdRows.length,
-      models: models.map((m) => `${label}-${m}`),
+      models: models.map((m) => `${label}/${m}`),
     }, 201);
   } catch (error) {
     return c.json({ error: error instanceof Error ? error.message : "Unknown error" }, 500);
@@ -308,7 +311,7 @@ accountsRouter.get("/byok", async (c) => {
         headers: tokens.headers || {},
         status: acc.status,
         enabled: Boolean(acc.enabled),
-        available_models: models.map((m) => `${prefix}-${m}`),
+        available_models: models.map((m) => `${prefix}/${m}`),
         key_count: 0,
         active_key_count: 0,
         load_balancing_method: lbMethods.get(prefix) || tokens.load_balancing_method || "round_robin",
@@ -318,7 +321,7 @@ accountsRouter.get("/byok", async (c) => {
       const modelSet = new Set(existing.models);
       for (const model of models) modelSet.add(model);
       existing.models = Array.from(modelSet);
-      existing.available_models = existing.models.map((m) => `${prefix}-${m}`);
+      existing.available_models = existing.models.map((m) => `${prefix}/${m}`);
       existing.enabled = existing.enabled || Boolean(acc.enabled);
       existing.status = existing.status === "active" || acc.status !== "active" ? existing.status : "active";
     }
@@ -503,7 +506,7 @@ accountsRouter.patch("/byok/:id", async (c) => {
       success: true,
       id,
       label: prefix,
-      models: nextModels.map((m) => `${prefix}-${m}`),
+      models: nextModels.map((m) => `${prefix}/${m}`),
     });
   } catch (error) {
     return c.json({ error: error instanceof Error ? error.message : "Unknown error" }, 500);
@@ -561,6 +564,368 @@ async function autoFixAccountIfError(accountId: number, accountStatus: string) {
   }
   return false;
 }
+
+/**
+ * POST /api/accounts/byok/:id/fetch-models - Fetch the model list directly
+ * from the upstream provider (GET {base_url}/models) using a stored key.
+ * Returns { models: string[] } so the dashboard can fill the Models field.
+ */
+accountsRouter.post("/byok/:id/fetch-models", async (c) => {
+  const id = Number(c.req.param("id"));
+
+  const account = await db.select().from(accounts)
+    .where(eq(accounts.id, id))
+    .get();
+
+  if (!account || account.provider !== "byok") {
+    return c.json({ error: "BYOK provider not found" }, 404);
+  }
+
+  const tokens = typeof account.tokens === "string"
+    ? JSON.parse(account.tokens)
+    : account.tokens;
+
+  if (!tokens?.base_url) {
+    return c.json({ success: false, error: "Base URL is not configured" }, 400);
+  }
+
+  const apiKey = decrypt(account.password);
+  const format = tokens.format || "auto";
+  const isAnthropic = format === "anthropic" ||
+    (format === "auto" && (tokens.base_url.includes("anthropic.com") || tokens.base_url.includes("/v1/messages")));
+
+  const headers: Record<string, string> = {
+    Accept: "application/json",
+    ...(tokens.headers || {}),
+  };
+  if (apiKey) {
+    if (isAnthropic) {
+      headers["x-api-key"] = apiKey;
+      headers["anthropic-version"] = "2023-06-01";
+    } else {
+      headers["Authorization"] = `Bearer ${apiKey}`;
+    }
+  }
+
+  const url = tokens.base_url.replace(/\/$/, "") + "/models";
+
+  try {
+    const resp = await fetch(url, { method: "GET", headers, signal: AbortSignal.timeout(15_000) });
+    const text = await resp.text();
+
+    if (!resp.ok) {
+      return c.json({ success: false, error: `HTTP ${resp.status}: ${text.slice(0, 200)}` });
+    }
+
+    let models: string[] = [];
+    try {
+      const parsed = JSON.parse(text);
+      const list = Array.isArray(parsed?.data)
+        ? parsed.data
+        : Array.isArray(parsed?.models)
+          ? parsed.models
+          : Array.isArray(parsed)
+            ? parsed
+            : [];
+      models = list
+        .map((m: any) => typeof m === "string" ? m : (m?.id || m?.name || ""))
+        .filter((m: string) => typeof m === "string" && m.length > 0);
+    } catch {
+      return c.json({ success: false, error: "Upstream returned a non-JSON model list" });
+    }
+
+    if (models.length === 0) {
+      return c.json({ success: false, error: "Upstream returned an empty model list" });
+    }
+
+    return c.json({ success: true, models, count: models.length });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return c.json({ success: false, error: `Fetch failed: ${msg}` });
+  }
+});
+
+/**
+ * POST /api/accounts/:id/upstream-models — list the models an account's
+ * upstream actually offers. BYOK reads {base_url}/models; grok reads
+ * api.x.ai/v1/models; grok-cli reads cli-chat-proxy/v1/models. Every other
+ * provider has a fixed catalogue, so we echo the registry list (no network).
+ */
+accountsRouter.post("/:id/upstream-models", async (c) => {
+  const id = Number(c.req.param("id"));
+  const account = await db.select().from(accounts).where(eq(accounts.id, id)).get();
+  if (!account) return c.json({ success: false, error: "Account not found" }, 404);
+
+  const tokens = typeof account.tokens === "string"
+    ? (() => { try { return JSON.parse(account.tokens); } catch { return null; } })()
+    : account.tokens;
+
+  try {
+    if (account.provider === "byok") {
+      const base = String(tokens?.base_url || "").replace(/\/$/, "");
+      if (!base) return c.json({ success: false, error: "Base URL is not configured" });
+      const key = decrypt(account.password);
+      const headers: Record<string, string> = { Accept: "application/json", ...(tokens?.headers || {}) };
+      const isAnthropic = tokens?.format === "anthropic" ||
+        (tokens?.format === "auto" && (base.includes("anthropic.com") || base.includes("/v1/messages")));
+      if (key) {
+        if (isAnthropic) { headers["x-api-key"] = key; headers["anthropic-version"] = "2023-06-01"; }
+        else headers["Authorization"] = `Bearer ${key}`;
+      }
+      const resp = await fetch(`${base}/models`, { headers, signal: AbortSignal.timeout(15_000) });
+      const text = await resp.text();
+      if (!resp.ok) return c.json({ success: false, error: `HTTP ${resp.status}: ${text.slice(0, 200)}` });
+      const parsed = JSON.parse(text);
+      const list = Array.isArray(parsed?.data) ? parsed.data : Array.isArray(parsed?.models) ? parsed.models : Array.isArray(parsed) ? parsed : [];
+      const models = list.map((m: any) => (typeof m === "string" ? m : m?.id || m?.name || "")).filter(Boolean);
+      return c.json({ success: true, source: "upstream", models, count: models.length });
+    }
+
+    if (account.provider === "grok") {
+      const key = decrypt(account.password);
+      const resp = await fetch("https://api.x.ai/v1/models", {
+        headers: { Accept: "application/json", Authorization: `Bearer ${key}` },
+        signal: AbortSignal.timeout(15_000),
+      });
+      const text = await resp.text();
+      if (!resp.ok) return c.json({ success: false, error: `HTTP ${resp.status}: ${text.slice(0, 200)}` });
+      const parsed = JSON.parse(text);
+      const models = (parsed?.data || []).map((m: any) => m?.id).filter(Boolean);
+      return c.json({ success: true, source: "upstream", models, count: models.length });
+    }
+
+    if (account.provider === "grok-cli") {
+      const access = tokens?.access_token || "";
+      if (!access) return c.json({ success: false, error: "No access token" });
+      const resp = await fetch("https://cli-chat-proxy.grok.com/v1/models", {
+        headers: {
+          Accept: "application/json",
+          Authorization: `Bearer ${access}`,
+          "User-Agent": "grok-shell/0.2.99 (linux; x86_64)",
+          "x-xai-token-auth": "xai-grok-cli",
+          "x-grok-client-version": "0.2.99",
+          "x-grok-client-identifier": "grok-shell",
+        },
+        signal: AbortSignal.timeout(15_000),
+      });
+      const text = await resp.text();
+      if (!resp.ok) return c.json({ success: false, error: `HTTP ${resp.status}: ${text.slice(0, 200)}` });
+      const parsed = JSON.parse(text);
+      const list = Array.isArray(parsed?.data) ? parsed.data : Array.isArray(parsed?.models) ? parsed.models : [];
+      const models = list.map((m: any) => (typeof m === "string" ? m : m?.id || m?.name || "")).filter(Boolean);
+      return c.json({ success: true, source: "upstream", models, count: models.length });
+    }
+
+    const { getAllModels } = await import("../proxy/providers/registry");
+    const prefixMap: Record<string, string> = { qoder: "qd", "grok-cli": "gcli", codebuddy: "cb", "codebuddy-china": "cbcn", codex: "cx", "kiro-pro": "kp", youmind: "ym", "gitlab-duo": "gl", canva: "cv", kiro: "k" };
+    const short = prefixMap[account.provider] || account.provider;
+    const models = getAllModels()
+      .map((m) => m.id)
+      .filter((id) => id.startsWith(`${short}/`))
+      .map((id) => id.slice(short.length + 1));
+    return c.json({ success: true, source: "registry", models, count: models.length });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return c.json({ success: false, error: msg });
+  }
+});
+
+/**
+ * POST /api/accounts/:id/test-model — end-to-end probe: send a 1-token chat
+ * request through the pool using the given model id (public form). Returns
+ * latency + the upstream's usage so operators can verify a model works.
+ */
+accountsRouter.post("/:id/test-model", async (c) => {
+  const id = Number(c.req.param("id"));
+  const body = await c.req.json().catch(() => ({})) as { model?: string };
+  const account = await db.select().from(accounts).where(eq(accounts.id, id)).get();
+  if (!account) return c.json({ success: false, error: "Account not found" }, 404);
+
+  const { getAllModels, formatModelId } = await import("../proxy/providers/registry");
+  const exposed = getAllModels().map((m) => m.id);
+  let target = body.model || "";
+  if (!exposed.includes(target)) {
+    const prefixMap: Record<string, string> = { qoder: "qd", "grok-cli": "gcli", codebuddy: "cb", "codebuddy-china": "cbcn", codex: "cx", "kiro-pro": "kp", youmind: "ym", "gitlab-duo": "gl", canva: "cv", kiro: "k" };
+    const short = prefixMap[account.provider] || account.provider;
+    const candidate = `${short}/${target}`;
+    if (exposed.includes(candidate)) target = candidate;
+    else return c.json({ success: false, error: `Model "${body.model}" is not exposed by this pool` }, 400);
+  }
+  void formatModelId;
+
+  const started = Date.now();
+  try {
+    const { routeRequest } = await import("../proxy/router");
+    const { result } = await routeRequest(
+      { model: target, messages: [{ role: "user", content: "Hi" }], max_tokens: 1, stream: false } as any,
+      false,
+    );
+    const latencyMs = Date.now() - started;
+    if (!result.success) {
+      return c.json({ success: false, error: result.error || "Upstream returned an error", latencyMs });
+    }
+    return c.json({
+      success: true,
+      latencyMs,
+      usage: result.response?.usage || null,
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return c.json({ success: false, error: msg, latencyMs: Date.now() - started });
+  }
+});
+
+/**
+ * Custom (operator-defined) model catalogue — CRUD.
+ * Rows extend a provider's model list at runtime (registry merges them in
+ * getAllModels/getProviderForModel; see src/proxy/providers/registry.ts).
+ */
+accountsRouter.get("/models/custom", async (c) => {
+  const rows = await db.select().from(customModels).orderBy(customModels.provider, customModels.model);
+  return c.json({ data: rows });
+});
+
+accountsRouter.post("/models/custom", async (c) => {
+  const body = await c.req.json().catch(() => ({})) as {
+    provider?: string; model?: string; contextWindow?: number; maxOutput?: number; thinking?: boolean; vision?: boolean;
+  };
+  const provider = (body.provider || "").trim();
+  const model = (body.model || "").trim();
+  if (!provider || !model) return c.json({ error: "provider and model are required" }, 400);
+  try {
+    const [row] = await db.insert(customModels).values({
+      provider, model,
+      contextWindow: Number(body.contextWindow) || 200000,
+      maxOutput: Number(body.maxOutput) || 8192,
+      thinking: Boolean(body.thinking),
+      vision: Boolean(body.vision),
+    }).onConflictDoUpdate({
+      target: [customModels.provider, customModels.model],
+      set: {
+        contextWindow: Number(body.contextWindow) || 200000,
+        maxOutput: Number(body.maxOutput) || 8192,
+        thinking: Boolean(body.thinking),
+        vision: Boolean(body.vision),
+      },
+    }).returning();
+    await refreshCustomModels();
+    broadcast({ type: "models_updated", data: { provider, model } });
+    return c.json({ success: true, data: row }, 201);
+  } catch (err) {
+    return c.json({ error: err instanceof Error ? err.message : String(err) }, 500);
+  }
+});
+
+accountsRouter.delete("/models/custom/:provider/:model", async (c) => {
+  const provider = c.req.param("provider");
+  const model = c.req.param("model");
+  await db.delete(customModels).where(and(eq(customModels.provider, provider), eq(customModels.model, model)));
+  await refreshCustomModels();
+  broadcast({ type: "models_updated", data: { provider, model, deleted: true } });
+  return c.json({ success: true });
+});
+
+/**
+ * POST /api/accounts/models/upstream — provider-level variant for the Models
+ * page (no account context). {provider} picks an account of that provider to
+ * authenticate the upstream call; "all" probes every provider in parallel.
+ */
+accountsRouter.post("/models/upstream", async (c) => {
+  const body = await c.req.json().catch(() => ({})) as { provider?: string };
+  const wanted = (body.provider || "all").trim();
+
+  const pickAccount = (provider: string) =>
+    db.select().from(accounts).where(eq(accounts.provider, provider)).limit(1)
+      .then((rows) => rows[0] ?? null);
+
+  const registryModels = (provider: string) =>
+    getAllModels().filter((m) => m.owned_by === provider).map((m) => m.id.split("/").slice(1).join("/"));
+
+  const probeOne = async (provider: string): Promise<{ provider: string; ok: boolean; models?: string[]; source?: string; error?: string }> => {
+    const account = await pickAccount(provider);
+    if (!account) return { provider, ok: false, error: "no account" };
+
+    if (provider === "byok" || provider === "grok" || provider === "grok-cli") {
+      const resp = await fetch(`http://127.0.0.1:${config.port}/api/accounts/${account.id}/upstream-models`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${await getActiveApiKey()}` },
+        signal: AbortSignal.timeout(20_000),
+      }).catch(() => null);
+      if (!resp || !resp.ok) {
+        return { provider, ok: false, error: resp ? `HTTP ${resp.status}` : "unreachable" };
+      }
+      const data = await resp.json().catch(() => null) as { models?: string[] } | null;
+      return { provider, ok: true, models: data?.models ?? [] };
+    }
+
+    // Registry-backed providers have a fixed catalogue — no upstream call.
+    // Qoder additionally announces promo models via /activity (mirrored into
+    // account.metadata by warmup), so merge those on top of the registry list.
+    let models = registryModels(provider);
+    if (provider === "qoder") {
+      const meta = (typeof account.metadata === "string"
+        ? (() => { try { return JSON.parse(account.metadata); } catch { return null; } })()
+        : account.metadata) as Record<string, any> | null;
+      const buckets = (meta?.activityQuota?.activities as any[] | undefined) ?? [];
+      const extra = buckets
+        .filter((b) => Array.isArray(b?.modelKeys))
+        .flatMap((b) => b.modelKeys as string[])
+        .filter((k) => k.startsWith("qmodel_"))
+        .map((k) => k.replace(/^qmodel_/, ""));
+      const alnum = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+      for (const e of extra) {
+        if (!models.some((m) => alnum(m).includes(alnum(e)))) models.push(e);
+      }
+      models.sort();
+    }
+    return models.length
+      ? { provider, ok: true, models, source: "registry+activity" }
+      : { provider, ok: false, error: "no models" };
+  };
+
+  if (wanted !== "all") {
+    const one = await probeOne(wanted);
+    return c.json({ success: one.ok, providers: [one] });
+  }
+
+  const rows = await db.selectDistinct({ provider: accounts.provider }).from(accounts);
+  const results = await Promise.all(rows.map((r) => probeOne(r.provider)));
+  return c.json({ success: true, providers: results });
+});
+
+/**
+ * POST /api/accounts/models/test — pool-level model probe for the Models page.
+ * Body {model} is the public model id (e.g. "qd/Lite"); routed end-to-end.
+ */
+accountsRouter.post("/models/test", async (c) => {
+  const body = await c.req.json().catch(() => ({})) as { model?: string };
+  const model = (body.model || "").trim();
+  if (!model) return c.json({ success: false, error: "model is required" }, 400);
+
+  const started = Date.now();
+  try {
+    const { routeRequest } = await import("../proxy/router");
+    const { result, account, provider } = await routeRequest(
+      { model, messages: [{ role: "user", content: "Hi" }], max_tokens: 1, stream: false } as any,
+      false,
+    );
+    const latencyMs = Date.now() - started;
+    if (!result.success) {
+      return c.json({ success: false, error: result.error || "Upstream returned an error", latencyMs, provider });
+    }
+    return c.json({
+      success: true,
+      model,
+      provider,
+      account: account.email,
+      latencyMs,
+      usage: result.response?.usage || null,
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return c.json({ success: false, error: msg, latencyMs: Date.now() - started });
+  }
+});
 
 /**
  * POST /api/accounts/byok/:id/test - Test BYOK connection
@@ -1187,8 +1552,12 @@ accountsRouter.get("/:id", async (c) => {
  */
 accountsRouter.post("/", async (c) => {
   const body = await c.req.json<{
-    provider: "kiro" | "kiro-pro" | "codebuddy" | "codebuddy-china" | "canva" | "codex" | "qoder" | "gitlab-duo" | "youmind" | "grok";
+    provider: "kiro" | "kiro-pro" | "codebuddy" | "codebuddy-china" | "canva" | "codex" | "qoder" | "gitlab-duo" | "youmind" | "grok" | "grok-cli";
+    accessToken?: string;
+    refreshToken?: string;
+    idToken?: string;
     email?: string;
+    expiresIn?: number;
     password?: string;
     personalToken?: string;
     apiKey?: string; // YouMind sk-ym-... / Grok xai-... key
@@ -1389,7 +1758,7 @@ accountsRouter.post("/", async (c) => {
         await db.update(accounts).set({
           password: encrypt(accessToken),
           status: "active",
-          tokens: JSON.stringify(tokens),
+          tokens, // drizzle column mode:"json" serializes automatically — do NOT JSON.stringify
           metadata: { ...profile, validated_at: new Date().toISOString() } as unknown,
           errorMessage: null,
           lastLoginAt: new Date(),
@@ -1405,7 +1774,7 @@ accountsRouter.post("/", async (c) => {
         email: finalEmail,
         password: encrypt(accessToken),
         status: "active",
-        tokens: JSON.stringify(tokens),
+        tokens, // drizzle column mode:"json" serializes automatically — do NOT JSON.stringify
         metadata: { ...profile, validated_at: new Date().toISOString() } as unknown,
         quotaLimit: -1,
         quotaRemaining: -1,
@@ -1421,6 +1790,57 @@ accountsRouter.post("/", async (c) => {
     }
   }
 
+  // ── CodeBuddy Intl: OAuth device code token import ─────────────────
+  if (body.provider === "codebuddy" && body.accessToken) {
+    const accessToken = String(body.accessToken).trim();
+    const refreshToken = String(body.refreshToken || "").trim();
+    const email = String(body.email || "").trim() || `codebuddy-intl-${accessToken.slice(-8)}@device`;
+
+    try {
+      const tokens = {
+        access_token: accessToken,
+        refresh_token: refreshToken,
+        method: "device_code",
+      };
+
+      const existing = await db.select().from(accounts)
+        .where(eq(accounts.email, email))
+        .then((rows) => rows.find((r) => r.provider === "codebuddy"));
+
+      if (existing) {
+        await db.update(accounts).set({
+          password: encrypt(accessToken),
+          status: "active",
+          tokens, // drizzle column mode:"json" serializes automatically — do NOT JSON.stringify
+          errorMessage: null,
+          lastLoginAt: new Date(),
+          updatedAt: new Date(),
+        }).where(eq(accounts.id, existing.id));
+        pool.invalidate("codebuddy" as ProviderName);
+        broadcast({ type: "account_updated", data: { id: existing.id, provider: "codebuddy", status: "active" } });
+        return c.json({ id: existing.id, provider: "codebuddy", email, status: "active", updated: true }, 200);
+      }
+
+      const inserted = await db.insert(accounts).values({
+        provider: "codebuddy",
+        email,
+        password: encrypt(accessToken),
+        status: "active",
+        tokens, // drizzle column mode:"json" serializes automatically — do NOT JSON.stringify
+        quotaLimit: -1,
+        quotaRemaining: -1,
+        lastLoginAt: new Date(),
+      }).returning();
+      const created = inserted[0]!;
+      pool.invalidate("codebuddy" as ProviderName);
+      broadcast({ type: "account_created", data: { id: created.id, provider: "codebuddy", email } });
+      return c.json({ id: created.id, provider: "codebuddy", email, status: "active" }, 201);
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      return c.json({ error: `CodeBuddy OAuth activation failed: ${msg}` }, 400);
+    }
+  }
+
   // ── CodeBuddy: Bulk API key flow (cb-...) ──────────────────────────
   if (body.provider === "codebuddy" && body.apiKeys) {
     const keys = body.apiKeys
@@ -1433,8 +1853,9 @@ accountsRouter.post("/", async (c) => {
     }
 
     for (const key of keys) {
-      if (!key.startsWith("cb-")) {
-        return c.json({ error: `Invalid API key format: ${key.substring(0, 20)}... (must start with cb-)` }, 400);
+      // CodeBuddy Intl accepts both cb- (API key) and ck_ (Tencent Cloud key)
+      if (!key.startsWith("cb-") && !key.startsWith("ck_")) {
+        return c.json({ error: `Invalid API key format: ${key.substring(0, 20)}... (must start with cb- or ck_)` }, 400);
       }
     }
 
@@ -1447,7 +1868,7 @@ accountsRouter.post("/", async (c) => {
       const key = keys[i]!;
       const email = `cb-account-${existingCount + i + 1}`;
       const encryptedKey = encrypt(key);
-      const tokens = JSON.stringify({ api_key: key });
+      const tokens = { api_key: key }; // drizzle column mode:"json" serializes automatically — do NOT JSON.stringify
 
       const inserted = await db.insert(accounts).values({
         provider: "codebuddy",
@@ -1506,7 +1927,7 @@ accountsRouter.post("/", async (c) => {
       const encryptedKey = encrypt(key);
 
       // Store API key in BOTH password (for encryption) and tokens (for provider to read)
-      const tokens = JSON.stringify({ api_key: key });
+      const tokens = { api_key: key }; // drizzle column mode:"json" serializes automatically — do NOT JSON.stringify
 
       const inserted = await db.insert(accounts).values({
         provider: "codebuddy-china",
@@ -2385,7 +2806,7 @@ accountsRouter.post("/byok", async (c) => {
       success: true,
       id: created.id,
       label: body.label,
-      models: body.models.map((m) => `${body.label}-${m}`),
+      models: body.models.map((m) => `${body.label}/${m}`),
     }, 201);
   } catch (error) {
     return c.json({ error: error instanceof Error ? error.message : "Unknown error" }, 500);
@@ -2413,7 +2834,7 @@ accountsRouter.get("/byok", async (c) => {
       model_prefix: tokens?.model_prefix || acc.email,
       status: acc.status,
       enabled: acc.enabled,
-      available_models: (tokens?.models || []).map((m: string) => `${tokens?.model_prefix || acc.email}-${m}`),
+      available_models: (tokens?.models || []).map((m: string) => `${tokens?.model_prefix || acc.email}/${m}`),
     };
   });
 
@@ -2479,7 +2900,7 @@ accountsRouter.patch("/byok/:id", async (c) => {
     success: true,
     id,
     label: account.email,
-    models: (tokens.models || []).map((m: string) => `${tokens.model_prefix || account.email}-${m}`),
+      models: (tokens.models || []).map((m: string) => `${tokens.model_prefix || account.email}/${m}`),
   });
 });
 

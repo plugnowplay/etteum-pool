@@ -22,6 +22,7 @@ import {
   ChevronRight,
   KeyRound,
   Layers,
+  Share2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTheme } from "@/hooks/useTheme";
@@ -59,6 +60,7 @@ const navSections: NavSection[] = [
     title: "Proxy",
     items: [
       { label: "API Key", path: "/api-key", icon: Key },
+      { label: "Share", path: "/share", icon: Share2 },
       { label: "Proxy Pool", path: "/proxy-pool", icon: Globe },
       { label: "VCC Pool", path: "/vcc-pool", icon: CreditCard },
       { label: "Filter Rules", path: "/filter-rules", icon: Filter },

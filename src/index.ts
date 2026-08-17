@@ -15,7 +15,7 @@ import { sql } from "drizzle-orm";
 import { PUDIDIL_FILTERS } from "./proxy/filters";
 import { loadFilterCache } from "./proxy/filter-cache";
 import { ensureModelMappingTable, seedModelMappings, loadModelMappingCache } from "./proxy/model-mapping";
-import { refreshByokModels, refreshGitlabDuoModels } from "./proxy/providers/registry";
+import { refreshByokModels, refreshGitlabDuoModels, refreshCustomModels } from "./proxy/providers/registry";
 
 // Run database migrations on startup
 await runMigrations();
@@ -70,6 +70,15 @@ try {
   console.error("[GitLab Duo] Cache warm-up skipped:", e instanceof Error ? e.message : e);
 }
 
+// Load operator-defined custom models so they appear in /v1/models and routing.
+try {
+  const { refreshCustomModels } = await import("./proxy/providers/registry");
+  await refreshCustomModels();
+  console.log("[CustomModels] Cache loaded");
+} catch (e) {
+  console.error("[CustomModels] Load skipped:", e instanceof Error ? e.message : e);
+}
+
 // Start auto-warmup scheduler (reads settings from DB)
 await autoWarmupScheduler.start();
 
@@ -106,7 +115,7 @@ app.use("/v1/*", async (c, next) => {
 // API Key authentication for management API
 app.use("/api/*", async (c, next) => {
   // Allow health check, info, and key validation without auth
-  if (c.req.path === "/api/health" || c.req.path === "/api/info" || c.req.path === "/api/keys/test" || c.req.path === "/api/auth/dashboard-login" || c.req.path === "/api/auth/change-password") {
+  if (c.req.path === "/api/health" || c.req.path === "/api/info" || c.req.path === "/api/keys/test" || c.req.path === "/api/auth/dashboard-login" || c.req.path === "/api/auth/change-password" || c.req.path === "/api/share") {
     await next();
     return;
   }

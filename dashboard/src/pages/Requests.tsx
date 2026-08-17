@@ -8,6 +8,7 @@ import {
   RefreshCw,
   Search,
   ServerCrash,
+  Zap,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -33,6 +34,7 @@ export interface RequestLog {
   promptTokens: number | null;
   completionTokens: number | null;
   totalTokens: number | null;
+  cachedTokens?: number | null;
   creditsUsed?: number | null;
   accountId: number | null;
   accountEmail?: string | null;
@@ -206,7 +208,8 @@ export default function Requests() {
   const stats = useMemo(() => {
     const total = filtered.length;
     const ok = filtered.filter((r) => r.status === "success").length;
-    const tokens = filtered.reduce((sum, r) => sum + (r.totalTokens || 0), 0);
+    const cachedTotal = filtered.reduce((sum, r) => sum + (r.cachedTokens || 0), 0);
+  const tokens = filtered.reduce((sum, r) => sum + (r.totalTokens || 0), 0);
     const credits = filtered.reduce((sum, r) => sum + Number(r.creditsUsed || 0), 0);
     const durations = filtered.map((r) => r.durationMs || 0).filter((d) => d > 0);
     const avgMs = durations.length
@@ -220,6 +223,7 @@ export default function Requests() {
       total,
       successRate: total ? (ok / total) * 100 : 0,
       tokens,
+      cached: cachedTotal,
       credits,
       avgMs,
       saved,
@@ -308,6 +312,25 @@ export default function Requests() {
       ),
     },
     {
+      key: "cached",
+      header: "Cached",
+      align: "right",
+      hideBelow: "lg",
+      width: "w-[90px]",
+      sortValue: (r) => r.cachedTokens ?? 0,
+      cell: (r) =>
+        r.cachedTokens ? (
+          <span
+            className="tabular text-xs font-medium text-[var(--success)]"
+            title="Prompt-cache hit tokens from upstream"
+          >
+            {formatNum(r.cachedTokens)}
+          </span>
+        ) : (
+          <span className="tabular text-xs text-[var(--muted-foreground)]">—</span>
+        ),
+    },
+    {
       key: "credits",
       header: "Credits",
       align: "right",
@@ -380,6 +403,14 @@ export default function Requests() {
               hint={stats.saved > 0 ? `−${formatNum(stats.saved)} saved` : undefined}
               icon={Coins}
             />
+            {stats.cached > 0 && (
+              <StatCard
+                label="Cached"
+                value={formatNum(stats.cached)}
+                icon={Coins}
+                tone="success"
+              />
+            )}
             <StatCard
               label="Credits"
               value={stats.credits.toFixed(2)}
@@ -491,8 +522,11 @@ function RequestDrawer({
       }
     >
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-        <Metric label="Total" value={formatNum(req.totalTokens || 0)} tone="info" />
-        <Metric label="Prompt" value={formatNum(req.promptTokens || 0)} tone="success" />
+            <Metric label="Total" value={formatNum(req.totalTokens || 0)} tone="info" />
+            <Metric label="Prompt" value={formatNum(req.promptTokens || 0)} tone="success" />
+            {!!req.cachedTokens && (
+              <Metric label="Cached" value={formatNum(req.cachedTokens)} tone="success" />
+            )}
         <Metric
           label="Completion"
           value={formatNum(req.completionTokens || 0)}

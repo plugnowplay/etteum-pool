@@ -137,6 +137,8 @@ export function parseModelId(modelStr: string): ParsedModelId {
 }
 
 export function formatModelId(provider: ProviderName, model: string): string {
+  // BYOK ids are already fully-qualified ("<label>/<model>") — don't re-prefix.
+  if (provider === "byok") return model;
   // Grok CLI: expose as gcli/<upstream> (e.g. gcli/grok-4.6, gcli/grok-build)
   if (provider === "grok-cli") {
     const def = GROK_CLI_MODEL_BY_ID[model.toLowerCase()];
@@ -168,18 +170,67 @@ export function getProviderForModel(model: string): ProviderName | null {
   for (const p of PROVIDER_ORDER) {
     if (p.ownsModel(bare)) return p.name as ProviderName;
   }
+  const custom = customModelCache.find((m) => m.id === model || m.id.endsWith(`/${model}`));
+  if (custom) return custom.owned_by as ProviderName;
   const fallback = PROVIDER_ORDER.find((p) => p.isFallback);
   return (fallback?.name as ProviderName) ?? null;
 }
 
+// ── Custom (operator-defined) models ─────────────────────────────────────
+// Rows in custom_models extend a provider's catalogue at runtime. They are
+// listed in getAllModels() and routed via getProviderForModel(); each
+// provider's chat path receives the bare model id and forwards it upstream
+// as-is (custom qoder models fall back to MODEL_CONFIGS[0] behaviour unless
+// the id matches a known def).
+
+let customModelCache: ModelInfo[] = [];
+
 /** All models across every registered provider, exposed as `provider/model`. */
 export function getAllModels(): ModelInfo[] {
-  return PROVIDER_ORDER.flatMap((provider) =>
+  const builtin = PROVIDER_ORDER.flatMap((provider) =>
     provider.getModels().map((m) => ({
       ...m,
       id: formatModelId(provider.name, m.id),
     })),
   );
+  return [...builtin, ...customModelCache];
+}
+
+export async function refreshCustomModels(): Promise<void> {
+  try {
+    const { db } = await import("../../db/index");
+    const { customModels } = await import("../../db/schema");
+    const rows = await db.select().from(customModels);
+    const seen = new Set<string>();
+    customModelCache = rows
+      .filter((r) => {
+        const key = `${r.provider}/${r.model}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      })
+      .map((r) => ({
+        id: formatModelId(r.provider as ProviderName, r.model),
+        object: "model" as const,
+        created: Math.floor((r.createdAt?.getTime?.() ?? Date.now()) / 1000),
+        owned_by: r.provider,
+        context_window: r.contextWindow ?? 200000,
+        max_output: r.maxOutput ?? 8192,
+        thinking: Boolean(r.thinking),
+        vision: Boolean(r.vision),
+      }));
+  } catch {
+    customModelCache = [];
+  }
+}
+
+export function getCustomModelEntries(): Array<{ provider: string; model: string }> {
+  return customModelCache
+    .map((m) => {
+      const idx = m.id.indexOf("/");
+      return idx > 0 ? { provider: m.owned_by, model: m.id.slice(idx + 1) } : null;
+    })
+    .filter((x): x is { provider: string; model: string } => x !== null);
 }
 
 /** Iterable list of provider instances (priority order). */

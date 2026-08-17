@@ -1,5 +1,5 @@
 import { lazy, Suspense, useState, useEffect } from "react";
-import { Routes, Route } from "react-router-dom";
+import { Routes, Route, useLocation } from "react-router-dom";
 import Layout from "./components/layout/Layout";
 import Login from "./pages/Login";
 import { Skeleton, SkeletonCard, SkeletonRows } from "./components/ui/skeleton";
@@ -12,6 +12,7 @@ const ByokAccountList = lazy(() => import("./pages/ByokAccountList"));
 const Models = lazy(() => import("./pages/Models"));
 const Combos = lazy(() => import("./pages/Combos"));
 const ApiKey = lazy(() => import("./pages/ApiKey"));
+const Share = lazy(() => import("./pages/Share"));
 const Requests = lazy(() => import("./pages/Requests"));
 const Usage = lazy(() => import("./pages/Usage"));
 const Settings = lazy(() => import("./pages/Settings"));
@@ -23,6 +24,7 @@ const FilterRules = lazy(() => import("./pages/FilterRules"));
 const Integration = lazy(() => import("./pages/Integration"));
 const CodexOAuthCallback = lazy(() => import("./pages/CodexOAuthCallback"));
 const ChangePassword = lazy(() => import("./pages/ChangePassword"));
+const PublicShare = lazy(() => import("./pages/PublicShare"));
 
 function RouteFallback() {
   return (
@@ -79,6 +81,15 @@ export default function App() {
         <img src="/etteum.svg" alt="" className="h-10 w-10 animate-pulse" />
         <Skeleton className="h-3 w-28" />
       </div>
+    );
+  }
+
+  // Public unauthenticated share landing — must render regardless of auth.
+  if (location.pathname === "/s" || location.pathname === "/s/") {
+    return (
+      <Suspense fallback={<RouteFallback />}>
+        <PublicShare />
+      </Suspense>
     );
   }
 

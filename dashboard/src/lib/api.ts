@@ -213,6 +213,60 @@ export async function fetchModels() {
   return fetchApi("/v1/models");
 }
 
+export interface UpstreamModelProbe {
+  provider: string;
+  ok: boolean;
+  models?: string[];
+  source?: string;
+  error?: string;
+}
+
+export async function fetchUpstreamModels(provider: string): Promise<{ success: boolean; providers: UpstreamModelProbe[] }> {
+  return fetchApi("/api/accounts/models/upstream", {
+    method: "POST",
+    body: JSON.stringify({ provider }),
+  });
+}
+
+export async function testModel(model: string): Promise<{ success: boolean; provider?: string; account?: string; latencyMs?: number; usage?: unknown; error?: string }> {
+  return fetchApi("/api/accounts/models/test", {
+    method: "POST",
+    body: JSON.stringify({ model }),
+  });
+}
+
+export interface CustomModelDTO {
+  id: number;
+  provider: string;
+  model: string;
+  contextWindow?: number | null;
+  maxOutput?: number | null;
+  thinking?: boolean | null;
+  vision?: boolean | null;
+}
+
+export async function fetchCustomModels(): Promise<{ data: CustomModelDTO[] }> {
+  return fetchApi("/api/accounts/models/custom");
+}
+
+export async function saveCustomModel(provider: string, model: string, opts?: {
+  contextWindow?: number;
+  maxOutput?: number;
+  thinking?: boolean;
+  vision?: boolean;
+}): Promise<{ success: boolean; data: CustomModelDTO }> {
+  return fetchApi("/api/accounts/models/custom", {
+    method: "POST",
+    body: JSON.stringify({ provider, model, ...opts }),
+  });
+}
+
+export async function deleteCustomModel(provider: string, model: string): Promise<{ success: boolean }> {
+  return fetchApi(`/api/accounts/models/custom/${encodeURIComponent(provider)}/${encodeURIComponent(model)}`, {
+    method: "DELETE",
+  });
+}
+
 export interface ModelMappingDTO {
   id?: number;
   sourcePattern: string;

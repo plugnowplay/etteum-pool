@@ -22,7 +22,7 @@ import {
   warmupAllAccounts,
 } from "@/lib/api";
 
-type Provider = "kiro" | "kiro-pro" | "codebuddy" | "codebuddy-china" | "canva" | "codex" | "qoder";
+type Provider = "kiro" | "kiro-pro" | "codebuddy" | "codebuddy-china" | "canva" | "codex" | "qoder" | "gitlab-duo" | "youmind" | "grok" | "grok-cli";
 type Status = "active" | "exhausted" | "error" | "pending" | "disabled";
 
 interface CodexQuotaWindow {
@@ -253,6 +253,40 @@ function QoderQuotaCell({
         <div className="h-1.5 w-full rounded-full bg-[var(--secondary)] overflow-hidden">
           {allHasData && <div className={`h-full ${allTone}`} style={{ width: `${allPct}%` }} />}
         </div>
+      </div>
+    </div>
+  );
+}
+
+function GrokCliQuotaCell({ account }: { account: Account }) {
+  const q = account.metadata?.serverQuota;
+  if (!q) {
+    return <span className="text-xs text-[var(--muted-foreground)] opacity-60">n/a</span>;
+  }
+
+  const unlimited = q.limit == null || q.limit < 0;
+  const used = Math.max(0, Number(q.used ?? 0));
+  const remaining = unlimited
+    ? null
+    : Math.max(0, Number(q.remaining ?? 0));
+  const limit = unlimited ? null : Math.max(0, Number(q.limit ?? 0));
+  const pct = !unlimited && limit! > 0 ? Math.min(100, Math.round((remaining! / limit!) * 100)) : null;
+  const tone = pct == null ? "bg-[var(--primary)]" : pct <= 10 ? "bg-[var(--error)]" : pct <= 40 ? "bg-[var(--warning)]" : "bg-[var(--success)]";
+  const reset = q.resetAt ? formatResetIn(Math.round((Date.parse(q.resetAt) - Date.now()) / 1000)) : null;
+
+  return (
+    <div className="space-y-1 min-w-[110px]">
+      <div className="flex items-center justify-between text-[10px] text-[var(--muted-foreground)]">
+        <span>Used</span>
+        <span>
+          {unlimited
+            ? <>{formatCredit(used)}{reset ? ` · reset ${reset}` : ""}</>
+            : <>{formatCredit(remaining)}/{formatCredit(limit)}</>}
+        </span>
+      </div>
+      <div className="h-1.5 w-full rounded-full bg-[var(--secondary)] overflow-hidden">
+        {pct != null && <div className={`h-full ${tone}`} style={{ width: `${pct}%` }} />}
+        {unlimited && <div className={`h-full ${tone} opacity-60`} style={{ width: "100%" }} />}
       </div>
     </div>
   );
@@ -645,6 +679,8 @@ export default function AccountList() {
                         ? <CodexQuotaCell codex={account.metadata?.codex_quota} fallbackRemaining={account.quotaRemaining} fallbackLimit={account.quotaLimit} />
                         : account.provider === "qoder"
                         ? <QoderQuotaCell account={account} />
+                        : account.provider === "grok-cli"
+                        ? <GrokCliQuotaCell account={account} />
                         : <span className="flex items-center gap-1.5">
                             {formatCredit(account.quotaRemaining)}/{formatCredit(account.quotaLimit)}
                             {account.metadata?.overage?.enabled && account.metadata.overage.remaining > 0 && (

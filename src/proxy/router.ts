@@ -138,8 +138,14 @@ export async function routeRequest(
     }
   }
 
-  // Try up to 3 accounts before giving up
-  const maxRetries = 3;
+  // Try accounts before giving up. Default 3; with many accounts (e.g. a pool
+  // where some are quota-exhausted) scale to the active count so round-robin
+  // can reach a working one. Exhausted accounts get marked and skipped by the
+  // pool on subsequent iterations, so this stays bounded in practice.
+  const activeCount = providerName === "byok"
+    ? 3
+    : await pool.getActiveAccountCount(providerName);
+  const maxRetries = Math.max(3, activeCount);
   let lastError = "";
   const attemptedByokAccountIds = new Set<number>();
 
