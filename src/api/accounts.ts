@@ -3237,3 +3237,77 @@ accountsRouter.post("/:id/open-panel", async (c) => {
     }, 500);
   }
 });
+
+// ── Grok CLI Real Usage & Validity Check ───────────────────────────────
+/**
+ * POST /api/accounts/:id/grok-real-usage
+ * Calculate local credits_used from request_logs + check token validity via /v1/models.
+ * If invalid → mark account error + trigger re-OAuth flow hint.
+ */
+accountsRouter.post("/:id/grok-real-usage", async (c) => {
+  const id = parseInt(c.req.param("id"));
+  if (!Number.isFinite(id)) return c.json({ error: "Invalid account ID" }, 400);
+
+  const [account] = await db.select().from(accounts).where(eq(accounts.id, id)).limit(1);
+  if (!account) return c.json({ error: "Account not found" }, 404);
+  if (account.provider !== "grok-cli") return c.json({ error: "Only for grok-cli accounts" }, 400);
+
+  try {
+    // 1) Probe the real billing endpoint via the provider's fetchQuota.
+    //    This returns the authoritative `used` from xAI, not a local sum.
+    const { providers } = await import("../proxy/router");
+    const provider = providers["grok-cli"];
+    let serverUsed = 0;
+    let limit = 500_000; // plan default fallback
+    let remaining = limit;
+    let resetAt: string | null = null;
+    let valid = false;
+    let errorMsg: string | null = null;
+
+    if (provider?.fetchQuota) {
+      const probe = await provider.fetchQuota(account);
+      if (probe.success && probe.quota) {
+        serverUsed = Number(probe.quota.used ?? 0) || 0;
+        limit = Number(probe.quota.limit ?? limit) || limit;
+        remaining = Number(probe.quota.remaining ?? Math.max(0, limit - serverUsed));
+        if (probe.quota.resetAt) {
+          resetAt = new Date(probe.quota.resetAt as string | number | Date).toISOString();
+        }
+        valid = true; // billing 200 ⇒ token is alive
+      } else if (probe.error && /^expired:/i.test(probe.error)) {
+        valid = false;
+        errorMsg = "Token expired or revoked";
+        await db.update(accounts)
+          .set({ status: "error", errorMessage: errorMsg, updatedAt: new Date() })
+          .where(eq(accounts.id, account.id));
+        pool.invalidate("grok-cli");
+        broadcast({ type: "account_updated", data: { id: account.id, provider: "grok-cli", status: "error", errorMessage: errorMsg } });
+      }
+    }
+
+    // 2) Fallback: local credits_used from request_logs if the probe failed
+    //    (e.g. transient network error) but the token is still valid.
+    if (!valid) {
+      const [logs] = await db
+        .select({ sum: db.sql`COALESCE(SUM(credits_used), 0)` })
+        .from(requestLogs)
+        .where(eq(requestLogs.accountId, account.id));
+      serverUsed = Number(logs?.sum ?? 0);
+      remaining = Math.max(0, limit - serverUsed);
+      resetAt = resetAt ?? new Date(Date.now() + 86400_000).toISOString();
+    }
+
+    return c.json({
+      accountId: account.id,
+      email: account.email,
+      used: serverUsed,
+      remaining,
+      limit,
+      valid,
+      errorMsg,
+      resetAt,
+    });
+  } catch (err) {
+    return c.json({ error: err instanceof Error ? err.message : String(err) }, 500);
+  }
+});

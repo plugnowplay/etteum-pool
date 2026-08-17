@@ -1349,9 +1349,15 @@ export class GrokCliProvider extends BaseProvider {
     if (!accessToken) return { success: false, error: "No access token" };
 
     try {
-      // Probe 1 — billing/credits
+      // Probe the billing endpoint. Use the plain /v1/billing URL — the
+      // `?format=credits` suffix returns a *different* wire shape (unified
+      // billing: onDemandUsed + currentPeriod, NO `used` field) that hides
+      // real usage, leaving the dashboard stuck at 500k/500k.
+      //
+      // Plain /v1/billing returns the monthly shape with `used: { val }`,
+      // which is what the parser below expects.
       const billingResp = await this.fetchWithTimeout(
-        `${GROK_CLI_BILLING_URL}?format=credits`,
+        GROK_CLI_BILLING_URL,
         {
           method: "GET",
           headers: {
@@ -1399,13 +1405,15 @@ export class GrokCliProvider extends BaseProvider {
 
       // Parse billing data.
       //
-      // Real wire shape (captured against cli-chat-proxy.grok.com/v1/billing):
-      //   Monthly (premium): { config: { monthlyLimit: { val }, used: { val },
-      //                          onDemandCap: { val }, billingPeriodStart/End,
-      //                          history[] } }
-      //   Unified (free):    { config: { currentPeriod: { start, end },
-      //                          onDemandCap: { val }, onDemandUsed: { val },
-      //                          isUnifiedBillingUser, prepaidBalance: { val } } }
+      // Plain /v1/billing returns the monthly shape:
+      //   { config: { monthlyLimit: { val }, used: { val },
+      //               onDemandCap: { val }, billingPeriodStart/End,
+      //               history[] } }
+      //
+      // The `?format=credits` suffix returns a *different* unified shape
+      // (currentPeriod + onDemandUsed, NO `used`) that hides real usage —
+      // do NOT use it. If xAI ever changes the default to the unified shape,
+      // the onDemandUsed fallback below picks it up.
       //
       // There is NO `remaining`/`limit` at the root — the legacy field names
       // below are kept only as a defensive fallback.
