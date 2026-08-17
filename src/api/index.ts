@@ -12,6 +12,7 @@ import { integrationRouter } from "./integration";
 import { oauthRouter } from "./oauth";
 import { combosRouter } from "./combos";
 import { shareRouter } from "./share";
+import { githubCreatorRoutes, ensureGithubCreatorTables } from "./github-creator";
 
 export const apiRouter = new Hono();
 
@@ -28,6 +29,15 @@ apiRouter.route("/integration", integrationRouter);
 apiRouter.route("/oauth", oauthRouter);
 apiRouter.route("/combos", combosRouter);
 apiRouter.route("/share", shareRouter);
+apiRouter.route("/github-creator", githubCreatorRoutes);
+
+// Ensure github creator tables exist (idempotent CREATE IF NOT EXISTS)
+try {
+  ensureGithubCreatorTables();
+  console.log("[DB] GitHub Creator tables ensured");
+} catch (e) {
+  console.error("[DB] GitHub Creator table init skipped:", e instanceof Error ? e.message : e);
+}
 
 apiRouter.get("/providers", (c) => {
   return c.json({ data: ["kiro", "kiro-pro", "codebuddy", "codebuddy-china", "canva", "codex", "qoder"] });

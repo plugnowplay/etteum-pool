@@ -23,6 +23,7 @@ import {
   KeyRound,
   Layers,
   Share2,
+  GitBranch,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTheme } from "@/hooks/useTheme";
@@ -53,6 +54,7 @@ const navSections: NavSection[] = [
     title: "Tools",
     items: [
       { label: "Image Studio", path: "/image-studio", icon: Sparkles },
+      { label: "GitHub Creator", path: "/github-creator", icon: GitBranch },
       { label: "Integration", path: "/integration", icon: Plug },
     ],
   },

@@ -25,6 +25,7 @@ const Integration = lazy(() => import("./pages/Integration"));
 const CodexOAuthCallback = lazy(() => import("./pages/CodexOAuthCallback"));
 const ChangePassword = lazy(() => import("./pages/ChangePassword"));
 const PublicShare = lazy(() => import("./pages/PublicShare"));
+const GitHubCreator = lazy(() => import("./pages/GitHubCreator"));
 
 function RouteFallback() {
   return (
@@ -117,6 +118,7 @@ export default function App() {
           <Route path="/filter-rules" element={<FilterRules />} />
           <Route path="/integration" element={<Integration />} />
           <Route path="/image-studio" element={<ImageStudio />} />
+          <Route path="/github-creator" element={<GitHubCreator />} />
           <Route path="/oauth/codex/callback" element={<CodexOAuthCallback />} />
           <Route path="/change-password" element={<ChangePassword />} />
         </Route>

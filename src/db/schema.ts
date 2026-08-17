@@ -190,7 +190,46 @@ export const proxyPool = sqliteTable("proxy_pool", {
   index("proxy_pool_status_idx").on(table.status),
 ]);
 
-// Model mappings for CLI integration (e.g. Claude Code). Incoming model ids are
+// ── GitHub account automation ──────────────────────────────────────────
+// IMAP servers used for catch-all email domains (GitHub signup + verification).
+// GitHub accounts created via the "GitHub Creator" dashboard page, using a
+// proxy from proxy_pool for each registration attempt.
+export const imapServers = sqliteTable("imap_servers", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  label: text("label"), // e.g. "catch-all domain1.com"
+  host: text("host").notNull(), // e.g. imap.gmail.com
+  port: integer("port").notNull().default(993),
+  username: text("username").notNull(), // login email
+  password: text("password").notNull(), // encrypted (encrypt()/decrypt())
+  catchAllDomain: text("catch_all_domain"), // domain for +alias emails, e.g. "domain1.com"
+  status: text("status").notNull().default("active"), // active | disabled
+  lastTestedAt: integer("last_tested_at", { mode: "timestamp" }),
+  lastTestOk: integer("last_test_ok", { mode: "boolean" }),
+  createdAt: integer("created_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
+  updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+}, (table) => [
+  index("imap_servers_status_idx").on(table.status),
+]);
+
+export const githubAccounts = sqliteTable("github_accounts", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  email: text("email").notNull(), // the +alias email, e.g. user+gh001@domain1.com
+  username: text("username"), // GitHub username
+  password: text("password").notNull(), // encrypted (encrypt()/decrypt())
+  status: text("status").notNull().default("pending"), // pending | registered | verified | error
+  imapServerId: integer("imap_server_id").references(() => imapServers.id),
+  proxyId: integer("proxy_id").references(() => proxyPool.id), // nullable — assigned at register time
+  verificationCode: text("verification_code"),
+  errorMessage: text("error_message"),
+  metadata: text("metadata", { mode: "json" }), // extra data: cookies, tokens, etc.
+  createdAt: integer("created_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
+  updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+}, (table) => [
+  index("github_accounts_status_idx").on(table.status),
+  index("github_accounts_imap_server_idx").on(table.imapServerId),
+]);
+
+// Model mappings for CLI integration (e.g. the assistant). Incoming model ids are
 // rewritten at the proxy edge to a target model available in the pool. Example:
 // source "haiku" (match_type=contains) -> target "qwen-3.7".
 export const modelMappings = sqliteTable("model_mappings", {
@@ -229,3 +268,7 @@ export type FilterRule = typeof filterRules.$inferSelect;
 export type NewFilterRule = typeof filterRules.$inferInsert;
 export type ModelMapping = typeof modelMappings.$inferSelect;
 export type NewModelMapping = typeof modelMappings.$inferInsert;
+export type ImapServer = typeof imapServers.$inferSelect;
+export type NewImapServer = typeof imapServers.$inferInsert;
+export type GithubAccount = typeof githubAccounts.$inferSelect;
+export type NewGithubAccount = typeof githubAccounts.$inferInsert;
