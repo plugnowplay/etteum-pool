@@ -287,16 +287,17 @@ function GrokCliQuotaCell({ account }: { account: Account }) {
   const tokenExpired = usage?.tokenExpired ?? false;
   const errorMsg = usage?.errorMsg ?? account.errorMessage ?? null;
   const isExhausted = account.status === "exhausted";
-  // When exhausted, show the bar as full (500k/500k) with red tone —
-  // matches how Grok's own UI shows it: quota is full but locked until
-  // the daily reset, not zeroed out.
-  const displayRemaining = isExhausted ? limit : remaining;
+  // Show used/limit (not remaining/limit) so a fresh account reads 0/500k
+  // and an exhausted one reads 500k/500k (full bar, red) — matching Grok.
+  const used = isExhausted ? (limit ?? 0)
+    : Number(usage?.used ?? q?.used ?? 0) || 0;
+  const displayUsed = used;
   const displayPct = isExhausted ? 100
-    : remaining != null && limit != null && limit > 0 ? Math.min(100, Math.round((remaining / limit) * 100)) : null;
+    : limit != null && limit > 0 ? Math.min(100, Math.round((used / limit) * 100)) : null;
   const tone = isExhausted ? "bg-[var(--error)]"
     : displayPct == null ? "bg-[var(--primary)]"
-    : displayPct <= 10 ? "bg-[var(--error)]"
-    : displayPct <= 40 ? "bg-[var(--warning)]" : "bg-[var(--success)]";
+    : displayPct >= 90 ? "bg-[var(--error)]"
+    : displayPct >= 60 ? "bg-[var(--warning)]" : "bg-[var(--success)]";
   const resetSec = usage?.resetAt ? Math.round((Date.parse(usage.resetAt) - Date.now()) / 1000) : null;
   const reset = resetSec ? formatResetIn(resetSec) : null;
 
@@ -327,9 +328,9 @@ function GrokCliQuotaCell({ account }: { account: Account }) {
       <div className="flex items-center justify-between text-[10px] text-[var(--muted-foreground)]">
         <span>Used</span>
         <span>
-          {displayRemaining != null && limit != null
-            ? `${formatCredit(displayRemaining)} / ${formatCredit(limit)}`
-            : formatCredit(localUsed)}
+          {limit != null
+            ? `${formatCredit(displayUsed)} / ${formatCredit(limit)}`
+            : formatCredit(displayUsed)}
           {reset ? ` · reset ${reset}` : ""}
         </span>
       </div>
