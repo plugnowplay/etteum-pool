@@ -553,9 +553,29 @@ function responsesStreamToChatStream(
       };
 
       try {
+        // Keepalive: send an empty SSE comment every 5s while the upstream
+        // is "thinking" (reasoning). OpenCode/Hermes/curl will wait silently
+        // for the first text delta — if it takes 10+ seconds (grok-4.5
+        // reasoning models), the client may assume the connection is dead
+        // and time out. SSE comments (lines starting with `:`) are ignored
+        // by compliant SSE parsers but keep the TCP connection warm.
+        //
+        // We run a setInterval that enqueues keepalive comments; each time
+        // real data arrives from the reader we reset the timer so keepalives
+        // only fire during idle (thinking) periods.
+        let lastDataAt = Date.now();
+        const keepaliveTimer = setInterval(() => {
+          if (Date.now() - lastDataAt >= 5000) {
+            try {
+              controller.enqueue(encoder.encode(": keepalive\n\n"));
+            } catch { /* controller closed */ }
+          }
+        }, 5000);
+
         for (;;) {
           const { done, value } = await reader.read();
           if (done) break;
+          lastDataAt = Date.now();
           buffer += decoder.decode(value, { stream: true });
 
           const lines = buffer.split("\n");
@@ -692,6 +712,7 @@ function responsesStreamToChatStream(
         controller.enqueue(encoder.encode(`data: ${JSON.stringify(errorChunk)}\n\n`));
         controller.enqueue(encoder.encode("data: [DONE]\n\n"));
       } finally {
+        clearInterval(keepaliveTimer);
         controller.close();
       }
     },
