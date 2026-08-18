@@ -55,6 +55,7 @@ const navSections: NavSection[] = [
     items: [
       { label: "Image Studio", path: "/image-studio", icon: Sparkles },
       { label: "GitHub Creator", path: "/github-creator", icon: GitBranch },
+      { label: "Grok Creator", path: "/grok-creator", icon: Bot },
       { label: "Integration", path: "/integration", icon: Plug },
     ],
   },

@@ -229,6 +229,24 @@ export const githubAccounts = sqliteTable("github_accounts", {
   index("github_accounts_imap_server_idx").on(table.imapServerId),
 ]);
 
+export const grokAccounts = sqliteTable("grok_accounts", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  email: text("email").notNull(), // random@catchall-domain, e.g. james.smith847@mcoreconnect.com
+  username: text("username"), // local-part without dot
+  password: text("password").notNull(), // encrypted (encrypt()/decrypt())
+  status: text("status").notNull().default("pending"), // pending | registering | registered | verified | error
+  imapServerId: integer("imap_server_id").references(() => imapServers.id),
+  proxyId: integer("proxy_id").references(() => proxyPool.id), // nullable — assigned at register time
+  token: text("token"), // OAuth/OIDC token from farm
+  errorMessage: text("error_message"),
+  metadata: text("metadata", { mode: "json" }), // extra data
+  createdAt: integer("created_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
+  updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+}, (table) => [
+  index("grok_accounts_status_idx").on(table.status),
+  index("grok_accounts_imap_server_idx").on(table.imapServerId),
+]);
+
 // Model mappings for CLI integration (e.g. the assistant). Incoming model ids are
 // rewritten at the proxy edge to a target model available in the pool. Example:
 // source "haiku" (match_type=contains) -> target "qwen-3.7".
@@ -272,3 +290,5 @@ export type ImapServer = typeof imapServers.$inferSelect;
 export type NewImapServer = typeof imapServers.$inferInsert;
 export type GithubAccount = typeof githubAccounts.$inferSelect;
 export type NewGithubAccount = typeof githubAccounts.$inferInsert;
+export type GrokAccount = typeof grokAccounts.$inferSelect;
+export type NewGrokAccount = typeof grokAccounts.$inferInsert;

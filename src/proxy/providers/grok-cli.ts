@@ -572,6 +572,7 @@ function responsesStreamToChatStream(
       let finishEmitted = false;
       let currentToolCallId: string | null = null;
       let currentToolCallName: string | null = null;
+      let currentToolCallIndex = 0;
       let toolCallIndex = 0;
 
       const makeChunk = (
@@ -651,9 +652,20 @@ function responsesStreamToChatStream(
               if (args && currentToolCallId) {
                 makeChunk({
                   tool_calls: [{
-                    index: toolCallIndex,
+                    index: currentToolCallIndex,
                     id: currentToolCallId,
-                    function: { arguments: args },
+                    type: "function",
+                    // [OI] streaming spec: EVERY tool_calls delta chunk must
+                    // carry function.name as a string. OpenCode (and other
+                    // strict clients) throw "Expected 'function.name' to be a
+                    // string" when a chunk carrying only the arguments delta
+                    // omits the name — so we always re-emit it here. We also
+                    // reuse the SAME index as the initiating chunk for this
+                    // tool call so a single call keeps one stable index.
+                    function: {
+                      name: currentToolCallName ?? "",
+                      arguments: args,
+                    },
                   }],
                 });
               }
@@ -666,9 +678,10 @@ function responsesStreamToChatStream(
               if (item?.type === "function_call") {
                 currentToolCallId = item.call_id || `call_${toolCallIndex}`;
                 currentToolCallName = item.name || "";
+                currentToolCallIndex = toolCallIndex;
                 makeChunk({
                   tool_calls: [{
-                    index: toolCallIndex,
+                    index: currentToolCallIndex,
                     id: currentToolCallId,
                     type: "function",
                     function: {

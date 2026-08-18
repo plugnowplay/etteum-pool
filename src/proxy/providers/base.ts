@@ -286,13 +286,17 @@ export abstract class BaseProvider {
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     const proxy = await getNextProxy("model");
     this.lastProxy = proxy;
-    const proxyLabel = proxy ? `via proxy ${proxy.id} (${proxy.url.match(/@([^:\/]+)/)?.[1] || proxy.url})` : "direct (no proxy)";
+    if (!proxy) {
+      clearTimeout(timer);
+      throw new Error(`[NO-PROXY] ${this.name}: no active proxy in pool for ${url} — refusing direct VPS IP`);
+    }
+    const proxyLabel = `via proxy ${proxy.id} (${proxy.url.match(/@([^:\\/]+)/)?.[1] || proxy.url})`;
     console.log(`[PROXY] ${this.name}: ${url} ${proxyLabel}`);
     try {
       const response = await fetch(url, {
         ...init,
         signal: controller.signal,
-        ...(proxy ? { proxy: proxy.url } : {}),
+        proxy: proxy.url,
       } as any);
       if (proxy) void markProxySuccess(proxy.id);
       return response;

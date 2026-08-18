@@ -8,6 +8,8 @@ __pycache__/
 
 # sensitive data
 scripts/cookies/
+scripts/grok/results/
+scripts/grok/used_emails.txt
 
 # local probe / intercept scripts (reverse-engineering helpers, not part of the proxy)
 scripts/probe-*.ts
