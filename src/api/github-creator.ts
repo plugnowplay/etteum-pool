@@ -259,13 +259,18 @@ async function readVerificationCode(
           ? new TextDecoder().decode(msg.source)
           : String(msg.source || "");
 
-        // Parse verification code: GitHub uses a 6-digit code in the subject or body
-        // Also handle verification URLs with tokens
+        // GitHub launch codes are currently 8 digits (were 6 historically). Try
+        // both, preferring the digits that appear on their own line right after
+        // the "entering the code below:" preamble. Multi-line flag on the last
+        // fallback so ^/$ anchor to line boundaries in the body.
         const codeMatch =
+          subject.match(/\b(\d{8})\b/) ||
           subject.match(/\b(\d{6})\b/) ||
-          source.match(/verification code[^0-9]*(\d{6})/i) ||
-          source.match(/\b(\d{6})\b/) ||
-          source.match(/code[^0-9]*?(\d{6})/i);
+          source.match(/code below[:\s]*[\r\n]+\s*(\d{6,10})\b/i) ||
+          source.match(/verification code[^0-9]*(\d{6,10})/i) ||
+          source.match(/^\s*(\d{6,10})\s*$/m) ||
+          source.match(/\b(\d{8})\b/) ||
+          source.match(/\b(\d{6})\b/);
 
         // Also look for a verification URL/token
         const urlMatch = source.match(/https:\/\/github\.com\/users\/[^\s"']*verify[^\s"']*/i);
@@ -348,9 +353,69 @@ async function registerGitHubAccount(account: GithubAccount): Promise<{
 
   logStep("proxy_assigned", `proxy ${proxy.id}`);
 
-  // Build the command to run camoufox_register.py
-  const scriptPath = path.join(process.cwd(), "scripts", "camoufox_register.py");
+  // ── Check if solver sidecar mode is enabled ──
+  const solverUrl = process.env.GROK_GITHUB_SOLVER_URL || "";
   const imapPass = imapCfg.password.replace(/\u00A0/g, " ").trim();
+
+  if (solverUrl) {
+    // ── Solver sidecar mode: call /github-signup endpoint ──
+    logStep("calling_solver_sidecar", `${solverUrl}/github-signup`);
+
+    try {
+      const resp = await fetch(`${solverUrl}/github-signup`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: account.email,
+          password: plainPassword,
+          proxy: proxy.url,
+          imap_host: imapCfg.host,
+          imap_port: imapCfg.port,
+          imap_user: imapCfg.username,
+          imap_pass: imapPass,
+          timeout_s: 180,
+        }),
+      });
+
+      if (!resp.ok) {
+        const errBody = await resp.text();
+        logStep("solver_http_error", `HTTP ${resp.status}: ${errBody.slice(0, 200)}`);
+        return { ok: false, status: "error", error: `Solver HTTP ${resp.status}: ${errBody.slice(0, 300)}` };
+      }
+
+      const data = await resp.json() as {
+        success: boolean;
+        status?: string;
+        code?: string;
+        url?: string;
+        error?: string;
+        elapsed?: number;
+      };
+
+      if (data.success) {
+        logStep(data.status === "verified" ? "verified" : "registered",
+          `code=${data.code || "n/a"} url=${data.url || ""} elapsed=${data.elapsed?.toFixed(1) || "?"}s`);
+        if (proxy) void markProxySuccess(proxy.id);
+        return {
+          ok: true,
+          status: data.status || "registered",
+          verificationCode: data.code || null,
+        };
+      } else {
+        logStep("error", data.error || "Solver failed");
+        if (proxy) void markProxyFail(proxy.id);
+        return { ok: false, status: "error", error: data.error || "Solver failed" };
+      }
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      logStep("solver_call_error", errMsg);
+      if (proxy) void markProxyFail(proxy.id);
+      return { ok: false, status: "error", error: errMsg };
+    }
+  }
+
+  // ── Legacy mode: spawn camoufox_register.py ──
+  const scriptPath = path.join(process.cwd(), "scripts", "camoufox_register.py");
 
   const args = [
     scriptPath,
@@ -391,7 +456,27 @@ async function registerGitHubAccount(account: GithubAccount): Promise<{
               try {
                 const msg = JSON.parse(trimmed);
                 if (msg.progress) {
-                  logStep(msg.progress, msg.url || msg.code || undefined);
+                  // Build detail string from all extra fields (not just url/code)
+                  const detailParts: string[] = [];
+                  for (const [k, v] of Object.entries(msg)) {
+                    if (["progress", "ts"].includes(k)) continue;
+                    if (typeof v === "string") detailParts.push(`${k}=${v}`);
+                    else if (typeof v === "number" || typeof v === "boolean") detailParts.push(`${k}=${v}`);
+                    else if (Array.isArray(v) && v.length > 0) detailParts.push(`${k}=[${v.join(",")}]`);
+                    else if (typeof v === "object" && v !== null) {
+                      // For element_checks etc, summarize
+                      const summary = Object.entries(v)
+                        .filter(([, val]) => val && typeof val === "object" && (val as any).visible)
+                        .map(([k2]) => k2);
+                      if (summary.length > 0) detailParts.push(`${k}.visible=[${summary.join(",")}]`);
+                      else {
+                        const flat = JSON.stringify(v);
+                        if (flat.length < 200) detailParts.push(`${k}=${flat}`);
+                      }
+                    }
+                  }
+                  const detail = detailParts.length > 0 ? detailParts.join(" | ") : undefined;
+                  logStep(msg.progress, detail);
                 }
               } catch {
                 // Not JSON — log raw
