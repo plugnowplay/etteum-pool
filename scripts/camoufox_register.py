@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """
-Cloakbrowser-based GitHub account registration.
-Replaces Camoufox — uses the SAME browser engine as the captcha-solver sidecar,
-so DataDome cookies harvested by the solver are valid in this browser (IP+UA match).
+Camoufox-based GitHub account registration.
+Uses Camoufox (anti-detect Firefox) headed under Xvfb to resolve the DataDome
+page-load interstitial, then submits the signup form and captures the launch
+code from IMAP to complete email verification.
 
 Usage:
   python3 camoufox_register.py --email EMAIL --password PASS --proxy PROXY_URL --imap-host HOST --imap-port PORT --imap-user USER --imap-pass PASS --domain DOMAIN
@@ -227,7 +228,7 @@ def main():
     parser.add_argument("--domain", required=True)
     args = parser.parse_args()
 
-    log_progress("script_started", email=args.email, proxy=args.proxy, domain=args.domain, browser="cloakbrowser")
+    log_progress("script_started", email=args.email, proxy=args.proxy, domain=args.domain, browser="camoufox")
 
     # Parse proxy URL for Camoufox (dict format)
     proxy_match = re.match(r'https?://([^:]+):([^@]+)@([^:]+):(\d+)', args.proxy)
@@ -253,8 +254,9 @@ def main():
     Camoufox = _Camoufox  # type: ignore[assignment]
 
     # ── Step 0: Solve OctoCaptcha DataDome via sidecar BEFORE launching ──
-    # Solver (cloakbrowser) can pass octocaptcha.com DataDome; Camoufox cannot.
-    # Solving first lets us match the browser UA to the cookie's UA binding.
+    # The external solver can pass octocaptcha.com DataDome that Camoufox cannot
+    # resolve natively. Solving first lets us match the browser UA to the
+    # cookie's UA binding.
     log_progress("step0_solving_octocaptcha_datadome")
     solver_result = solve_datadome_via_solver(args.proxy, timeout_s=90)
     dd_cookie = ""
