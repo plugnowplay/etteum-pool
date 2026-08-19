@@ -1,6 +1,6 @@
 import type { ChatCompletionRequest, ProviderResult } from "./providers/base";
 import { providers, getAllModels, type ProviderName } from "./providers/registry";
-import { isNonAccountRequestError, isTransientError } from "./errors";
+import { isNonAccountRequestError, isTransientError, isProxyOutageError } from "./errors";
 import { applyPudidilFilters } from "./filters";
 import { pool } from "./pool";
 import type { Account } from "../db/schema";
@@ -271,6 +271,14 @@ export async function routeRequest(
       }
       if (isNonAccountRequestError(errMsg)) {
         throw error;
+      }
+      // Proxy outage: infrastructure error — do NOT poison any account, and
+      // stop retrying (every account uses the same proxy pool). The error
+      // propagates to the client as a 503 with a clear proxy message.
+      if (isProxyOutageError(errMsg)) {
+        throw new Error(
+          `[PROXY-EXHAUSTED] Outbound proxy unavailable: ${errMsg}`
+        );
       }
       if (errMsg.includes("expired") || errMsg.includes("401")) {
         await pool.markTransientFailure(account.id, errMsg);

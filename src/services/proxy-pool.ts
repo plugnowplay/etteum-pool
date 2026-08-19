@@ -135,7 +135,16 @@ export function advanceSequentialIndex() {
 }
 
 // ── Success / Fail tracking ─────────────────────────────────────────
+
+/** Consecutive failures before a proxy is treated as traffic-exhausted and
+ *  pulled from rotation. Bun fetch collapses proxy 407 TRAFFIC_EXHAUSTED into
+ *  a generic connect error, so we count consecutive failures in memory. */
+const PROXY_EXHAUST_FAILS = 3;
+
+const consecutiveFails = new Map<number, number>();
+
 export async function markProxySuccess(id: number) {
+  consecutiveFails.delete(id);
   await db
     .update(proxyPool)
     .set({ successCount: sql`${proxyPool.successCount} + 1`, updatedAt: new Date() })
@@ -154,6 +163,40 @@ export async function markProxyFail(id: number, error?: string) {
 
   // In sequential mode, advance to next proxy on failure
   advanceSequentialIndex();
+
+  // Exhaustion detection: N consecutive failures with no success in between
+  // means the proxy is out of traffic (Bun collapses proxy 407
+  // TRAFFIC_EXHAUSTED into a generic "Unable to connect" throw). Mark it
+  // error, pull it from rotation, and notify the dashboard.
+  const fails = (consecutiveFails.get(id) ?? 0) + 1;
+  consecutiveFails.set(id, fails);
+  if (fails < PROXY_EXHAUST_FAILS) return;
+
+  consecutiveFails.delete(id);
+  const [row] = await db
+    .select({ status: proxyPool.status })
+    .from(proxyPool)
+    .where(eq(proxyPool.id, id));
+  if (!row || row.status !== "active") return;
+
+  await db
+    .update(proxyPool)
+    .set({ status: "error", errorMessage: "Proxy traffic exhausted (repeated connect failures)" })
+    .where(eq(proxyPool.id, id));
+  cachedProxies = cachedProxies.filter((p) => p.id !== id);
+  cacheTimestamp = 0;
+  const { broadcast } = await import("../ws/index");
+  broadcast({
+    type: "proxy_exhausted",
+    data: {
+      id,
+      failCount: fails,
+      error: error || "Unable to connect",
+      message: `Proxy #${id} traffic exhausted — removed from rotation`,
+      timestamp: new Date().toISOString(),
+    },
+  });
+  console.warn(`[PROXY-EXHAUSTED] Proxy #${id} disabled after ${fails} consecutive failures`);
 }
 
 // ── Health check ────────────────────────────────────────────────────

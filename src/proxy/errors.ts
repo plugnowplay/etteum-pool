@@ -34,6 +34,23 @@ export function isContentModerationError(error?: string): boolean {
 }
 
 /**
+ * The outbound proxy pool is unusable — either empty ([NO-PROXY] guard) or the
+ * selected proxy can't establish a tunnel (Bun collapses proxy 407
+ * TRAFFIC_EXHAUSTED into "Unable to connect"). This is infrastructure, NOT an
+ * account problem: callers must not mark provider accounts as errored, and
+ * retrying other accounts is pointless (they all use the same pool).
+ */
+export function isProxyOutageError(error?: string): boolean {
+  if (!error) return false;
+  return (
+    error.includes("[NO-PROXY]") ||
+    error.includes("[PROXY-EXHAUSTED]") ||
+    error.includes("Unable to connect") ||
+    error.toLowerCase().includes("tunnel connection failed")
+  );
+}
+
+/**
  * Errors that are caused by the request content itself, not the account.
  * These should NOT be retried with different accounts since the same content
  * will trigger the same error regardless of which account is used.
@@ -43,7 +60,8 @@ export function isNonAccountRequestError(error?: string): boolean {
   return (
     isInvalidModelError(error) ||
     isContentModerationError(error) ||
-    isBadUpstreamRequest(error)
+    isBadUpstreamRequest(error) ||
+    isProxyOutageError(error)
   );
 }
 

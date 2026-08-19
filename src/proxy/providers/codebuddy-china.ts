@@ -17,34 +17,25 @@ interface CodeBuddyChinaTokens {
 }
 
 const CBC_UPSTREAM = new Set([
-  "claude-haiku-4.5", "deepseek-r1", "deepseek-v3", "deepseek-v3-2-volc",
-  "deepseek-v4-flash", "deepseek-v4-pro", "kimi-k2.5", "kimi-k2.6", "kimi-k2.7",
-  "glm-5.1", "glm-5.2", "glm-5.3", "glm-5v-turbo", "minimax-m3", "hy3-preview",
+  "deepseek-v4-flash", "deepseek-v4-pro", "kimi-k2.6", "kimi-k2.7", "kimi-k3",
+  "glm-5.2", "glm-5.3", "minimax-m2.7", "minimax-m3",
 ]);
 
 /** Map cbc- prefixed model IDs to actual CodeBuddy China API model names. */
 const CBC_MODEL_MAP: Record<string, string> = {
-  // Claude
-  "cbc-haiku-4.5": "claude-haiku-4.5",
   // DeepSeek
-  "cbc-deepseek-r1": "deepseek-r1",
-  "cbc-deepseek-v3": "deepseek-v3",
-  "cbc-deepseek-v3-2-volc": "deepseek-v3-2-volc",
   "cbc-deepseek-v4-flash": "deepseek-v4-flash",
   "cbc-deepseek-v4-pro": "deepseek-v4-pro",
   // Kimi (Moonshot)
-  "cbc-kimi-k2.5": "kimi-k2.5",
   "cbc-kimi-k2.6": "kimi-k2.6",
   "cbc-kimi-k2.7": "kimi-k2.7",
+  "cbc-kimi-k3": "kimi-k3",
   // GLM (Zhipu)
-  "cbc-glm-5.1": "glm-5.1",
   "cbc-glm-5.2": "glm-5.2",
   "cbc-glm-5.3": "glm-5.3",
-  "cbc-glm-5v-turbo": "glm-5v-turbo",
   // MiniMax
+  "cbc-minimax-m2.7": "minimax-m2.7",
   "cbc-minimax-m3": "minimax-m3",
-  // Hunyuan (Tencent)
-  "cbc-hy3-preview": "hy3-preview",
 };
 
 /**
@@ -74,27 +65,19 @@ export class CodeBuddyChinaProvider extends BaseProvider {
   private baseUrl = "https://www.codebuddy.cn";
 
   supportedModels: ModelInfo[] = [
-    // Claude
-    { id: "haiku-4.5", object: "model", created: Date.now(), owned_by: "codebuddy-china", context_window: 200000, max_output: 8192, thinking: false, vision: false, creditUnit: "credit", creditRate: 0.11, creditSource: "upstream" },
-    // DeepSeek — r1 / v3 are text-only; v3-2-volc / v4-flash / v4-pro support vision
-    { id: "deepseek-r1", object: "model", created: Date.now(), owned_by: "codebuddy-china", context_window: 64000, max_output: 8192, thinking: true, vision: false, creditUnit: "credit", creditRate: 0.01, creditSource: "upstream" },
-    { id: "deepseek-v3", object: "model", created: Date.now(), owned_by: "codebuddy-china", context_window: 64000, max_output: 8192, thinking: false, vision: false, creditUnit: "credit", creditRate: 0.01, creditSource: "upstream" },
-    { id: "deepseek-v3-2-volc", object: "model", created: Date.now(), owned_by: "codebuddy-china", context_window: 64000, max_output: 8192, thinking: false, vision: true, creditUnit: "credit", creditRate: 0.01, creditSource: "upstream" },
+    // DeepSeek — v4 series support vision
     { id: "deepseek-v4-flash", object: "model", created: Date.now(), owned_by: "codebuddy-china", context_window: 1000000, max_output: 8192, thinking: false, vision: true, creditUnit: "credit", creditRate: 0.01, creditSource: "upstream" },
     { id: "deepseek-v4-pro", object: "model", created: Date.now(), owned_by: "codebuddy-china", context_window: 1000000, max_output: 8192, thinking: false, vision: true, creditUnit: "credit", creditRate: 0.03, creditSource: "upstream" },
-    // Kimi — k2.5 / k2.6 support vision; k2.7 is flaky (sometimes works with all-fields format)
-    { id: "kimi-k2.5", object: "model", created: Date.now(), owned_by: "codebuddy-china", context_window: 164000, max_output: 8192, thinking: false, vision: true, creditUnit: "credit", creditRate: 0.05, creditSource: "upstream" },
+    // Kimi — k2.6 supports vision; k2.7 is flaky (sometimes works with all-fields format)
     { id: "kimi-k2.6", object: "model", created: Date.now(), owned_by: "codebuddy-china", context_window: 256000, max_output: 8192, thinking: false, vision: true, creditUnit: "credit", creditRate: 0.09, creditSource: "upstream" },
     { id: "kimi-k2.7", object: "model", created: Date.now(), owned_by: "codebuddy-china", context_window: 256000, max_output: 8192, thinking: true, vision: true, creditUnit: "credit", creditRate: 0.07, creditSource: "upstream" },
-    // GLM — 5.1 / 5.2 / 5v-turbo all support vision (5v-turbo is the dedicated vision model)
-    { id: "glm-5.1", object: "model", created: Date.now(), owned_by: "codebuddy-china", context_window: 200000, max_output: 8192, thinking: false, vision: true, creditUnit: "credit", creditRate: 0.02, creditSource: "upstream" },
+    { id: "kimi-k3", object: "model", created: Date.now(), owned_by: "codebuddy-china", context_window: 256000, max_output: 8192, thinking: true, vision: true, creditUnit: "credit", creditRate: 0.07, creditSource: "upstream" },
+    // GLM — 5.2 / 5.3 support vision
     { id: "glm-5.2", object: "model", created: Date.now(), owned_by: "codebuddy-china", context_window: 1000000, max_output: 8192, thinking: false, vision: true, creditUnit: "credit", creditRate: 0.02, creditSource: "upstream" },
     { id: "glm-5.3", object: "model", created: Date.now(), owned_by: "codebuddy-china", context_window: 1000000, max_output: 8192, thinking: true, vision: true, creditUnit: "credit", creditRate: 0.02, creditSource: "upstream" },
-    { id: "glm-5v-turbo", object: "model", created: Date.now(), owned_by: "codebuddy-china", context_window: 200000, max_output: 8192, thinking: false, vision: true, creditUnit: "credit", creditRate: 0.03, creditSource: "upstream" },
     // MiniMax — vision support is flaky upstream (model often replies "I don't see"), kept enabled for parity
+    { id: "minimax-m2.7", object: "model", created: Date.now(), owned_by: "codebuddy-china", context_window: 512000, max_output: 8192, thinking: false, vision: true, creditUnit: "credit", creditRate: 0.10, creditSource: "upstream" },
     { id: "minimax-m3", object: "model", created: Date.now(), owned_by: "codebuddy-china", context_window: 512000, max_output: 8192, thinking: false, vision: true, creditUnit: "credit", creditRate: 0.10, creditSource: "upstream" },
-    // Hunyuan — model itself always replies "I can't see the image" even with payload accepted; vision disabled
-    { id: "hy3-preview", object: "model", created: Date.now(), owned_by: "codebuddy-china", context_window: 192000, max_output: 8192, thinking: false, vision: false, creditUnit: "credit", creditRate: 0.01, creditSource: "upstream" },
   ];
 
   /** Cache for resolved tool schemas — the assistant sends the same tools every request */
@@ -423,6 +406,11 @@ export class CodeBuddyChinaProvider extends BaseProvider {
       if (response.status === 429) {
         return { success: false, error: "Rate limited / quota exhausted", quotaExhausted: true };
       }
+      // 407 from the proxy tier — infrastructure, not account. Surface as
+      // proxy outage so the router doesn't poison this account.
+      if (response.status === 407) {
+        return { success: false, error: `[PROXY-EXHAUSTED] Proxy rejected request (407) — proxy traffic exhausted or unauthorized` };
+      }
       if (!response.ok) {
         const errText = await response.text();
         return { success: false, error: `CodeBuddy China API error (${response.status}): ${errText}` };
@@ -445,7 +433,14 @@ export class CodeBuddyChinaProvider extends BaseProvider {
         creditSource,
       };
     } catch (error) {
-      return { success: false, error: `CodeBuddy China request failed: ${error instanceof Error ? error.message : String(error)}` };
+      // Proxy-tier failures (407 collapsed to "Unable to connect", [NO-PROXY])
+      // must stay identifiable so the router treats them as infrastructure
+      // errors instead of account errors.
+      const msg = error instanceof Error ? error.message : String(error);
+      if (msg.includes("[NO-PROXY]") || msg.includes("Unable to connect") || msg.toLowerCase().includes("tunnel connection failed")) {
+        return { success: false, error: `[PROXY-EXHAUSTED] ${msg}` };
+      }
+      return { success: false, error: `CodeBuddy China request failed: ${msg}` };
     }
   }
 
@@ -475,7 +470,14 @@ export class CodeBuddyChinaProvider extends BaseProvider {
 
       return this.createStreamResponse(response, request.model);
     } catch (error) {
-      return { success: false, error: `CodeBuddy China stream failed: ${error instanceof Error ? error.message : String(error)}` };
+      // Proxy-tier failures (407 collapsed to "Unable to connect", [NO-PROXY])
+      // must stay identifiable so the router treats them as infrastructure
+      // errors instead of account errors.
+      const msg = error instanceof Error ? error.message : String(error);
+      if (msg.includes("[NO-PROXY]") || msg.includes("Unable to connect") || msg.toLowerCase().includes("tunnel connection failed")) {
+        return { success: false, error: `[PROXY-EXHAUSTED] ${msg}` };
+      }
+      return { success: false, error: `CodeBuddy China stream failed: ${msg}` };
     }
   }
 

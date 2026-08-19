@@ -295,6 +295,13 @@ export class CodeBuddyProvider extends BaseProvider {
         return { success: false, error: "Rate limited / quota exhausted", quotaExhausted: true };
       }
 
+      // 407 from the proxy tier (auth/traffic exhausted) — infrastructure
+      // problem, not an account problem. Surface as proxy outage so the
+      // router doesn't poison this account.
+      if (response.status === 407) {
+        return { success: false, error: `[PROXY-EXHAUSTED] Proxy rejected request (407) — proxy traffic exhausted or unauthorized` };
+      }
+
       if (!response.ok) {
         const errText = await response.text();
         // Detect Chinese content moderation error and translate
@@ -328,7 +335,14 @@ export class CodeBuddyProvider extends BaseProvider {
         creditSource,
       };
     } catch (error) {
-      return { success: false, error: `CodeBuddy request failed: ${error instanceof Error ? error.message : String(error)}` };
+      // Proxy-tier failures (407 collapsed to "Unable to connect", [NO-PROXY])
+      // must stay identifiable so the router treats them as infrastructure
+      // errors instead of account errors.
+      const msg = error instanceof Error ? error.message : String(error);
+      if (msg.includes("[NO-PROXY]") || msg.includes("Unable to connect") || msg.toLowerCase().includes("tunnel connection failed")) {
+        return { success: false, error: `[PROXY-EXHAUSTED] ${msg}` };
+      }
+      return { success: false, error: `CodeBuddy request failed: ${msg}` };
     }
   }
 
@@ -366,7 +380,30 @@ export class CodeBuddyProvider extends BaseProvider {
 
       return this.createStreamResponse(response, request.model);
     } catch (error) {
-      return { success: false, error: `CodeBuddy stream failed: ${error instanceof Error ? error.message : String(error)}` };
+      // Proxy-tier failures (407 collapsed to "Unable to connect", [NO-PROXY])
+      // must stay identifiable so the router treats them as infrastructure
+      // errors instead of account errors.
+      const msg = error instanceof Error ? error.message : String(error);
+      if (msg.includes("[NO-PROXY]") || msg.includes("Unable to connect") || msg.toLowerCase().includes("tunnel connection failed")) {
+        return { success: false, error: `[PROXY-EXHAUSTED] ${msg}` };
+      }
+      return { success: false, error: `CodeBuddy stream failed: ${msg}` };
+    }
+  }
+
+  /**
+   * Decode the `exp` claim of a JWT (seconds since epoch) without verifying
+   * the signature — used to derive the "Next Refresh Date" for display.
+   * Returns 0 when the token is malformed or carries no exp.
+   */
+  private jwtExpEpoch(token: string): number {
+    try {
+      const payload = JSON.parse(
+        Buffer.from(token.split(".")[1] ?? "", "base64").toString("utf-8"),
+      ) as { exp?: number };
+      return Number(payload.exp) || 0;
+    } catch {
+      return 0;
     }
   }
 
@@ -401,17 +438,25 @@ export class CodeBuddyProvider extends BaseProvider {
 
       const data = await response.json() as {
         code: number;
-        data?: { accessToken?: string; refreshToken?: string; expiresIn?: number };
+        data?: { accessToken?: string; refreshToken?: string; expiresIn?: number } | null;
         msg?: string;
       };
       if (data.code !== 0 || !data.data?.accessToken) {
         return { success: false, error: data.msg || "Refresh returned no token" };
       }
 
+      // Persist the upstream expiresIn as an absolute epoch so the dashboard
+      // can show "Next Refresh Date" (recomputed from JWT exp when absent).
+      const expiresIn = Number(data.data.expiresIn) || 0;
+      const expiresAt = expiresIn > 0
+        ? Math.floor(Date.now() / 1000) + expiresIn
+        : this.jwtExpEpoch(data.data.accessToken);
+
       const newTokens = {
         ...tokens,
         access_token: data.data.accessToken,
         refresh_token: data.data.refreshToken || tokens.refresh_token,
+        expires_at: expiresAt ? String(expiresAt) : (tokens as { expires_at?: string }).expires_at,
       };
       return { success: true, tokens: JSON.stringify(newTokens) };
     } catch (error) {
@@ -627,7 +672,7 @@ export class CodeBuddyProvider extends BaseProvider {
     }, config.providerQuotaTimeoutMs);
   }
 
-  private parseResourceQuota(data: any): { limit: number; remaining: number; used: number } {
+  private parseResourceQuota(data: any): { limit: number; remaining: number; used: number; resetAt?: Date | null } {
     const responseData = data.data?.Response?.Data || {};
     const totalDosage = Number(responseData.TotalDosage || 0);
     const resourceAccounts = Array.isArray(responseData.Accounts) ? responseData.Accounts : [];
@@ -635,16 +680,30 @@ export class CodeBuddyProvider extends BaseProvider {
     let totalUsed = 0;
     let totalSize = 0;
 
+    // Credit cycle reset: earliest CycleEndTime among packages that still have
+    // remaining credit — that's when the pool's credits refresh. Format is
+    // "YYYY-MM-DD HH:mm:ss" in UTC+8 (Tencent Cloud style).
+    let resetAt: Date | null = null;
     for (const acct of resourceAccounts) {
       totalRemain += Number(acct.CapacityRemain || 0);
       totalUsed += Number(acct.CapacityUsed || 0);
       totalSize += Number(acct.CapacitySize || 0);
+
+      if (Number(acct.CapacityRemain) > 0 && typeof acct.CycleEndTime === "string" && acct.CycleEndTime.trim()) {
+        // Parse as UTC+8 wall time; tolerate an already-parsable ISO string.
+        const raw = acct.CycleEndTime.trim();
+        const iso = raw.includes("T") ? raw : `${raw.replace(" ", "T")}+08:00`;
+        const ts = Date.parse(iso);
+        if (!Number.isNaN(ts) && (resetAt === null || ts < resetAt.getTime())) {
+          resetAt = new Date(ts);
+        }
+      }
     }
 
     const limit = totalSize || totalDosage || totalRemain + totalUsed;
     const remaining = totalRemain;
     const used = totalUsed || Math.max(0, limit - remaining);
-    return { limit, remaining, used };
+    return { limit, remaining, used, resetAt };
   }
 
   private async makeRequest(
