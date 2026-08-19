@@ -67,14 +67,22 @@ Bun.serve({
       file = Bun.file(filePath);
       if (await file.exists()) {
         return new Response(file, {
-          headers: { "Content-Type": "text/html; charset=utf-8" },
+          headers: {
+            "Content-Type": "text/html; charset=utf-8",
+            // HTML must always revalidate or users get stuck on stale chunks
+            "Cache-Control": "no-cache",
+          },
         });
       }
     }
 
     // SPA fallback: serve index.html for any non-file route
     return new Response(Bun.file(indexFile), {
-      headers: { "Content-Type": "text/html; charset=utf-8" },
+      headers: {
+        "Content-Type": "text/html; charset=utf-8",
+        // HTML must always revalidate or users get stuck on stale chunks
+        "Cache-Control": "no-cache",
+      },
     });
   },
 });
