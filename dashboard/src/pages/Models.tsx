@@ -9,6 +9,7 @@ import { useToast } from "@/components/ui/toast";
 import { Cpu, Copy, Check, Search, ChevronsUpDown, Loader2, CloudDownload } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { fetchModels, fetchUpstreamModels, testModel, fetchCustomModels, saveCustomModel, deleteCustomModel } from "@/lib/api";
+import { copyText } from "@/lib/clipboard";
 
 interface CustomModelRow {
   id: number;
@@ -323,7 +324,7 @@ export default function Models() {
     );
 
   async function copyModelId(modelId: string) {
-    await navigator.clipboard.writeText(modelId);
+    await copyText(modelId);
     setCopiedModel(modelId);
   }
 

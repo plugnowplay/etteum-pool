@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import type { ClientMetaDTO, IntegrationModelDTO } from "@/lib/api";
 import { fetchClientConfigPreview } from "@/lib/api";
+import { copyText } from "@/lib/clipboard";
 import { ConfigPreview } from "./ConfigPreview";
 
 interface ClientCardProps {
@@ -33,12 +34,10 @@ function CopyButton({ value }: { value: string }) {
   return (
     <button
       onClick={async () => {
-        try {
-          await navigator.clipboard.writeText(value);
+        const ok = await copyText(value);
+        if (ok) {
           setCopied(true);
           setTimeout(() => setCopied(false), 1500);
-        } catch {
-          /* clipboard unavailable */
         }
       }}
       className="p-1 rounded hover:bg-[var(--secondary)] text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors"

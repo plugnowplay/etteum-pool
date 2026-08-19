@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { API_BASE } from "@/lib/api";
+import { copyText } from "@/lib/clipboard";
 import { modelColor, formatNumber } from "@/lib/utils";
 import { Check, Copy, Eye, EyeOff, RefreshCw, Server, Zap } from "lucide-react";
 
@@ -44,12 +45,10 @@ function CopyField({ label, value, display }: { label: string; value: string; di
   const [show, setShow] = useState(false);
 
   async function copy() {
-    try {
-      await navigator.clipboard.writeText(value);
+    const ok = await copyText(value);
+    if (ok) {
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
-    } catch {
-      /* clipboard unavailable */
     }
   }
 

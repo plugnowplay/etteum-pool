@@ -39,6 +39,7 @@ import {
   type ClientMetaDTO,
   type IntegrationModelDTO,
 } from "@/lib/api";
+import { copyText } from "@/lib/clipboard";
 import { useWsEvent } from "@/hooks/useWebSocket";
 import { ClientCard } from "@/components/integration/ClientCard";
 
@@ -552,12 +553,10 @@ function CodeRow({ label, value }: { label: string; value: string }) {
   const [copied, setCopied] = useState(false);
 
   async function copy() {
-    try {
-      await navigator.clipboard.writeText(value);
+    const ok = await copyText(value);
+    if (ok) {
       setCopied(true);
       window.setTimeout(() => setCopied(false), 1600);
-    } catch {
-      /* clipboard unavailable (non-https / permissions) */
     }
   }
 

@@ -9,6 +9,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { CardData, exportAsTxt, exportAsCsv, exportAsJson } from '@/lib/vcc-utils';
+import { copyText } from '@/lib/clipboard';
 import { Copy, Download } from 'lucide-react';
 
 interface ExportDialogProps {
@@ -35,12 +36,9 @@ export function ExportDialog({ open, onOpenChange, cards, onMessage }: ExportDia
   const exportContent = getExportContent();
 
   const handleCopy = async () => {
-    try {
-      await navigator.clipboard.writeText(exportContent);
-      onMessage?.(`Copied ${cards.length} cards to clipboard`);
-    } catch (err) {
-      onMessage?.('Failed to copy to clipboard');
-    }
+    const ok = await copyText(exportContent);
+    if (ok) onMessage?.(`Copied ${cards.length} cards to clipboard`);
+    else onMessage?.('Failed to copy to clipboard');
   };
 
   const handleDownload = () => {

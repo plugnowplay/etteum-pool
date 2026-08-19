@@ -42,6 +42,7 @@ import {
   type AutoWarmupStatus,
   type ByokProvider,
 } from "@/lib/api";
+import { copyText } from "@/lib/clipboard";
 
 type Provider = "kiro" | "kiro-pro" | "codebuddy" | "codebuddy-china" | "canva" | "codex" | "qoder" | "gitlab-duo" | "youmind" | "grok" | "grok-cli";
 
@@ -857,24 +858,9 @@ export default function Accounts() {
   }
 
   async function safeCopyText(text: string, successMessage: string) {
-    try {
-      if (navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(text);
-      } else {
-        // Fallback for non-secure contexts (HTTP) or disabled clipboard API
-        const ta = document.createElement("textarea");
-        ta.value = text;
-        ta.style.position = "fixed";
-        ta.style.left = "-9999px";
-        document.body.appendChild(ta);
-        ta.select();
-        document.execCommand("copy");
-        document.body.removeChild(ta);
-      }
-      showSuccess(successMessage);
-    } catch (err) {
-      showError(err);
-    }
+    const ok = await copyText(text);
+    if (ok) showSuccess(successMessage);
+    else showError(new Error("Clipboard unavailable"));
   }
 
   function isCodexCallbackUrlValid(value: string) {
@@ -1307,12 +1293,15 @@ export default function Accounts() {
   const providerStats = useMemo(() => {
     return providers.map((provider) => {
       const rows = accounts.filter((a) => a.provider === provider);
-      let quotaLimit = rows.reduce((sum, a) => sum + (a.quotaLimit || 0), 0);
-      let quotaRemaining = rows.reduce((sum, a) => sum + (a.quotaRemaining || 0), 0);
+      // Credit math uses ACTIVE accounts only — exhausted/error/pending
+      // accounts hold no usable quota and skew the progress bar.
+      const activeRows = rows.filter((a) => a.status === "active");
+      let quotaLimit = activeRows.reduce((sum, a) => sum + (a.quotaLimit || 0), 0);
+      let quotaRemaining = activeRows.reduce((sum, a) => sum + (a.quotaRemaining || 0), 0);
       let unlimitedCount = 0;
       let usedTotal = 0;
       if (provider === "grok-cli") {
-        const reported = rows.filter((a) => a.metadata?.serverQuota);
+        const reported = activeRows.filter((a) => a.metadata?.serverQuota);
         unlimitedCount = reported.filter((a) => Number(a.metadata!.serverQuota!.limit ?? -1) <= 0).length;
         usedTotal = reported.reduce((sum, a) => sum + Math.max(0, Number(a.metadata!.serverQuota!.used ?? 0)), 0);
         quotaLimit = reported.reduce((sum, a) => sum + Math.max(0, Number(a.metadata!.serverQuota!.limit ?? 0)), 0);

@@ -21,6 +21,7 @@ import { StatCard, Metric } from "@/components/ui/stat-card";
 import { Drawer, DrawerSection, KeyValue } from "@/components/ui/drawer";
 import { SkeletonCard } from "@/components/ui/skeleton";
 import { fetchRequests, fetchRequestDetail } from "@/lib/api";
+import { copyText } from "@/lib/clipboard";
 import { formatDateTimeID, formatTimeID } from "@/lib/utils";
 import { useWsEvent } from "@/hooks/useWebSocket";
 
@@ -769,12 +770,10 @@ function JsonBlock({ title, value }: { title: string; value: unknown }) {
   const text = JSON.stringify(value || {}, null, 2);
 
   async function copy() {
-    try {
-      await navigator.clipboard.writeText(text);
+    const ok = await copyText(text);
+    if (ok) {
       setCopied(true);
       window.setTimeout(() => setCopied(false), 1600);
-    } catch {
-      // clipboard blocked (non-https / permissions) — silently ignore
     }
   }
 

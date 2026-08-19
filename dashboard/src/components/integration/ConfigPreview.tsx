@@ -1,6 +1,7 @@
 import { Copy, Check } from "lucide-react";
 import { useState } from "react";
 import { cn } from "@/lib/utils";
+import { copyText } from "@/lib/clipboard";
 
 interface ConfigPreviewProps {
   config: Record<string, unknown> | string;
@@ -14,12 +15,10 @@ export function ConfigPreview({ config, label }: ConfigPreviewProps) {
     typeof config === "string" ? config : JSON.stringify(config, null, 2);
 
   const handleCopy = async () => {
-    try {
-      await navigator.clipboard.writeText(content);
+    const ok = await copyText(content);
+    if (ok) {
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
-    } catch {
-      /* clipboard unavailable */
     }
   };
 

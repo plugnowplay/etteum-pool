@@ -23,6 +23,7 @@ import {
   History,
 } from "lucide-react";
 import { fetchApi } from "@/lib/api";
+import { copyText } from "@/lib/clipboard";
 import { VisualCard } from "@/components/vcc/VisualCard";
 import { ExportDialog } from "@/components/vcc/ExportDialog";
 import { BinSelector } from "@/components/vcc/BinSelector";
@@ -160,7 +161,7 @@ export default function VccPool() {
 
   const handleCopyCard = async (card: GeneratedCard) => {
     const text = `${card.number}|${formatExpiry(card.expMonth, card.expYear)}|${card.cvv}`;
-    await navigator.clipboard.writeText(text);
+    await copyText(text);
     toast.success("Card copied");
   };
 
@@ -168,7 +169,7 @@ export default function VccPool() {
     const text = generatedCards
       .map((c) => `${c.number}|${formatExpiry(c.expMonth, c.expYear)}|${c.cvv}`)
       .join("\n");
-    await navigator.clipboard.writeText(text);
+    await copyText(text);
     toast.success(`${generatedCards.length} cards copied`);
   };
 

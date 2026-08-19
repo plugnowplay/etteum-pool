@@ -23,6 +23,7 @@ import {
   fetchSettings,
   updateSettings,
 } from "@/lib/api";
+import { copyText } from "@/lib/clipboard";
 import { formatNumber, modelColor } from "@/lib/utils";
 import {
   Check,
@@ -72,12 +73,10 @@ function CopyField({
   const [copied, setCopied] = useState(false);
 
   async function copy() {
-    try {
-      await navigator.clipboard.writeText(value);
+    const ok = await copyText(value);
+    if (ok) {
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
-    } catch {
-      /* clipboard unavailable */
     }
   }
 
@@ -220,13 +219,10 @@ API Key: ${apiKey || "<YOUR_API_KEY>"}
 Example:
 ${curlSnippet}`;
 
-  async function copyText(text: string, message: string) {
-    try {
-      await navigator.clipboard.writeText(text);
-      toast.success(message);
-    } catch {
-      toast.error("Clipboard unavailable in this browser");
-    }
+  async function copyToClipboard(text: string, message: string) {
+    const ok = await copyText(text);
+    if (ok) toast.success(message);
+    else toast.error("Clipboard unavailable in this browser");
   }
 
   return (
@@ -239,7 +235,7 @@ ${curlSnippet}`;
             <Button variant="outline" size="sm" onClick={load} loading={loading}>
               {!loading && <RefreshCw className="h-4 w-4" />} Refresh
             </Button>
-            <Button size="sm" onClick={() => copyText(connectionInfo, "Connection details copied")}>
+            <Button size="sm" onClick={() => copyToClipboard(connectionInfo, "Connection details copied")}>
               <Share2 className="h-4 w-4" /> Copy details
             </Button>
           </>
@@ -324,7 +320,7 @@ ${curlSnippet}`;
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={() => copyText(curlSnippet, "curl example copied")}
+                onClick={() => copyToClipboard(curlSnippet, "curl example copied")}
               >
                 <Copy className="h-3.5 w-3.5" /> Copy
               </Button>

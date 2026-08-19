@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/components/ui/toast";
 import { Copy, Eye, EyeOff, RefreshCw, Check, Save, ShieldCheck } from "lucide-react";
 import { fetchApiKey, regenerateApiKey, setApiKey, testApiKey } from "@/lib/api";
+import { copyText } from "@/lib/clipboard";
 import { useTimedMessage } from "@/hooks/useTimedMessage";
 
 export default function ApiKey() {
@@ -51,8 +52,7 @@ export default function ApiKey() {
   }, []);
 
   const handleCopy = () => {
-    navigator.clipboard.writeText(apiKey);
-    setCopiedTimed(true);
+    copyText(apiKey).then(() => setCopiedTimed(true));
   };
 
   async function handleSave() {
