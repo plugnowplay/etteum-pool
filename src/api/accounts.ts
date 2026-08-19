@@ -155,11 +155,45 @@ accountsRouter.get("/", async (c) => {
   const allAccounts = await db.select().from(accounts);
 
   // Don't expose passwords in response
-  const sanitized = allAccounts.map((acc) => ({
-    ...acc,
-    password: "***",
-    tokens: acc.tokens ? "[set]" : null,
-  }));
+  const sanitized = allAccounts.map((acc) => {
+    // Two distinct "next" dates, exposed separately:
+    // - nextCreditResetAt: when upstream credits refresh (quotaResetAt, from
+    //   billing CycleEndTime — relevant for codebuddy free/bonus packs)
+    // - nextTokenRefreshAt: when the OAuth access token expires / gets refreshed
+    //   (tokens.expires_at, falling back to the JWT exp claim)
+    // The legacy nextRefreshAt field (kept for compatibility) prefers the
+    // credit reset date, then the token expiry.
+    let nextTokenRefreshAt: string | null = null;
+    if (acc.tokens && typeof acc.tokens === "object") {
+      const t = acc.tokens as Record<string, unknown>;
+      const raw = t.expires_at ?? t.expiresAt;
+      if (typeof raw === "string" || typeof raw === "number") {
+        const epoch = Number(raw) || Date.parse(String(raw)) / 1000;
+        if (epoch > 0) nextTokenRefreshAt = new Date(epoch * 1000).toISOString();
+      }
+      if (!nextTokenRefreshAt && typeof t.access_token === "string" && t.access_token.split(".").length === 3) {
+        try {
+          const payload = JSON.parse(
+            Buffer.from(t.access_token.split(".")[1]!, "base64").toString("utf-8"),
+          ) as { exp?: number };
+          if (Number(payload.exp) > 0) nextTokenRefreshAt = new Date(Number(payload.exp) * 1000).toISOString();
+        } catch { /* malformed JWT — leave null */ }
+      }
+    }
+    let nextCreditResetAt: string | null = null;
+    if (acc.quotaResetAt) {
+      const ts = new Date(acc.quotaResetAt).getTime();
+      if (!Number.isNaN(ts)) nextCreditResetAt = new Date(ts).toISOString();
+    }
+    return {
+      ...acc,
+      password: "***",
+      tokens: acc.tokens ? "[set]" : null,
+      nextRefreshAt: nextCreditResetAt || nextTokenRefreshAt,
+      nextCreditResetAt,
+      nextTokenRefreshAt,
+    };
+  });
 
   return c.json({ data: sanitized, total: sanitized.length });
 });
