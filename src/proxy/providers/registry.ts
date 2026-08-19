@@ -9,7 +9,7 @@ import { ByokProvider } from "./byok";
 import { GitlabDuoProvider } from "./gitlab-duo";
 import { YouMindProvider } from "./youmind";
 import { GrokProvider } from "./grok";
-import { GrokCliProvider, MODEL_BY_ID as GROK_CLI_MODEL_BY_ID } from "./grok-cli";
+import { GrokCliProvider } from "./grok-cli";
 
 /**
  * Single source of truth for the provider set.
@@ -76,19 +76,20 @@ for (const [key, val] of Object.entries(providers)) {
 // Reverted: keep gcli/ prefix as default for grok-cli
 
 const BUILTIN_MODEL_ALIASES: Record<string, string> = {
-  "grok-build": "gcli-build",
-  "grok-4.6": "gcli-4.6",
-  "grok-4.6-high": "gcli-4.6-high",
-  "grok-4.6-medium": "gcli-4.6-medium",
-  "grok-4.6-low": "gcli-4.6-low",
-  "grok-4.5": "gcli-4.5",
-  "grok-4.5-high": "gcli-4.5-high",
-  "grok-4.5-medium": "gcli-4.5-medium",
-  "grok-4.5-low": "gcli-4.5-low",
-  "grok-4": "gcli-4",
-  "grok-4-fast": "gcli-4-fast",
-  "grok-4-fast-reasoning": "gcli-4-fast-reasoning",
-  "grok-3": "gcli-3",
+  "grok-build": "grok-build",
+  "grok-4.6": "grok-4.6",
+  "grok-4.6-high": "grok-4.6-high",
+  "grok-4.6-xhigh": "grok-4.6-xhigh",
+  "grok-4.6-medium": "grok-4.6-medium",
+  "grok-4.6-low": "grok-4.6-low",
+  "grok-4.5": "grok-4.5",
+  "grok-4.5-high": "grok-4.5-high",
+  "grok-4.5-medium": "grok-4.5-medium",
+  "grok-4.5-low": "grok-4.5-low",
+  "grok-4": "grok-4",
+  "grok-4-fast": "grok-4-fast",
+  "grok-4-fast-reasoning": "grok-4-fast-reasoning",
+  "grok-3": "grok-3",
 };
 
 interface ParsedModelId {
@@ -103,8 +104,6 @@ const PROVIDER_MODEL_PREFIX: Partial<Record<ProviderName, string>> = {
   qoder: "qd-",
   "kiro-pro": "kp-",
   youmind: "ym-",
-  "grok-cli": "gcli-",
-  codebuddy: "cb-",
   codex: "codex-",
 };
 
@@ -117,14 +116,6 @@ export function parseModelId(modelStr: string): ParsedModelId {
     const model = modelStr.slice(idx + 1);
     const resolved = PROVIDER_ALIAS_MAP[prefix];
     if (resolved) {
-      // Grok CLI: reverse-map upstream name to internal model ID
-      if (resolved === "grok-cli") {
-        for (const [id, def] of Object.entries(GROK_CLI_MODEL_BY_ID)) {
-          if (def.upstream.toLowerCase() === model.toLowerCase()) {
-            return { provider: resolved, model: id };
-          }
-        }
-      }
       const internalPrefix = PROVIDER_MODEL_PREFIX[resolved];
       const bare = internalPrefix && !model.toLowerCase().startsWith(internalPrefix)
         ? internalPrefix + model
@@ -143,17 +134,6 @@ export function parseModelId(modelStr: string): ParsedModelId {
 export function formatModelId(provider: ProviderName, model: string): string {
   // BYOK ids are already fully-qualified ("<label>/<model>") — don't re-prefix.
   if (provider === "byok") return model;
-  // Grok CLI: expose as gcli/<upstream> (e.g. gcli/grok-4.6, gcli/grok-build)
-  if (provider === "grok-cli") {
-    const def = GROK_CLI_MODEL_BY_ID[model.toLowerCase()];
-    if (def) {
-      const effort = model.includes("-high") ? "-high"
-        : model.includes("-medium") ? "-medium"
-        : model.includes("-low") ? "-low"
-        : "";
-      return `gcli/${def.upstream}${effort}`;
-    }
-  }
   const prefix = PROVIDER_SHORT_ALIAS[provider] || provider;
   const internalPrefix = PROVIDER_MODEL_PREFIX[provider];
   const stripped = internalPrefix && model.toLowerCase().startsWith(internalPrefix)

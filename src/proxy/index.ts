@@ -102,6 +102,73 @@ function normalizeModelId(model: string): string {
   return model.replace(/claude-sonet/gi, "claude-sonnet");
 }
 
+/**
+ * Client-facing display name for a model id: strip the leading "provider/"
+ * prefix (`cb/glm-5.3` → `glm-5.3`). Internal logs and routing keep the
+ * fully-qualified id; only outgoing response payloads use the bare name.
+ */
+function displayModelName(model: string): string {
+  const idx = model.indexOf("/");
+  return idx > 0 ? model.slice(idx + 1) : model;
+}
+
+/**
+ * Rewrite the `model` field of SSE `data:` payloads to the display name.
+ * Line-buffers input so chunk boundaries cannot split the JSON token.
+ */
+function rewriteStreamModel(
+  stream: ReadableStream<Uint8Array>,
+  displayModel: string
+): ReadableStream<Uint8Array> {
+  const decoder = new TextDecoder();
+  const encoder = new TextEncoder();
+  let buffer = "";
+  let reader: ReturnType<ReadableStream<Uint8Array>["getReader"]> | undefined;
+
+  const rewriteLine = (line: string): string => {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith("data:")) return line;
+    const payload = trimmed.startsWith("data: ") ? trimmed.slice(6) : trimmed.slice(5);
+    if (!payload || payload === "[DONE]") return line;
+    try {
+      const parsed = JSON.parse(payload);
+      if (parsed && typeof parsed === "object" && typeof parsed.model === "string" && parsed.model !== displayModel) {
+        parsed.model = displayModel;
+        return `data: ${JSON.stringify(parsed)}`;
+      }
+    } catch {
+      // not JSON — pass through untouched
+    }
+    return line;
+  };
+
+  return new ReadableStream<Uint8Array>({
+    async start(controller) {
+      reader = stream.getReader();
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() || "";
+          if (lines.length > 0) {
+            controller.enqueue(encoder.encode(lines.map(rewriteLine).join("\n") + "\n"));
+          }
+        }
+        if (buffer) controller.enqueue(encoder.encode(rewriteLine(buffer)));
+      } catch (error) {
+        controller.error(error);
+        return;
+      }
+      controller.close();
+    },
+    cancel(reason) {
+      return reader?.cancel(reason);
+    },
+  });
+}
+
 
 function computeCredits(
   provider: keyof typeof providers,
@@ -537,11 +604,14 @@ async function handleChatCompletion(body: ChatCompletionRequest) {
       }
     }
 
+  // Internal logging uses the plain model name (e.g. "glm-5.3" for "cb/glm-5.3").
+  const logModel = displayModelName(body.model);
+
   const logEntry = {
     accountId: account.id,
     accountEmail: account.email,
     provider,
-    model: body.model,
+    model: logModel,
     promptTokens,
     completionTokens,
     totalTokens,
@@ -551,6 +621,7 @@ async function handleChatCompletion(body: ChatCompletionRequest) {
     durationMs,
     requestBody: prepareLogBody({
       ...body,
+      model: logModel,
       _poolprox: {
         creditSource,
         creditUnit: providers[provider].getProviderCreditUnit(body.model),
@@ -577,7 +648,7 @@ async function handleChatCompletion(body: ChatCompletionRequest) {
       accountId: account.id,
       accountEmail: account.email,
       provider,
-      model: body.model,
+      model: logModel,
       quotaBefore,
       startedAt: Date.now() - durationMs,
       fallbackPromptTokens: promptTokens,
@@ -596,7 +667,7 @@ async function handleChatCompletion(body: ChatCompletionRequest) {
 
   // Upsert to usage_summary + periodic prune
   void upsertUsageSummary({
-    provider, model: body.model, status: "success",
+    provider, model: logModel, status: "success",
     promptTokens, completionTokens, totalTokens, creditsUsed, durationMs,
   });
   if (++requestCounter % 10 === 0) void pruneRequestLogs();
@@ -694,13 +765,16 @@ proxyRouter.post("/v1/chat/completions", async (c) => {
 
   body.model = normalizeModelId(body.model);
   const isStream = body.stream === true;
+  // Display name for the client (e.g. "glm-5.3" for "cb/glm-5.3"); internal
+  // logging keeps the fully-qualified id.
+  const displayModel = displayModelName(body.model);
 
   try {
     const { result } = await handleChatCompletion(body);
 
     if (isStream && result.stream) {
-      // Return SSE stream
-      return new Response(result.stream, {
+      // Return SSE stream with the model field rewritten to the bare name
+      return new Response(rewriteStreamModel(result.stream, displayModel), {
         headers: {
           "Content-Type": "text/event-stream",
           "Cache-Control": "no-cache",
@@ -710,8 +784,12 @@ proxyRouter.post("/v1/chat/completions", async (c) => {
       });
     }
 
-    // Return JSON response
-    return c.json(result.response);
+    // Return JSON response with the model field rewritten to the bare name
+    const response = result.response as Record<string, unknown> | undefined;
+    if (response && typeof response.model === "string") {
+      response.model = displayModel;
+    }
+    return c.json(response);
   } catch (error) {
     const errorMessage =
       error instanceof Error ? error.message : String(error);
@@ -773,13 +851,18 @@ proxyRouter.post("/v1/messages", async (c) => {
   }
 
   body.model = normalizeModelId(body.model);
+  // Display name for the client (e.g. "glm-5.3" for "cb/glm-5.3"); internal
+  // logging keeps the fully-qualified id.
+  const displayModel = displayModelName(body.model);
   const openAIRequest = anthropicToOpenAI(body);
 
   try {
     const { result } = await handleChatCompletion(openAIRequest);
 
     if (body.stream === true && result.stream) {
-      return new Response(openAIStreamToAnthropic(result.stream, body), {
+      // Anthropic SSE events carry `model` from the request — pass the display
+      // name so clients see the bare model id.
+      return new Response(openAIStreamToAnthropic(result.stream, { ...body, model: displayModel }), {
         headers: {
           "Content-Type": "text/event-stream",
           "Cache-Control": "no-cache",
@@ -789,7 +872,13 @@ proxyRouter.post("/v1/messages", async (c) => {
       });
     }
 
-    return c.json(openAIToAnthropic(result.response, body));
+    // JSON response: rewrite the model field to the bare name (the Anthropic
+    // transform prefers response.model over request.model).
+    const response = result.response as Record<string, unknown> | undefined;
+    if (response && typeof response.model === "string") {
+      response.model = displayModel;
+    }
+    return c.json(openAIToAnthropic(response, { ...body, model: displayModel }));
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     const mappedModel = resolveModelAlias(normalizeModelId(body.model));

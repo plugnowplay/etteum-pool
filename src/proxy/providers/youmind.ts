@@ -62,7 +62,7 @@ interface YouMindModelDef {
 const YM_MODELS: YouMindModelDef[] = [
   // Anthropic relay — Claude family
   {
-    id: "ym-claude-opus-4.6",
+    id: "claude-opus-4.6",
     upstream: "claude-opus-4-6",
     route: "anthropic",
     context_window: 200000,
@@ -73,7 +73,7 @@ const YM_MODELS: YouMindModelDef[] = [
     creditRate: 0.045 / 1000,
   },
   {
-    id: "ym-claude-opus-4.7",
+    id: "claude-opus-4.7",
     upstream: "claude-opus-4-7",
     route: "anthropic",
     context_window: 200000,
@@ -83,7 +83,7 @@ const YM_MODELS: YouMindModelDef[] = [
     creditRate: 0.045 / 1000,
   },
   {
-    id: "ym-claude-opus-4.8",
+    id: "claude-opus-4.8",
     upstream: "claude-opus-4-8",
     route: "anthropic",
     context_window: 200000,
@@ -93,7 +93,7 @@ const YM_MODELS: YouMindModelDef[] = [
     creditRate: 0.045 / 1000,
   },
   {
-    id: "ym-claude-sonnet-4.6",
+    id: "claude-sonnet-4.6",
     upstream: "claude-sonnet-4-6",
     route: "anthropic",
     context_window: 200000,
@@ -105,7 +105,7 @@ const YM_MODELS: YouMindModelDef[] = [
   },
   // OpenAI relay — GPT family
   {
-    id: "ym-gpt-5.5",
+    id: "gpt-5.5",
     upstream: "gpt-5.5",
     route: "openai",
     context_window: 272000,
@@ -116,7 +116,7 @@ const YM_MODELS: YouMindModelDef[] = [
     creditRate: 0.0175 / 1000,
   },
   {
-    id: "ym-gpt-4o",
+    id: "gpt-4o",
     upstream: "gpt-4o",
     route: "openai",
     context_window: 128000,
@@ -164,7 +164,10 @@ export class YouMindProvider extends BaseProvider {
   override nativeFormat: "openai" | "anthropic" = "openai";
 
   override ownsModel(model: string): boolean {
-    return model.toLowerCase().startsWith("ym-");
+    const m = model.toLowerCase();
+    // Legacy ym- prefixed ids always pass
+    if (m.startsWith("ym-")) return true;
+    return MODEL_BY_ID[m] !== undefined;
   }
 
   supportedModels: ModelInfo[] = YM_MODELS.map((m) => ({
@@ -184,7 +187,10 @@ export class YouMindProvider extends BaseProvider {
   // ── Helpers ────────────────────────────────────────────────────────
 
   private resolveModel(model: string): YouMindModelDef | null {
-    return MODEL_BY_ID[model.toLowerCase()] ?? null;
+    const m = model.toLowerCase();
+    // Legacy ym- prefixed id → strip and re-lookup
+    const bare = m.startsWith("ym-") ? m.slice(3) : m;
+    return MODEL_BY_ID[m] ?? MODEL_BY_ID[bare] ?? null;
   }
 
   /**

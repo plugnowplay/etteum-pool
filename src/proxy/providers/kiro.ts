@@ -56,34 +56,34 @@ interface KiroTokens {
  * shows. So it is a *variant* of this one provider class, not a subclass.
  */
 const KIRO_PRO_MODELS: ModelInfo[] = [
-  { id: "kp-auto", object: "model", created: Date.now(), owned_by: "kiro-pro", context_window: 1000000, max_output: 64000, thinking: true, vision: true, creditUnit: "credit", creditRate: 0.018 / 1000, creditSource: "estimated" },
-  { id: "kp-opus-4.8", object: "model", created: Date.now(), owned_by: "kiro-pro", context_window: 1000000, max_output: 64000, thinking: true, vision: true, creditUnit: "credit", creditRate: 0.022 / 1000, creditSource: "estimated" },
-  { id: "kp-opus-4.8-thinking", object: "model", created: Date.now(), owned_by: "kiro-pro", context_window: 1000000, max_output: 64000, thinking: true, vision: true, creditUnit: "credit", creditRate: 0.022 / 1000, creditSource: "estimated" },
-  { id: "kp-opus-4.7", object: "model", created: Date.now(), owned_by: "kiro-pro", context_window: 1000000, max_output: 64000, thinking: true, vision: true, creditUnit: "credit", creditRate: 0.022 / 1000, creditSource: "estimated" },
-  { id: "kp-opus-4.7-thinking", object: "model", created: Date.now(), owned_by: "kiro-pro", context_window: 1000000, max_output: 64000, thinking: true, vision: true, creditUnit: "credit", creditRate: 0.022 / 1000, creditSource: "estimated" },
-  { id: "kp-opus-4.6", object: "model", created: Date.now(), owned_by: "kiro-pro", context_window: 1000000, max_output: 64000, thinking: true, vision: true, creditUnit: "credit", creditRate: 0.022 / 1000, creditSource: "estimated" },
-  { id: "kp-opus-4.6-thinking", object: "model", created: Date.now(), owned_by: "kiro-pro", context_window: 1000000, max_output: 64000, thinking: true, vision: true, creditUnit: "credit", creditRate: 0.022 / 1000, creditSource: "estimated" },
-  { id: "kp-opus-4.5", object: "model", created: Date.now(), owned_by: "kiro-pro", context_window: 200000, max_output: 64000, thinking: true, vision: true, creditUnit: "credit", creditRate: 0.018 / 1000, creditSource: "estimated" },
-  { id: "kp-sonnet-4.6", object: "model", created: Date.now(), owned_by: "kiro-pro", context_window: 1000000, max_output: 64000, thinking: true, vision: true, creditUnit: "credit", creditRate: 0.012 / 1000, creditSource: "estimated" },
-  { id: "kp-sonnet-4.6-thinking", object: "model", created: Date.now(), owned_by: "kiro-pro", context_window: 1000000, max_output: 64000, thinking: true, vision: true, creditUnit: "credit", creditRate: 0.015 / 1000, creditSource: "estimated" },
-  { id: "kp-haiku-4.5", object: "model", created: Date.now(), owned_by: "kiro-pro", context_window: 200000, max_output: 64000, thinking: true, vision: true, creditUnit: "credit", creditRate: 0.003 / 1000, creditSource: "estimated" },
-  { id: "kp-haiku-4.5-thinking", object: "model", created: Date.now(), owned_by: "kiro-pro", context_window: 200000, max_output: 64000, thinking: true, vision: true, creditUnit: "credit", creditRate: 0.004 / 1000, creditSource: "estimated" },
+  { id: "auto", object: "model", created: Date.now(), owned_by: "kiro-pro", context_window: 1000000, max_output: 64000, thinking: true, vision: true, creditUnit: "credit", creditRate: 0.018 / 1000, creditSource: "estimated" },
+  { id: "opus-4.8", object: "model", created: Date.now(), owned_by: "kiro-pro", context_window: 1000000, max_output: 64000, thinking: true, vision: true, creditUnit: "credit", creditRate: 0.022 / 1000, creditSource: "estimated" },
+  { id: "opus-4.8-thinking", object: "model", created: Date.now(), owned_by: "kiro-pro", context_window: 1000000, max_output: 64000, thinking: true, vision: true, creditUnit: "credit", creditRate: 0.022 / 1000, creditSource: "estimated" },
+  { id: "opus-4.7", object: "model", created: Date.now(), owned_by: "kiro-pro", context_window: 1000000, max_output: 64000, thinking: true, vision: true, creditUnit: "credit", creditRate: 0.022 / 1000, creditSource: "estimated" },
+  { id: "opus-4.7-thinking", object: "model", created: Date.now(), owned_by: "kiro-pro", context_window: 1000000, max_output: 64000, thinking: true, vision: true, creditUnit: "credit", creditRate: 0.022 / 1000, creditSource: "estimated" },
+  { id: "opus-4.6", object: "model", created: Date.now(), owned_by: "kiro-pro", context_window: 1000000, max_output: 64000, thinking: true, vision: true, creditUnit: "credit", creditRate: 0.022 / 1000, creditSource: "estimated" },
+  { id: "opus-4.6-thinking", object: "model", created: Date.now(), owned_by: "kiro-pro", context_window: 1000000, max_output: 64000, thinking: true, vision: true, creditUnit: "credit", creditRate: 0.022 / 1000, creditSource: "estimated" },
+  { id: "opus-4.5", object: "model", created: Date.now(), owned_by: "kiro-pro", context_window: 200000, max_output: 64000, thinking: true, vision: true, creditUnit: "credit", creditRate: 0.018 / 1000, creditSource: "estimated" },
+  { id: "sonnet-4.6", object: "model", created: Date.now(), owned_by: "kiro-pro", context_window: 1000000, max_output: 64000, thinking: true, vision: true, creditUnit: "credit", creditRate: 0.012 / 1000, creditSource: "estimated" },
+  { id: "sonnet-4.6-thinking", object: "model", created: Date.now(), owned_by: "kiro-pro", context_window: 1000000, max_output: 64000, thinking: true, vision: true, creditUnit: "credit", creditRate: 0.015 / 1000, creditSource: "estimated" },
+  { id: "haiku-4.5", object: "model", created: Date.now(), owned_by: "kiro-pro", context_window: 200000, max_output: 64000, thinking: true, vision: true, creditUnit: "credit", creditRate: 0.003 / 1000, creditSource: "estimated" },
+  { id: "haiku-4.5-thinking", object: "model", created: Date.now(), owned_by: "kiro-pro", context_window: 200000, max_output: 64000, thinking: true, vision: true, creditUnit: "credit", creditRate: 0.004 / 1000, creditSource: "estimated" },
 ];
 
-/** Map kp- prefixed model IDs to the actual Kiro API model names. */
+/** Map plain model IDs to the actual Kiro API model names (legacy kp- ids also accepted). */
 const KIRO_PRO_MODEL_MAP: Record<string, string> = {
-  "kp-auto": "auto",
-  "kp-opus-4.8": "claude-opus-4.8",
-  "kp-opus-4.8-thinking": "claude-opus-4.8-thinking",
-  "kp-opus-4.7": "claude-opus-4.7",
-  "kp-opus-4.7-thinking": "claude-opus-4.7-thinking",
-  "kp-opus-4.6": "claude-opus-4.6",
-  "kp-opus-4.6-thinking": "claude-opus-4.6-thinking",
-  "kp-opus-4.5": "claude-opus-4.5",
-  "kp-sonnet-4.6": "claude-sonnet-4.6",
-  "kp-sonnet-4.6-thinking": "claude-sonnet-4.6-thinking",
-  "kp-haiku-4.5": "claude-haiku-4.5",
-  "kp-haiku-4.5-thinking": "claude-haiku-4.5-thinking",
+  "auto": "auto",
+  "opus-4.8": "claude-opus-4.8",
+  "opus-4.8-thinking": "claude-opus-4.8-thinking",
+  "opus-4.7": "claude-opus-4.7",
+  "opus-4.7-thinking": "claude-opus-4.7-thinking",
+  "opus-4.6": "claude-opus-4.6",
+  "opus-4.6-thinking": "claude-opus-4.6-thinking",
+  "opus-4.5": "claude-opus-4.5",
+  "sonnet-4.6": "claude-sonnet-4.6",
+  "sonnet-4.6-thinking": "claude-sonnet-4.6-thinking",
+  "haiku-4.5": "claude-haiku-4.5",
+  "haiku-4.5-thinking": "claude-haiku-4.5-thinking",
 };
 
 export type KiroVariant = "standard" | "pro";
@@ -112,19 +112,34 @@ export class KiroProvider extends BaseProvider {
   }
 
   override ownsModel(model: string): boolean {
-    if (this.variant === "pro") return model.toLowerCase().startsWith("kp-");
-    const m = model.toLowerCase().replace("-thinking", "");
+    const m = model.toLowerCase();
+    if (this.variant === "pro") {
+      // Legacy kp- prefixed ids + plain ids from the pro catalog
+      if (m.startsWith("kp-")) return true;
+      const bare = m.replace(/-thinking$/, "");
+      return this.getModelInfo(bare) !== undefined;
+    }
+    const m2 = model.toLowerCase().replace("-thinking", "");
     if (this.getModelInfo(model)) return true;
-    if (m === "auto") return true;
-    if (m === "deepseek-3.2" || m === "glm-5") return true;
-    if (m.startsWith("minimax-") || m.startsWith("qwen")) return true;
+    if (m2 === "auto") return true;
+    if (m2 === "deepseek-3.2" || m2 === "glm-5") return true;
+    if (m2.startsWith("minimax-") || m2.startsWith("qwen")) return true;
     // bare claude family (no provider prefix) belongs to kiro standard tier
-    return m.includes("claude") || m.includes("sonnet") || m.includes("haiku");
+    return m2.includes("claude") || m2.includes("sonnet") || m2.includes("haiku");
   }
 
-  /** For the pro variant, resolve kp- ids to the real Kiro API model names. */
+  /** For the pro variant, resolve plain ids (or legacy kp-*) to the real Kiro API model names. */
   private resolveModel(model: string): string {
-    return this.variant === "pro" ? (KIRO_PRO_MODEL_MAP[model] || model) : model;
+    if (this.variant !== "pro") return model;
+    const m = model.toLowerCase();
+    if (KIRO_PRO_MODEL_MAP[m]) return KIRO_PRO_MODEL_MAP[m]!;
+    // Legacy kp- id → strip prefix and re-lookup
+    if (m.startsWith("kp-")) {
+      const bare = m.slice(3);
+      if (KIRO_PRO_MODEL_MAP[bare]) return KIRO_PRO_MODEL_MAP[bare]!;
+      return `claude-${bare}`;
+    }
+    return model;
   }
 
   private baseUrl = "https://q.us-east-1.amazonaws.com";

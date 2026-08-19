@@ -55,48 +55,28 @@ interface CodeBuddyTokens {
   web_cookie?: string;
 }
 
-/** Map cb- prefixed model IDs to the actual CodeBuddy API model names. */
+/** Map plain model IDs to the actual CodeBuddy API model names. */
 const CB_MODEL_MAP: Record<string, string> = {
   // Claude
-  "cb-opus-4.6": "claude-opus-4.6",
-  "cb-opus-4.7": "claude-opus-4.7",
-  "cb-opus-4.7-1m": "claude-opus-4.7-1m",
-  "cb-opus-4.8": "claude-opus-4.8",
-  "cb-opus-4.8-1m": "claude-opus-4.8-1m",
-  "cb-opus-5": "claude-opus-5",
-  "cb-sonnet-4.6": "claude-sonnet-4.6",
-  "cb-haiku-4.5": "claude-haiku-4.5",
+  "opus-4.6": "claude-opus-4.6",
+  "opus-4.7-1m": "claude-opus-4.7-1m",
+  "opus-5": "claude-opus-5",
   // GPT
-  "cb-gpt-5.1": "gpt-5.1",
-  "cb-gpt-5.1-codex": "gpt-5.1-codex",
-  "cb-gpt-5.1-codex-max": "gpt-5.1-codex-max",
-  "cb-gpt-5.1-codex-mini": "gpt-5.1-codex-mini",
-  "cb-gpt-5.2": "gpt-5.2",
-  "cb-gpt-5.2-codex": "gpt-5.2-codex",
-  "cb-gpt-5.3-codex": "gpt-5.3-codex",
-  "cb-gpt-5.4": "gpt-5.4",
-  "cb-gpt-5.5": "gpt-5.5",
-  "cb-gpt-5.5-xhigh": "gpt-5.5-xhigh",
+  "gpt-5.3-codex": "gpt-5.3-codex",
+  "gpt-5.4": "gpt-5.4",
+  "gpt-5.5": "gpt-5.5",
+  "gpt-5.6-luna": "gpt-5.6-luna",
+  "gpt-5.6-sol": "gpt-5.6-sol",
+  "gpt-5.6-terra": "gpt-5.6-terra",
   // Gemini
-  "cb-gemini-2.5-flash": "gemini-2.5-flash",
-  "cb-gemini-2.5-pro": "gemini-2.5-pro",
-  "cb-gemini-3.0-flash": "gemini-3.0-flash",
-  "cb-gemini-3.1-flash-lite": "gemini-3.1-flash-lite",
-  "cb-gemini-3.1-pro": "gemini-3.1-pro",
-  "cb-gemini-3.5-flash": "gemini-3.5-flash",
-  // DeepSeek
-  "cb-deepseek-v3-2": "deepseek-v3-2-volc",
+  "gemini-3.1-pro": "gemini-3.1-pro",
   // Kimi
-  "cb-kimi-k2.5": "kimi-k2.5",
-  "cb-kimi-k3": "kimi-k3",
+  "kimi-k3": "kimi-k3",
   // GLM (Zhipu)
-  "cb-glm-4.7": "glm-4.7",
-  "cb-glm-5.1": "glm-5.1",
-  "cb-glm-5.2": "glm-5.2",
-  "cb-glm-5.3": "glm-5.3",
-  "cb-glm-5v-turbo": "glm-5v-turbo",
-  // Other
-  "cb-enowx": "enowx-default",
+  "glm-5.2": "glm-5.2",
+  "glm-5.3": "glm-5.3",
+  // MiniMax
+  "minimax-m3": "minimax-m3",
 };
 
 /**
@@ -112,20 +92,22 @@ export class CodeBuddyProvider extends BaseProvider {
   private static readonly SCHEMA_CACHE_MAX = 200;
 
   override ownsModel(model: string): boolean {
-    return model.toLowerCase().startsWith("cb-");
+    const m = model.toLowerCase().replace(/-thinking$/, "");
+    // Legacy internal ids carried a cb- prefix — always ours (passthrough).
+    if (m.startsWith("cb-")) return true;
+    return CB_MODEL_MAP[m] !== undefined;
   }
 
-  /** Resolve cb- prefixed model IDs to actual CodeBuddy API model names. */
+  /** Resolve plain model IDs to actual CodeBuddy API model names. */
   private resolveModel(model: string): string {
     // Strip -thinking suffix first for lookup, re-apply after
     const isThinking = model.endsWith("-thinking");
-    const base = isThinking ? model.replace(/-thinking$/, "") : model;
-    const resolved = CB_MODEL_MAP[base.toLowerCase()] || base;
-    // Fallback: strip cb- prefix so unknown cb-* models pass through as bare names
-    const finalResolved = resolved.startsWith("cb-")
-      ? resolved.replace(/^cb-/, "")
-      : resolved;
-    return isThinking ? `${finalResolved}-thinking` : finalResolved;
+    let base = isThinking ? model.replace(/-thinking$/, "") : model;
+    base = base.toLowerCase();
+    // Legacy cb- prefixed ids pass through as bare names
+    if (base.startsWith("cb-")) base = base.replace(/^cb-/, "");
+    const resolved = CB_MODEL_MAP[base] || base;
+    return isThinking ? `${resolved}-thinking` : resolved;
   }
 
   private baseUrl = "https://www.codebuddy.ai";
@@ -138,39 +120,22 @@ export class CodeBuddyProvider extends BaseProvider {
     //   gemini-2.5-pro=$1.25/$10, gemini-flash=$0.30/$2.50, deepseek=$0.14/$0.28
     // 1 CodeBuddy credit ≈ $0.01 passthrough.
 
-    // All models exposed with cb- prefix only
-    { id: "cb-opus-4.8", object: "model", created: Date.now(), owned_by: "codebuddy", context_window: 1000000, max_output: 64000, thinking: true, vision: true, creditUnit: "token", creditRate: 0.027 / 1000, creditSource: "estimated" },
-    { id: "cb-opus-4.8-1m", object: "model", created: Date.now(), owned_by: "codebuddy", context_window: 1000000, max_output: 64000, thinking: true, vision: true, creditUnit: "token", creditRate: 0.030 / 1000, creditSource: "estimated" },
-    { id: "cb-opus-5", object: "model", created: Date.now(), owned_by: "codebuddy", context_window: 1000000, max_output: 64000, thinking: true, vision: true, creditUnit: "token", creditRate: 0.030 / 1000, creditSource: "estimated" },
-    { id: "cb-opus-4.7", object: "model", created: Date.now(), owned_by: "codebuddy", context_window: 1000000, max_output: 64000, thinking: true, vision: true, creditUnit: "token", creditRate: 0.027 / 1000, creditSource: "estimated" },
-    { id: "cb-opus-4.7-1m", object: "model", created: Date.now(), owned_by: "codebuddy", context_window: 1000000, max_output: 64000, thinking: true, vision: true, creditUnit: "token", creditRate: 0.030 / 1000, creditSource: "estimated" },
-    { id: "cb-opus-4.6", object: "model", created: Date.now(), owned_by: "codebuddy", context_window: 1000000, max_output: 64000, thinking: true, vision: true, creditUnit: "token", creditRate: 0.027 / 1000, creditSource: "estimated" },
-    { id: "cb-sonnet-4.6", object: "model", created: Date.now(), owned_by: "codebuddy", context_window: 200000, max_output: 64000, thinking: true, vision: true, creditUnit: "token", creditRate: 0.015 / 1000, creditSource: "estimated" },
-    { id: "cb-haiku-4.5", object: "model", created: Date.now(), owned_by: "codebuddy", context_window: 200000, max_output: 8192, thinking: true, vision: true, creditUnit: "token", creditRate: 0.005 / 1000, creditSource: "estimated" },
-    { id: "cb-gpt-5.1", object: "model", created: Date.now(), owned_by: "codebuddy", thinking: true, vision: true, creditUnit: "token", creditRate: 0.012 / 1000, creditSource: "estimated" },
-    { id: "cb-gpt-5.1-codex", object: "model", created: Date.now(), owned_by: "codebuddy", thinking: true, vision: true, creditUnit: "token", creditRate: 0.012 / 1000, creditSource: "estimated" },
-    { id: "cb-gpt-5.1-codex-max", object: "model", created: Date.now(), owned_by: "codebuddy", thinking: true, vision: true, creditUnit: "token", creditRate: 0.025 / 1000, creditSource: "estimated" },
-    { id: "cb-gpt-5.1-codex-mini", object: "model", created: Date.now(), owned_by: "codebuddy", thinking: true, vision: true, creditUnit: "token", creditRate: 0.003 / 1000, creditSource: "estimated" },
-    { id: "cb-gpt-5.2", object: "model", created: Date.now(), owned_by: "codebuddy", thinking: true, vision: true, creditUnit: "token", creditRate: 0.016 / 1000, creditSource: "estimated" },
-    { id: "cb-gpt-5.2-codex", object: "model", created: Date.now(), owned_by: "codebuddy", thinking: true, vision: true, creditUnit: "token", creditRate: 0.016 / 1000, creditSource: "estimated" },
-    { id: "cb-gpt-5.3-codex", object: "model", created: Date.now(), owned_by: "codebuddy", thinking: true, vision: true, creditUnit: "token", creditRate: 0.013 / 1000, creditSource: "estimated" },
-    { id: "cb-gpt-5.4", object: "model", created: Date.now(), owned_by: "codebuddy", thinking: true, vision: true, creditUnit: "token", creditRate: 0.018 / 1000, creditSource: "estimated" },
-    { id: "cb-gpt-5.5", object: "model", created: Date.now(), owned_by: "codebuddy", thinking: true, vision: true, creditUnit: "token", creditRate: 0.035 / 1000, creditSource: "estimated" },
-    { id: "cb-gpt-5.5-xhigh", object: "model", created: Date.now(), owned_by: "codebuddy", thinking: true, vision: true, creditUnit: "token", creditRate: 0.045 / 1000, creditSource: "estimated" },
-    { id: "cb-gemini-2.5-flash", object: "model", created: Date.now(), owned_by: "codebuddy", thinking: true, vision: true, creditUnit: "token", creditRate: 0.003 / 1000, creditSource: "estimated" },
-    { id: "cb-gemini-2.5-pro", object: "model", created: Date.now(), owned_by: "codebuddy", thinking: true, vision: true, creditUnit: "token", creditRate: 0.012 / 1000, creditSource: "estimated" },
-    { id: "cb-gemini-3.0-flash", object: "model", created: Date.now(), owned_by: "codebuddy", thinking: false, vision: true, creditUnit: "token", creditRate: 0.004 / 1000, creditSource: "estimated" },
-    { id: "cb-gemini-3.1-flash-lite", object: "model", created: Date.now(), owned_by: "codebuddy", thinking: false, vision: true, creditUnit: "token", creditRate: 0.002 / 1000, creditSource: "estimated" },
-    { id: "cb-gemini-3.1-pro", object: "model", created: Date.now(), owned_by: "codebuddy", thinking: false, vision: true, creditUnit: "token", creditRate: 0.015 / 1000, creditSource: "estimated" },
-    { id: "cb-gemini-3.5-flash", object: "model", created: Date.now(), owned_by: "codebuddy", thinking: true, vision: true, creditUnit: "token", creditRate: 0.004 / 1000, creditSource: "estimated" },
-    { id: "cb-deepseek-v3-2", object: "model", created: Date.now(), owned_by: "codebuddy", thinking: false, vision: false, creditUnit: "token", creditRate: 0.002 / 1000, creditSource: "estimated" },
-    { id: "cb-kimi-k2.5", object: "model", created: Date.now(), owned_by: "codebuddy", thinking: false, vision: false, creditUnit: "token", creditRate: 0.005 / 1000, creditSource: "estimated" },
-    { id: "cb-kimi-k3", object: "model", created: Date.now(), owned_by: "codebuddy", thinking: false, vision: false, creditUnit: "token", creditRate: 0.005 / 1000, creditSource: "estimated" },
-    // GLM (Zhipu) — verified on upstream: glm-5.1, glm-5.2, glm-5v-turbo valid (glm-5.3/glm-4.7 not found)
-    { id: "cb-glm-5.1", object: "model", created: Date.now(), owned_by: "codebuddy", thinking: true, vision: false, creditUnit: "token", creditRate: 0.005 / 1000, creditSource: "estimated" },
-    { id: "cb-glm-5.2", object: "model", created: Date.now(), owned_by: "codebuddy", thinking: true, vision: false, creditUnit: "token", creditRate: 0.005 / 1000, creditSource: "estimated" },
-    { id: "cb-glm-5v-turbo", object: "model", created: Date.now(), owned_by: "codebuddy", thinking: false, vision: true, creditUnit: "token", creditRate: 0.005 / 1000, creditSource: "estimated" },
-    { id: "cb-enowx", object: "model", created: Date.now(), owned_by: "codebuddy", thinking: false, vision: true, creditUnit: "token", creditRate: 0.01 / 1000, creditSource: "estimated" },
+    // Internal ids are plain (no cb- prefix) — the registry exposes them as
+    // cb/<model> and parseModelId() round-trips back to the bare name.
+    { id: "opus-4.6", object: "model", created: Date.now(), owned_by: "codebuddy", context_window: 1000000, max_output: 64000, thinking: true, vision: true, creditUnit: "token", creditRate: 0.027 / 1000, creditSource: "estimated" },
+    { id: "opus-4.7-1m", object: "model", created: Date.now(), owned_by: "codebuddy", context_window: 1000000, max_output: 64000, thinking: true, vision: true, creditUnit: "token", creditRate: 0.030 / 1000, creditSource: "estimated" },
+    { id: "opus-5", object: "model", created: Date.now(), owned_by: "codebuddy", context_window: 1000000, max_output: 64000, thinking: true, vision: true, creditUnit: "token", creditRate: 0.030 / 1000, creditSource: "estimated" },
+    { id: "gemini-3.1-pro", object: "model", created: Date.now(), owned_by: "codebuddy", thinking: false, vision: true, creditUnit: "token", creditRate: 0.015 / 1000, creditSource: "estimated" },
+    { id: "glm-5.2", object: "model", created: Date.now(), owned_by: "codebuddy", context_window: 1000000, max_output: 64000, thinking: true, vision: false, creditUnit: "token", creditRate: 0.005 / 1000, creditSource: "estimated" },
+    { id: "glm-5.3", object: "model", created: Date.now(), owned_by: "codebuddy", context_window: 1000000, max_output: 64000, thinking: true, vision: false, creditUnit: "token", creditRate: 0.005 / 1000, creditSource: "estimated" },
+    { id: "gpt-5.3-codex", object: "model", created: Date.now(), owned_by: "codebuddy", thinking: true, vision: true, creditUnit: "token", creditRate: 0.013 / 1000, creditSource: "estimated" },
+    { id: "gpt-5.4", object: "model", created: Date.now(), owned_by: "codebuddy", thinking: true, vision: true, creditUnit: "token", creditRate: 0.018 / 1000, creditSource: "estimated" },
+    { id: "gpt-5.5", object: "model", created: Date.now(), owned_by: "codebuddy", thinking: true, vision: true, creditUnit: "token", creditRate: 0.035 / 1000, creditSource: "estimated" },
+    { id: "gpt-5.6-luna", object: "model", created: Date.now(), owned_by: "codebuddy", thinking: true, vision: true, creditUnit: "token", creditRate: 0.035 / 1000, creditSource: "estimated" },
+    { id: "gpt-5.6-sol", object: "model", created: Date.now(), owned_by: "codebuddy", thinking: true, vision: true, creditUnit: "token", creditRate: 0.035 / 1000, creditSource: "estimated" },
+    { id: "gpt-5.6-terra", object: "model", created: Date.now(), owned_by: "codebuddy", thinking: true, vision: true, creditUnit: "token", creditRate: 0.035 / 1000, creditSource: "estimated" },
+    { id: "kimi-k3", object: "model", created: Date.now(), owned_by: "codebuddy", thinking: false, vision: false, creditUnit: "token", creditRate: 0.005 / 1000, creditSource: "estimated" },
+    { id: "minimax-m3", object: "model", created: Date.now(), owned_by: "codebuddy", thinking: false, vision: false, creditUnit: "token", creditRate: 0.005 / 1000, creditSource: "estimated" },
   ];
 
   private getTokens(account: Account): CodeBuddyTokens | null {
@@ -1077,6 +1042,7 @@ export class CodeBuddyProvider extends BaseProvider {
 
         const decoder = new TextDecoder();
         let buffer = "";
+        let reasoningBuffer = "";
         let contentModerationDetected = false;
         let hasToolCalls = false;
 
@@ -1109,6 +1075,52 @@ export class CodeBuddyProvider extends BaseProvider {
                 const choice = parsed.choices?.[0];
                 const delta = choice?.delta || parsed.delta || {};
                 const deltaContent = delta.content || "";
+
+                // Coalesce reasoning deltas: upstream streams reasoning_content
+                // token-by-token; forwarding each one makes clients (opencode)
+                // render hundreds of tiny "Thought: 1ms" blocks. Buffer and
+                // flush as a few large blocks instead — content deltas pass
+                // through untouched.
+                if (typeof delta.reasoning_content === "string" && delta.reasoning_content && !delta.content) {
+                  reasoningBuffer += delta.reasoning_content;
+                  // Flush at >=512 chars or when the stream is finishing
+                  if (reasoningBuffer.length >= 512 || choice?.finish_reason) {
+                    const flushed = reasoningBuffer;
+                    reasoningBuffer = "";
+                    const chunk: StreamChunk = {
+                      id: parsed.id || id,
+                      object: "chat.completion.chunk",
+                      created: Math.floor(Date.now() / 1000),
+                      model,
+                      choices: [{
+                        index: choice?.index ?? 0,
+                        delta: { reasoning_content: flushed },
+                        finish_reason: null,
+                      }],
+                    };
+                    controller.enqueue(encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`));
+                  }
+                  continue;
+                }
+
+                // Non-reasoning delta: flush any pending reasoning first so
+                // ordering is preserved.
+                if (reasoningBuffer) {
+                  const flushed = reasoningBuffer;
+                  reasoningBuffer = "";
+                  const flushChunk: StreamChunk = {
+                    id: parsed.id || id,
+                    object: "chat.completion.chunk",
+                    created: Math.floor(Date.now() / 1000),
+                    model,
+                    choices: [{
+                      index: choice?.index ?? 0,
+                      delta: { reasoning_content: flushed },
+                      finish_reason: null,
+                    }],
+                  };
+                  controller.enqueue(encoder.encode(`data: ${JSON.stringify(flushChunk)}\n\n`));
+                }
 
                 // Detect content moderation error in Chinese
                 if (deltaContent.includes("敏感内容") || deltaContent.includes("系统检测到")) {

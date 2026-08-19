@@ -368,11 +368,11 @@ interface QoderModelDef {
 }
 
 const QODER_MODELS: QoderModelDef[] = [
-  { id: "qd-Auto",              upstream: "auto",          display_name: "Auto",              max_input_tokens: 180000, is_vl: true,  is_reasoning: false, price_factor: 1 },
-  { id: "qd-Ultimate",          upstream: "ultimate",      display_name: "Ultimate",          max_input_tokens: 180000, is_vl: true,  is_reasoning: true,  price_factor: 1.6 },
-  { id: "qd-Performance",       upstream: "performance",   display_name: "Performance",       max_input_tokens: 272000, is_vl: true,  is_reasoning: false, price_factor: 1.1 },
-  { id: "qd-Efficient",         upstream: "efficient",     display_name: "Efficient",         max_input_tokens: 180000, is_vl: true,  is_reasoning: false, price_factor: 0.3 },
-  { id: "qd-Lite",              upstream: "lite",          display_name: "Lite",              max_input_tokens: 180000, is_vl: false, is_reasoning: false, price_factor: 0 },
+  { id: "Auto",              upstream: "auto",          display_name: "Auto",              max_input_tokens: 180000, is_vl: true,  is_reasoning: false, price_factor: 1 },
+  { id: "Ultimate",          upstream: "ultimate",      display_name: "Ultimate",          max_input_tokens: 180000, is_vl: true,  is_reasoning: true,  price_factor: 1.6 },
+  { id: "Performance",       upstream: "performance",   display_name: "Performance",       max_input_tokens: 272000, is_vl: true,  is_reasoning: false, price_factor: 1.1 },
+  { id: "Efficient",         upstream: "efficient",     display_name: "Efficient",         max_input_tokens: 180000, is_vl: true,  is_reasoning: false, price_factor: 0.3 },
+  { id: "Lite",              upstream: "lite",          display_name: "Lite",              max_input_tokens: 180000, is_vl: false, is_reasoning: false, price_factor: 0 },
   // Qwen3.7-Max accepts up to 1M-token context windows. Qodercli's default
   // `max_input_tokens: 180000` is just the lowest tier the picker offers —
   // the server itself accepts much larger windows (the CLI lets users opt
@@ -381,16 +381,16 @@ const QODER_MODELS: QoderModelDef[] = [
   // Code) don't trim history before we even reach Qoder. The server will
   // reject requests it actually can't serve, which is the right place to
   // enforce the real ceiling.
-  { id: "qd-Qwen3.7-Max",       upstream: "qmodel_latest", display_name: "Qwen3.7-Max",       max_input_tokens: 1000000, is_vl: true,  is_reasoning: false, price_factor: 0.2 },
+  { id: "Qwen3.7-Max",       upstream: "qmodel_latest", display_name: "Qwen3.7-Max",       max_input_tokens: 1000000, is_vl: true,  is_reasoning: false, price_factor: 0.2 },
   // Qwen3.8-Max — promo bucket qmodel_38max (800 free calls during the
   // activity window, announced via /activity). Same 1M window as 3.7-Max.
-  { id: "qd-Qwen3.8-Max",       upstream: "qmodel_38max",  display_name: "Qwen3.8-Max",       max_input_tokens: 1000000, is_vl: true,  is_reasoning: false, price_factor: 0.2 },
-  { id: "qd-Qwen3.6-Plus",      upstream: "qmodel",        display_name: "Qwen3.6-Plus",      max_input_tokens: 180000, is_vl: true,  is_reasoning: false, price_factor: 0.2 },
-  { id: "qd-DeepSeek-V4-Pro",   upstream: "dmodel",        display_name: "DeepSeek-V4-Pro",   max_input_tokens: 180000, is_vl: true,  is_reasoning: true,  price_factor: 0.5 },
-  { id: "qd-DeepSeek-V4-Flash", upstream: "dfmodel",       display_name: "DeepSeek-V4-Flash", max_input_tokens: 180000, is_vl: true,  is_reasoning: true,  price_factor: 0.1 },
-  { id: "qd-GLM-5.1",           upstream: "gm51model",     display_name: "GLM-5.1",           max_input_tokens: 180000, is_vl: true,  is_reasoning: true,  price_factor: 0.6 },
-  { id: "qd-Kimi-K2.6",         upstream: "kmodel",        display_name: "Kimi-K2.6",         max_input_tokens: 256000, is_vl: true,  is_reasoning: false, price_factor: 0.3 },
-  { id: "qd-MiniMax-M2.7",      upstream: "mmodel",        display_name: "MiniMax-M2.7",      max_input_tokens: 180000, is_vl: true,  is_reasoning: false, price_factor: 0.2 },
+  { id: "Qwen3.8-Max",       upstream: "qmodel_38max",  display_name: "Qwen3.8-Max",       max_input_tokens: 1000000, is_vl: true,  is_reasoning: false, price_factor: 0.2 },
+  { id: "Qwen3.6-Plus",      upstream: "qmodel",        display_name: "Qwen3.6-Plus",      max_input_tokens: 180000, is_vl: true,  is_reasoning: false, price_factor: 0.2 },
+  { id: "DeepSeek-V4-Pro",   upstream: "dmodel",        display_name: "DeepSeek-V4-Pro",   max_input_tokens: 180000, is_vl: true,  is_reasoning: true,  price_factor: 0.5 },
+  { id: "DeepSeek-V4-Flash", upstream: "dfmodel",       display_name: "DeepSeek-V4-Flash", max_input_tokens: 180000, is_vl: true,  is_reasoning: true,  price_factor: 0.1 },
+  { id: "GLM-5.1",           upstream: "gm51model",     display_name: "GLM-5.1",           max_input_tokens: 180000, is_vl: true,  is_reasoning: true,  price_factor: 0.6 },
+  { id: "Kimi-K2.6",         upstream: "kmodel",        display_name: "Kimi-K2.6",         max_input_tokens: 256000, is_vl: true,  is_reasoning: false, price_factor: 0.3 },
+  { id: "MiniMax-M2.7",      upstream: "mmodel",        display_name: "MiniMax-M2.7",      max_input_tokens: 180000, is_vl: true,  is_reasoning: false, price_factor: 0.2 },
 ];
 
 const MODEL_CONFIGS: Record<string, QoderModelDef> = Object.fromEntries(
@@ -695,10 +695,18 @@ function deriveSessionId(messages: ChatCompletionRequest["messages"]): string {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-a${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
 }
 
+/** Resolve a proxy-facing model id (plain, or legacy qd-*) to its def. */
+function qoderModelDef(model: string): QoderModelDef | undefined {
+  const m = model.toLowerCase();
+  const bare = m.startsWith("qd-") ? m.slice(3) : m;
+  return MODEL_CONFIGS[m] ?? MODEL_CONFIGS[bare] ??
+    QODER_MODELS.find((d) => d.id.toLowerCase() === bare);
+}
+
 function buildChatBody(request: ChatCompletionRequest, tokens: QoderTokens): any {
   const prompt = extractLatestUserPrompt(request);
   const images = extractLatestUserImages(request);
-  const cfg = MODEL_CONFIGS[request.model] || QODER_MODELS[0]!;
+  const cfg = qoderModelDef(request.model) || QODER_MODELS[0]!;
   const reqId = crypto.randomUUID();
   const chatRecordId = crypto.randomUUID();
   const sessionId = deriveSessionId(request.messages);
@@ -1055,7 +1063,7 @@ export class QoderProvider extends BaseProvider {
     const body = buildChatBody(request, tokens);
     let resp: Response;
     try {
-      const cfg = MODEL_CONFIGS[request.model] || QODER_MODELS[0]!;
+      const cfg = qoderModelDef(request.model) || QODER_MODELS[0]!;
       const modelSource = body?.model_config?.source || "system";
       resp = await bearerFetch(tokens, {
         url: CHAT_URL,
@@ -1329,7 +1337,7 @@ export class QoderProvider extends BaseProvider {
    * Used by the proxy to route per-request decrement to the correct counter.
    */
   isFreeModel(modelId: string): boolean {
-    const def = MODEL_CONFIGS[modelId];
+    const def = qoderModelDef(modelId);
     return def?.upstream === "qmodel_latest" || def?.upstream === "qmodel_38max";
   }
 

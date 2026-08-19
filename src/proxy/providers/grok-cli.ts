@@ -13,6 +13,7 @@ import { db } from "../../db/index";
 import { accounts } from "../../db/schema";
 import { eq } from "drizzle-orm";
 import { pool } from "../pool";
+import { config } from "../../config";
 
 // Logger dari hono — tersedia di semua service
 import { logger } from "hono/logger";
@@ -45,7 +46,7 @@ const GROK_CLI_MODELS_URL = `${GROK_CLI_BASE}/models`;
 const GROK_CLI_USER_URL = `${GROK_CLI_BASE}/user`;
 const GROK_CLI_BILLING_URL = `${GROK_CLI_BASE}/billing`;
 
-const GROK_CLI_VERSION = "0.2.99";
+const GROK_CLI_VERSION = "1.0.5";
 const GROK_CLI_CLIENT_IDENTIFIER = "grok-shell";
 const GROK_CLI_USER_AGENT = `grok-shell/${GROK_CLI_VERSION} (linux; x86_64)`;
 
@@ -64,15 +65,31 @@ const EFFORT_LEVELS = ["low", "medium", "high", "xhigh"];
 // ── Plenger probe ─────────────────────────────────────────────────────────
 // On-demand account validation probe (adapted from plugnowplay/9router).
 // Before serving a chat request, we send a control prompt asking the model to
-// reply with exactly "407". If it does → account is valid. If it returns
-// anything else → account is flagged (plenger) and disabled for 5 hours.
+// reply with exactly a marker number. If it does → account is valid. If it
+// returns anything else → account is flagged (plenger) and disabled for 5h.
 // Transport/upstream errors never become plenger — only a wrong answer does.
+//
+// 2026-08-19: xAI fingerprinted the old marker ("407") at cli-chat-proxy and
+// rewrites the answer to "202" on EVERY account, so the probe flagged the
+// whole pool. Marker rotated to "909" (verified deterministic upstream:
+// `reply exactly with number : 909` → "909") and the probe now routes via a
+// dedicated rotating mobile proxy instead of the account proxy pool, so probe
+// traffic doesn't share IPs with real account traffic. Rotate the marker again
+// if xAI fingerprints this one.
 
-const PLENGER_PROMPT = "reply exactly with number : 407";
-const PLENGER_EXPECTED = "407";
+const PLENGER_PROMPT = "reply exactly with number : 909";
+const PLENGER_EXPECTED = "909";
 const PLENGER_DISABLE_MS = 5 * 60 * 60 * 1000; // 5 hours
 const PLENGER_PROBE_TIMEOUT_MS = 90_000;
 const PLENGER_PROBE_MODEL = "grok-4.6";
+// Probe traffic is routed via a dedicated rotating mobile proxy (rotate per
+// request) so validation doesn't share an IP with real account traffic and
+// doesn't burn a pool proxy. Kept separate from the account proxy pool.
+// Value comes from config.plengerProxyUrl (env PLENGER_PROXY_URL) so the
+// proxy credentials never land in the public repo.
+function plengerProxyUrl(): string {
+  return config.plengerProxyUrl;
+}
 // A fresh "valid" verdict is trusted for this long — without it every chat
 // request would pay the probe round-trip.
 const PLENGER_VALID_TTL_MS = 10 * 60 * 1000;
@@ -183,7 +200,7 @@ interface GrokCliModelDef {
  */
 const GROK_CLI_MODELS: GrokCliModelDef[] = [
   {
-    id: "gcli-build",
+    id: "grok-build",
     upstream: "grok-build",
     context_window: 500000,
     max_output: 64000,
@@ -192,7 +209,7 @@ const GROK_CLI_MODELS: GrokCliModelDef[] = [
     creditRate: 0,
   },
   {
-    id: "gcli-4.6",
+    id: "grok-4.6",
     upstream: "grok-4.6",
     context_window: 500000,
     max_output: 64000,
@@ -201,7 +218,7 @@ const GROK_CLI_MODELS: GrokCliModelDef[] = [
     creditRate: 0.009 / 1000,
   },
   {
-    id: "gcli-4.6-high",
+    id: "grok-4.6-high",
     upstream: "grok-4.6",
     context_window: 500000,
     max_output: 64000,
@@ -210,7 +227,7 @@ const GROK_CLI_MODELS: GrokCliModelDef[] = [
     creditRate: 0.009 / 1000,
   },
   {
-    id: "gcli-4.6-medium",
+    id: "grok-4.6-xhigh",
     upstream: "grok-4.6",
     context_window: 500000,
     max_output: 64000,
@@ -219,7 +236,7 @@ const GROK_CLI_MODELS: GrokCliModelDef[] = [
     creditRate: 0.009 / 1000,
   },
   {
-    id: "gcli-4.6-low",
+    id: "grok-4.6-medium",
     upstream: "grok-4.6",
     context_window: 500000,
     max_output: 64000,
@@ -228,7 +245,16 @@ const GROK_CLI_MODELS: GrokCliModelDef[] = [
     creditRate: 0.009 / 1000,
   },
   {
-    id: "gcli-4.5",
+    id: "grok-4.6-low",
+    upstream: "grok-4.6",
+    context_window: 500000,
+    max_output: 64000,
+    thinking: true,
+    vision: true,
+    creditRate: 0.009 / 1000,
+  },
+  {
+    id: "grok-4.5",
     upstream: "grok-4.5",
     context_window: 500000,
     max_output: 64000,
@@ -237,7 +263,7 @@ const GROK_CLI_MODELS: GrokCliModelDef[] = [
     creditRate: 0.009 / 1000,
   },
   {
-    id: "gcli-4.5-high",
+    id: "grok-4.5-high",
     upstream: "grok-4.5",
     context_window: 500000,
     max_output: 64000,
@@ -246,7 +272,7 @@ const GROK_CLI_MODELS: GrokCliModelDef[] = [
     creditRate: 0.009 / 1000,
   },
   {
-    id: "gcli-4.5-medium",
+    id: "grok-4.5-medium",
     upstream: "grok-4.5",
     context_window: 500000,
     max_output: 64000,
@@ -255,7 +281,7 @@ const GROK_CLI_MODELS: GrokCliModelDef[] = [
     creditRate: 0.009 / 1000,
   },
   {
-    id: "gcli-4.5-low",
+    id: "grok-4.5-low",
     upstream: "grok-4.5",
     context_window: 500000,
     max_output: 64000,
@@ -264,7 +290,7 @@ const GROK_CLI_MODELS: GrokCliModelDef[] = [
     creditRate: 0.009 / 1000,
   },
   {
-    id: "gcli-4",
+    id: "grok-4",
     upstream: "grok-4",
     context_window: 500000,
     max_output: 64000,
@@ -273,7 +299,7 @@ const GROK_CLI_MODELS: GrokCliModelDef[] = [
     creditRate: 0.009 / 1000,
   },
   {
-    id: "gcli-4-fast",
+    id: "grok-4-fast",
     upstream: "grok-4-fast",
     context_window: 500000,
     max_output: 64000,
@@ -282,7 +308,7 @@ const GROK_CLI_MODELS: GrokCliModelDef[] = [
     creditRate: 0.009 / 1000,
   },
   {
-    id: "gcli-4-fast-reasoning",
+    id: "grok-4-fast-reasoning",
     upstream: "grok-4-fast-reasoning",
     context_window: 500000,
     max_output: 64000,
@@ -291,7 +317,7 @@ const GROK_CLI_MODELS: GrokCliModelDef[] = [
     creditRate: 0.009 / 1000,
   },
   {
-    id: "gcli-3",
+    id: "grok-3",
     upstream: "grok-3",
     context_window: 131072,
     max_output: 32000,
@@ -833,7 +859,26 @@ export class GrokCliProvider extends BaseProvider {
   override nativeFormat: "openai" | "anthropic" = "openai";
 
   override ownsModel(model: string): boolean {
-    return model.toLowerCase().startsWith("gcli-");
+    const m = model.toLowerCase();
+    // Legacy gcli- prefixed ids always pass
+    if (m.startsWith("gcli-")) return true;
+    return MODEL_BY_ID[m] !== undefined;
+  }
+
+  /**
+   * Grok CLI quota is counted in TOKENS, not dollar-credits. xAI free
+   * allowance is 500k tokens/24h (enforced via HTTP 429 "actual/limit").
+   * The base fallback (1/1000) would treat 1 quota unit as 1000 tokens,
+   * so 500k quota = 500M tokens and the dashboard never drains — real
+   * accounts get 429-exhausted long before the counter moves. Return 1
+   * (1 token = 1 unit) so quota_remaining drains in lockstep with the
+   * real token usage. The unlimited model (gcli-build, creditRate 0)
+   * keeps rate 0 so its quota never decrements.
+   */
+  override getProviderCreditRate(model: string): number {
+    const info = this.getModelInfo(model);
+    if (info && info.creditRate <= 0) return 0;
+    return 1;
   }
 
   supportedModels: ModelInfo[] = GROK_CLI_MODELS.map((m) => ({
@@ -853,7 +898,10 @@ export class GrokCliProvider extends BaseProvider {
   // ── Helpers ─────────────────────────────────────────────────────────
 
   private resolveModel(model: string): GrokCliModelDef | null {
-    return MODEL_BY_ID[model.toLowerCase()] ?? null;
+    const m = model.toLowerCase();
+    // Legacy gcli- prefixed id → strip "gcli-" and map number-only ids
+    const bare = m.startsWith("gcli-") ? m.slice(5) : m;
+    return MODEL_BY_ID[m] ?? MODEL_BY_ID[bare] ?? null;
   }
 
   private getAccessToken(account: Account): string {
@@ -1035,10 +1083,15 @@ export class GrokCliProvider extends BaseProvider {
   // ── Plenger probe ──────────────────────────────────────────────────
 
   /**
-   * On-demand plenger probe. Sends a control prompt ("reply exactly with
-   * number : 407") to cli-chat-proxy.grok.com. If the answer is "407" the
+   * On-demand plenger probe. Sends a control prompt asking the model to reply
+   * with exactly "909" to cli-chat-proxy.grok.com. If the answer is "909" the
    * account is valid. Otherwise the account is flagged plenger and disabled
    * for 5 hours. Transport/upstream errors never become plenger.
+   *
+   * Probe routes via config.plengerProxyUrl (rotating mobile proxy) so
+   * validation never leaks the VPS IP or burns an account pool proxy.
+   * Marker was rotated 407 → 909 (2026-08-19): xAI fingerprinted "407" and
+   * answers "202" on every account. Rotate again if 909 gets fingerprinted.
    *
    * Result is cached in account.metadata and persisted to DB.
    * Inflight dedup: concurrent calls for the same account share one probe.
@@ -1083,10 +1136,9 @@ export class GrokCliProvider extends BaseProvider {
     const accessToken = this.getAccessToken(account);
     if (!accessToken) return { success: false, error: "No access token" };
 
-    // Plenger probe DISABLED (2026-08-15): upstream no longer answers "407"
-    // to the control prompt — every account returns "202" now, so the probe
-    // would flag the whole pool as plenger. Re-enable only after re-capturing
-    // a working prompt/expected pair. When re-enabling:
+    // Plenger probe DISABLED for now (user request, 2026-08-19). Marker + proxy
+    // are ready (909 + PLENGER_PROXY_URL) but probe stays off until re-enabled.
+    // To re-enable:
     //   const plengerResult = await this.checkGrokCliPlenger(account);
     //   if (plengerResult.status === "plenger") {
     //     return { success: false, error: `Account disabled by plenger probe (until ${plengerResult.disabledUntil})` };
@@ -1157,15 +1209,24 @@ export class GrokCliProvider extends BaseProvider {
     if (tokens?.user_id) headers["x-userid"] = String(tokens.user_id);
 
     try {
-      const resp = await this.fetchWithTimeout(
-        GROK_CLI_RESPONSES_URL,
-        {
+      const proxyUrl = plengerProxyUrl();
+      if (!proxyUrl) {
+        return { status: "error", error: "No PLENGER_PROXY_URL configured — probe would leak VPS IP, refusing" };
+      }
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), PLENGER_PROBE_TIMEOUT_MS);
+      let resp: Response;
+      try {
+        resp = await fetch(GROK_CLI_RESPONSES_URL, {
           method: "POST",
           headers,
           body: JSON.stringify(body),
-        },
-        PLENGER_PROBE_TIMEOUT_MS,
-      );
+          signal: controller.signal,
+          proxy: proxyUrl, // dedicated rotating mobile proxy
+        } as any);
+      } finally {
+        clearTimeout(timer);
+      }
 
       const raw = await resp.text();
 
@@ -1326,7 +1387,15 @@ export class GrokCliProvider extends BaseProvider {
     const accessToken = this.getAccessToken(account);
     if (!accessToken) return { success: false, error: "No access token" };
 
-    // Plenger probe DISABLED — see note in chatCompletion().
+    // Plenger probe DISABLED for now (user request, 2026-08-19). Same as
+    // chatCompletion() — ready to re-enable, kept off for now.
+    //   const plengerResult = await this.checkGrokCliPlenger(account);
+    //   if (plengerResult.status === "plenger") {
+    //     return { success: false, error: `Account disabled by plenger probe (until ${plengerResult.disabledUntil})` };
+    //   }
+    //   if (plengerResult.status === "error") {
+    //     console.log(`[PLENGER] ${account.email}: probe failed, not disabling: ${plengerResult.error}`);
+    //   }
     const body = this.toResponsesBody(request, def);
     const headers = this.buildHeaders(account, def.upstream);
 

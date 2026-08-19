@@ -25,9 +25,15 @@ const CODEX_USAGE_URL = "https://chatgpt.com/backend-api/wham/usage";
 const CODEX_SCOPE = "openid profile email offline_access";
 
 const codexModelMap: Record<string, string> = {
+  "auto": "gpt-5.3-codex",
+  "gpt-5.5-xhigh": "gpt-5.5-xhigh",
+  "gpt-5.5": "gpt-5.5",
+  "gpt-5.4": "gpt-5.4",
+  "gpt-5.3": "gpt-5.3-codex",
+  "gpt-5.2": "gpt-5.2",
+  // Legacy codex- prefixed ids
   "codex-auto": "gpt-5.3-codex",
   "codex-gpt-5.5-xhigh": "gpt-5.5-xhigh",
-  "gpt-5.5-xhigh": "gpt-5.5-xhigh",
   "codex-gpt-5.5": "gpt-5.5",
   "codex-gpt-5.4": "gpt-5.4",
   "codex-gpt-5.3": "gpt-5.3-codex",
@@ -52,22 +58,24 @@ export class CodexProvider extends BaseProvider {
 
   override ownsModel(model: string): boolean {
     const m = model.toLowerCase();
-    return m.startsWith("codex-") || m === "gpt-5-codex" || m === "gpt-5.5-xhigh";
+    if (m.startsWith("codex-")) return true; // legacy prefix
+    return m === "gpt-5-codex" || codexModelMap[m] !== undefined;
   }
 
   supportedModels: ModelInfo[] = [
-    { id: "codex-auto", object: "model", created: Date.now(), owned_by: "codex", context_window: 200000, max_output: 64000, thinking: true, vision: true, creditUnit: "credit", creditRate: 0.012 / 1000, creditSource: "estimated" },
-    { id: "codex-gpt-5.5-xhigh", object: "model", created: Date.now(), owned_by: "codex", context_window: 200000, max_output: 64000, thinking: true, vision: true, creditUnit: "credit", creditRate: 0.02 / 1000, creditSource: "estimated" },
-    { id: "codex-gpt-5.5", object: "model", created: Date.now(), owned_by: "codex", context_window: 200000, max_output: 64000, thinking: true, vision: true, creditUnit: "credit", creditRate: 0.02 / 1000, creditSource: "estimated" },
-    { id: "codex-gpt-5.4", object: "model", created: Date.now(), owned_by: "codex", context_window: 200000, max_output: 64000, thinking: true, vision: true, creditUnit: "credit", creditRate: 0.015 / 1000, creditSource: "estimated" },
-    { id: "codex-gpt-5.3", object: "model", created: Date.now(), owned_by: "codex", context_window: 200000, max_output: 64000, thinking: true, vision: true, creditUnit: "credit", creditRate: 0.012 / 1000, creditSource: "estimated" },
-    { id: "codex-gpt-5.2", object: "model", created: Date.now(), owned_by: "codex", context_window: 200000, max_output: 64000, thinking: true, vision: true, creditUnit: "credit", creditRate: 0.01 / 1000, creditSource: "estimated" },
+    { id: "auto", object: "model", created: Date.now(), owned_by: "codex", context_window: 200000, max_output: 64000, thinking: true, vision: true, creditUnit: "credit", creditRate: 0.012 / 1000, creditSource: "estimated" },
+    { id: "gpt-5.5-xhigh", object: "model", created: Date.now(), owned_by: "codex", context_window: 200000, max_output: 64000, thinking: true, vision: true, creditUnit: "credit", creditRate: 0.02 / 1000, creditSource: "estimated" },
+    { id: "gpt-5.5", object: "model", created: Date.now(), owned_by: "codex", context_window: 200000, max_output: 64000, thinking: true, vision: true, creditUnit: "credit", creditRate: 0.02 / 1000, creditSource: "estimated" },
+    { id: "gpt-5.4", object: "model", created: Date.now(), owned_by: "codex", context_window: 200000, max_output: 64000, thinking: true, vision: true, creditUnit: "credit", creditRate: 0.015 / 1000, creditSource: "estimated" },
+    { id: "gpt-5.3", object: "model", created: Date.now(), owned_by: "codex", context_window: 200000, max_output: 64000, thinking: true, vision: true, creditUnit: "credit", creditRate: 0.012 / 1000, creditSource: "estimated" },
+    { id: "gpt-5.2", object: "model", created: Date.now(), owned_by: "codex", context_window: 200000, max_output: 64000, thinking: true, vision: true, creditUnit: "credit", creditRate: 0.01 / 1000, creditSource: "estimated" },
   ];
 
   override getModelInfo(model: string): ModelInfo | undefined {
     const normalized = model.toLowerCase();
-    if (normalized === "gpt-5.5-xhigh") return super.getModelInfo("codex-gpt-5.5-xhigh");
-    return super.getModelInfo(model);
+    // Legacy codex- prefixed id → strip for lookup
+    const bare = normalized.startsWith("codex-") ? normalized.slice(6) : normalized;
+    return super.getModelInfo(bare);
   }
 
   private getTokens(account: Account): CodexTokens | null {

@@ -134,9 +134,8 @@ function isNativeProviderId(model: string): boolean {
   if (model.includes("/")) return true;
   if (/^(claude|gpt|gemini)_/.test(model)) return true;
   if (model.startsWith("gitlab-duo:")) return true;
-  if (model.startsWith("qd-")) return true;
-  if (model.startsWith("cb-")) return true;
-  if (model.startsWith("ym-")) return true;
+  // Legacy internal prefixes (qd-, cb-, ym-) — kept for backwards compat
+  if (model.startsWith("qd-") || model.startsWith("cb-") || model.startsWith("ym-")) return true;
   if (model.startsWith("kiro:")) return true;
   return false;
 }
