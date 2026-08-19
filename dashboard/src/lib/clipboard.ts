@@ -6,7 +6,22 @@
  * IP, where navigator.clipboard is undefined and every copy button dies
  * (silently, or as an unhandled rejection). Fall back to the legacy
  * document.execCommand("copy") path with a temporary textarea.
+ *
+ * IMPORTANT: the textarea must be appended INSIDE the currently open
+ * dialog (if any). Radix/shadcn dialogs run a focus trap — an element
+ * appended to document.body cannot receive focus, so select() selects
+ * nothing and execCommand("copy") copies an empty/stale selection.
  */
+
+function findFocusableHost(): HTMLElement {
+  // Any open dialog (Radix sets role=dialog) traps focus — append there.
+  const dlg = document.querySelector<HTMLElement>('[role="dialog"][data-state="open"]');
+  if (dlg) return dlg;
+  // Popovers / sheets / drawers may use different roles.
+  const pop = document.querySelector<HTMLElement>('[data-state="open"][role="dialog"], [data-radix-popper-content-wrapper]');
+  if (pop) return pop;
+  return document.body;
+}
 
 export async function copyText(text: string): Promise<boolean> {
   // Modern path — secure contexts only.
@@ -27,13 +42,15 @@ export async function copyText(text: string): Promise<boolean> {
     ta.style.opacity = "0";
     ta.style.pointerEvents = "none";
     ta.setAttribute("readonly", "");
-    document.body.appendChild(ta);
+    const host = findFocusableHost();
+    host.appendChild(ta);
     const sel = document.getSelection();
     const savedRange = sel && sel.rangeCount > 0 ? sel.getRangeAt(0).cloneRange() : null;
+    ta.focus();
     ta.select();
     ta.setSelectionRange(0, text.length);
     const ok = document.execCommand("copy");
-    document.body.removeChild(ta);
+    host.removeChild(ta);
     if (savedRange && sel) {
       sel.removeAllRanges();
       sel.addRange(savedRange);
