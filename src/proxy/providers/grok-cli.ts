@@ -600,6 +600,13 @@ function responsesStreamToChatStream(
       let currentToolCallName: string | null = null;
       let currentToolCallIndex = 0;
       let toolCallIndex = 0;
+      // Declared OUTSIDE the try block: the `finally` below must be able to
+      // see it to clearInterval(). When this was `const` inside the try, the
+      // finally threw ReferenceError, which meant controller.close() never
+      // ran (stream hung forever) AND the interval leaked, ticking every 5s
+      // against a dead controller — that is what pinned the CPU at ~99%.
+      let keepaliveTimer: ReturnType<typeof setInterval> | undefined;
+      let streamClosed = false;
 
       const makeChunk = (
         delta: Record<string, unknown>,
@@ -627,11 +634,16 @@ function responsesStreamToChatStream(
         // real data arrives from the reader we reset the timer so keepalives
         // only fire during idle (thinking) periods.
         let lastDataAt = Date.now();
-        const keepaliveTimer = setInterval(() => {
+        keepaliveTimer = setInterval(() => {
+          if (streamClosed) return;
           if (Date.now() - lastDataAt >= 5000) {
             try {
               controller.enqueue(encoder.encode(": keepalive\n\n"));
-            } catch { /* controller closed */ }
+            } catch {
+              // Controller is gone — stop ticking instead of throwing every 5s.
+              streamClosed = true;
+              if (keepaliveTimer) clearInterval(keepaliveTimer);
+            }
           }
         }, 5000);
 
@@ -787,8 +799,12 @@ function responsesStreamToChatStream(
         controller.enqueue(encoder.encode(`data: ${JSON.stringify(errorChunk)}\n\n`));
         controller.enqueue(encoder.encode("data: [DONE]\n\n"));
       } finally {
-        clearInterval(keepaliveTimer);
-        controller.close();
+        streamClosed = true;
+        if (keepaliveTimer) clearInterval(keepaliveTimer);
+        // Release the upstream reader so the underlying socket can be freed;
+        // an un-released reader keeps the upstream connection pinned open.
+        try { reader.releaseLock(); } catch { /* already released */ }
+        try { controller.close(); } catch { /* already closed */ }
       }
     },
   });
