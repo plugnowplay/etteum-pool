@@ -17,9 +17,12 @@ CodeBuddy token (access_token, refresh_token, web_cookie) WITHOUT creating an AP
 """
 
 import asyncio
+import email as email_lib
+import imaplib
 import json
 import os
 import re
+import time
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote, unquote, urlparse
@@ -44,6 +47,16 @@ CODEBUDDY_STATE_ENDPOINT = os.getenv(
     f"{CODEBUDDY_BASE_URL}/v2/plugin/auth/state?platform={CODEBUDDY_PLATFORM}",
 )
 
+# GitHub device-verification OTP is fetched via IMAP. Gmail requires an App
+# Password (2FA must be on): https://support.google.com/accounts/answer/185833
+GITHUB_IMAP_HOST = os.getenv("BATCHER_GITHUB_IMAP_HOST", "imap.gmail.com")
+GITHUB_IMAP_PORT = int(os.getenv("BATCHER_GITHUB_IMAP_PORT", "993"))
+GITHUB_IMAP_EMAIL = os.getenv("BATCHER_GITHUB_IMAP_EMAIL", "").strip()
+GITHUB_IMAP_APP_PASSWORD = os.getenv("BATCHER_GITHUB_IMAP_APP_PASSWORD", "").strip()
+GITHUB_IMAP_MAILBOX = os.getenv("BATCHER_GITHUB_IMAP_MAILBOX", "INBOX")
+GITHUB_OTP_TIMEOUT_S = int(os.getenv("BATCHER_GITHUB_OTP_TIMEOUT_S", "180"))
+GITHUB_OTP_POLL_INTERVAL_S = float(os.getenv("BATCHER_GITHUB_OTP_POLL_INTERVAL_S", "5.0"))
+
 BROWSER_UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
@@ -61,6 +74,139 @@ def _emit_oauth_progress(message: str):
         print(json.dumps({"type": "progress", "provider": "codebuddy-github", "step": "oauth", "message": message}), flush=True)
     except Exception:
         pass
+
+
+_GITHUB_OTP_RE = re.compile(r"\b(\d{6,8})\b")
+_GITHUB_IMAP_FROM = "noreply@github.com"
+_GITHUB_IMAP_SUBJECT_HINTS = (
+    "verification code",
+    "please verify",
+    "verify your device",
+    "sign-in verification",
+    "sign in code",
+    "device verification",
+)
+
+
+def _extract_github_otp_from_message(msg: Any) -> str | None:
+    """Return the first 6-8 digit OTP found in a parsed email.message.
+
+    GitHub sometimes puts the code directly in the subject line
+    ("[GitHub] 123456 is your verification code"), other times only in the
+    body. Scans subject, then text/plain, then text/html parts.
+    """
+    subject = str(msg.get("Subject") or "")
+    m = _GITHUB_OTP_RE.search(subject)
+    if m:
+        return m.group(1)
+    for part in msg.walk():
+        if part.get_content_type() not in ("text/plain", "text/html"):
+            continue
+        try:
+            payload = part.get_payload(decode=True)
+            if payload is None:
+                continue
+            body = payload.decode(part.get_content_charset() or "utf-8", errors="replace")
+        except Exception:
+            continue
+        m = _GITHUB_OTP_RE.search(body)
+        if m:
+            return m.group(1)
+    return None
+
+
+def _imap_fetch_github_otp_once() -> str | None:
+    """Single blocking IMAP roundtrip. Returns OTP or None if no match yet.
+
+    Filters UNSEEN messages FROM noreply@github.com whose subject contains one
+    of _GITHUB_IMAP_SUBJECT_HINTS, scans newest-first (up to 20), and marks the
+    winning message \\Seen so a retry won't reuse an expired code.
+    """
+    conn: imaplib.IMAP4_SSL | None = None
+    try:
+        conn = imaplib.IMAP4_SSL(host=GITHUB_IMAP_HOST, port=GITHUB_IMAP_PORT)
+        conn.login(GITHUB_IMAP_EMAIL, GITHUB_IMAP_APP_PASSWORD)
+        conn.select(GITHUB_IMAP_MAILBOX, readonly=False)
+        typ, data = conn.search(None, "UNSEEN", "FROM", f'"{_GITHUB_IMAP_FROM}"')
+        if typ != "OK" or not data or not data[0]:
+            return None
+        ids = data[0].split()
+        for msg_id in reversed(ids[-20:]):
+            typ, msg_data = conn.fetch(msg_id, "(RFC822)")
+            if typ != "OK" or not msg_data or not msg_data[0]:
+                continue
+            raw_bytes = msg_data[0][1]
+            if not isinstance(raw_bytes, (bytes, bytearray)):
+                continue
+            msg = email_lib.message_from_bytes(bytes(raw_bytes))
+            subject_lower = str(msg.get("Subject") or "").lower()
+            if not any(h in subject_lower for h in _GITHUB_IMAP_SUBJECT_HINTS):
+                continue
+            otp = _extract_github_otp_from_message(msg)
+            if otp:
+                try:
+                    conn.store(msg_id, "+FLAGS", "\\Seen")
+                except Exception:
+                    pass
+                return otp
+        return None
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+            try:
+                conn.logout()
+            except Exception:
+                pass
+
+
+async def _fetch_github_otp_via_imap(timeout_s: int = GITHUB_OTP_TIMEOUT_S) -> str:
+    """Poll IMAP inbox for the newest GitHub device-verification OTP.
+
+    Requires BATCHER_GITHUB_IMAP_EMAIL + BATCHER_GITHUB_IMAP_APP_PASSWORD env
+    vars. For Gmail: enable 2FA, then create an App Password at
+    https://support.google.com/accounts/answer/185833.
+
+    Each poll runs on a worker thread (imaplib is blocking). Raises
+    NonRetryableBatcherError on missing config, RetryableBatcherError on IMAP
+    auth/search failure or timeout so the outer retry loop can restart.
+    """
+    if not GITHUB_IMAP_EMAIL or not GITHUB_IMAP_APP_PASSWORD:
+        raise NonRetryableBatcherError(
+            ErrorCode.input_missing_required_field,
+            "GitHub device-verification OTP needs BATCHER_GITHUB_IMAP_EMAIL and "
+            "BATCHER_GITHUB_IMAP_APP_PASSWORD env vars (Gmail App Password)",
+        )
+    _debug(
+        f"otp via imap: host={GITHUB_IMAP_HOST}:{GITHUB_IMAP_PORT} "
+        f"user={GITHUB_IMAP_EMAIL} mailbox={GITHUB_IMAP_MAILBOX} timeout={timeout_s}s"
+    )
+    deadline = time.monotonic() + timeout_s
+    last_err = ""
+    while time.monotonic() < deadline:
+        otp: str | None = None
+        try:
+            otp = await asyncio.to_thread(_imap_fetch_github_otp_once)
+        except imaplib.IMAP4.error as exc:
+            _debug(f"otp imap4 error: {exc}")
+            raise RetryableBatcherError(
+                ErrorCode.auth_temporary_failure,
+                f"GitHub OTP IMAP login/search failed: {exc}",
+            ) from exc
+        except Exception as exc:
+            last_err = f"{type(exc).__name__}: {exc}"
+            _debug(f"otp imap poll error: {last_err}")
+        if otp:
+            _debug(f"otp via imap: found len={len(otp)}")
+            return otp
+        await asyncio.sleep(GITHUB_OTP_POLL_INTERVAL_S)
+    raise RetryableBatcherError(
+        ErrorCode.auth_temporary_failure,
+        f"GitHub OTP not received via IMAP within {timeout_s}s"
+        + (f" (last: {last_err})" if last_err else ""),
+    )
 
 
 def _get_proxy_url() -> str | None:
@@ -299,14 +445,10 @@ class CodeBuddyGitHubProviderAdapter(ProviderAdapter):
             except Exception:
                 pass
 
-            # GitHub 2FA / device verification blocks automation — fail clearly
+            # Wrong password fails immediately — surface it clearly.
+            body_text = ""
             try:
                 body_text = (await page.inner_text("body"))[:400].lower()
-                if "two-factor" in body_text or "verify your identity" in body_text or "device verification" in body_text:
-                    raise NonRetryableBatcherError(
-                        ErrorCode.auth_invalid_credentials,
-                        "GitHub asked for 2FA / device verification — cannot automate this account",
-                    )
                 if "incorrect username or password" in body_text:
                     raise NonRetryableBatcherError(
                         ErrorCode.auth_invalid_credentials,
@@ -316,6 +458,43 @@ class CodeBuddyGitHubProviderAdapter(ProviderAdapter):
                 raise
             except Exception:
                 pass
+
+            # GitHub device verification (new IP/device) — OTP from IMAP.
+            # TOTP 2FA cannot be automated without the secret; only the
+            # emailed device-verification code is handled here.
+            if "/sessions/verified-device" in page.url or "verify your device" in body_text:
+                _emit_oauth_progress("GitHub device verification — fetching code via IMAP")
+                _debug(f"device-verify page at {page.url[:120]}")
+                otp = await _fetch_github_otp_via_imap()
+                _debug(f"submitting device-verify OTP (len={len(otp)})")
+                await page.fill("input[name='otp'], input#otp", otp)
+                verify_btn = await page.query_selector(
+                    "button[type='submit'], input[type='submit']"
+                )
+                if verify_btn:
+                    await verify_btn.click()
+                _emit_oauth_progress("GitHub device verification — code submitted")
+                try:
+                    await page.wait_for_load_state("domcontentloaded", timeout=30000)
+                except Exception:
+                    pass
+                try:
+                    after = (await page.inner_text("body"))[:400].lower()
+                    if "incorrect" in after or "expired" in after:
+                        raise RetryableBatcherError(
+                            ErrorCode.auth_temporary_failure,
+                            f"GitHub device-verify code rejected (at {page.url[:120]})",
+                        )
+                except RetryableBatcherError:
+                    raise
+                except Exception:
+                    pass
+
+            if "/sessions/two-factor" in page.url or "two-factor" in body_text:
+                raise NonRetryableBatcherError(
+                    ErrorCode.auth_invalid_credentials,
+                    "GitHub asked for TOTP 2FA — not automatable (device verification via IMAP is)",
+                )
 
             # Handle potential "Authorize" screen on GitHub OAuth
             _emit_oauth_progress("Authorizing CodeBuddy")
