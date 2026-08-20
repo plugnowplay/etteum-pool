@@ -28,6 +28,7 @@ const IDEMPOTENT_COLUMNS: Array<{ table: string; column: string; ddl: string }> 
   { table: "request_logs", column: "cached_tokens", ddl: "ALTER TABLE request_logs ADD COLUMN cached_tokens INTEGER DEFAULT 0" },
   // 2026-08-20 — multi API key: attribution per-request.
   { table: "request_logs", column: "api_key_id", ddl: "ALTER TABLE request_logs ADD COLUMN api_key_id INTEGER" },
+  { table: "api_keys", column: "is_shareable", ddl: "ALTER TABLE api_keys ADD COLUMN is_shareable INTEGER NOT NULL DEFAULT 0" },
 ];
 
 // Whole-table additions that predate the drizzle journal or ship without it.

@@ -444,6 +444,7 @@ export interface ManagedKeyDTO {
   tokenLimit: number;
   tokensUsed: number;
   enabled: boolean;
+  isShareable: boolean;
   createdAt: string;
   updatedAt: string | null;
   lastUsedAt: string | null;

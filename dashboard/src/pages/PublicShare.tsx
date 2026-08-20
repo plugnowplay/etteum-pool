@@ -166,7 +166,9 @@ export default function PublicShare() {
         <style>{STYLE}</style>
         <div className="max-w-md border border-[#ffd75f]/60 bg-black/60 p-6 text-center font-mono">
           <div className="text-sm text-[#ffd75f] retro-glow">▓▓ OFFLINE ▓▓</div>
-          <p className="mt-2 text-xs text-[#9dff70]/70">SHARE PAGE DISABLED BY OPERATOR</p>
+          <p className="mt-2 text-xs text-[#9dff70]/70">
+            {(data as any).error || "SHARE PAGE DISABLED BY OPERATOR"}
+          </p>
         </div>
       </div>
     );
@@ -251,7 +253,7 @@ export default function PublicShare() {
         {/* ── Usage ── */}
         <div className="mt-4 border border-[#9dff70]/50 bg-black/50 p-4 font-mono">
           <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-            <PanelTitle>POOL USAGE</PanelTitle>
+            <PanelTitle>KEY USAGE</PanelTitle>
             <div className="flex gap-1">
               {PERIODS.map((p) => (
                 <button
@@ -294,7 +296,11 @@ export default function PublicShare() {
               </div>
             )}
             <div className="mt-2 border-t border-[#9dff70]/20 pt-2 text-[10px] text-[#9dff70]/70">
-              &gt; {formatNumber(usage.requests)} REQUESTS · {usage.credits.toFixed(1)} CREDITS ·{" "}
+              &gt; {formatNumber(usage.requests)} REQUESTS
+              {data.apiKeyLimits?.tokenLimit ? (
+                <> · <span className="text-[#ffd75f]">{formatNumber(data.apiKeyLimits.tokensUsed)}/{formatNumber(data.apiKeyLimits.tokenLimit)} TOKENS</span></>
+              ) : null}
+              {" · "}
               <span className="text-[#ffd75f]">AUTO-REFRESH 30s</span>
               <span className="retro-blink">▌</span>
             </div>

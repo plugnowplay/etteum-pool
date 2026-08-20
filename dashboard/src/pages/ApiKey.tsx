@@ -36,7 +36,7 @@ export default function ApiKey() {
   const [keysBusy, setKeysBusy] = useState(false);
   const [showAdd, setShowAdd] = useState(false);
   const [editing, setEditing] = useState<ManagedKeyDTO | null>(null);
-  const [form, setForm] = useState({ name: "", key: "", modelWhitelist: "", rpmLimit: "", tokenLimit: "" });
+  const [form, setForm] = useState({ name: "", key: "", modelWhitelist: "", rpmLimit: "", tokenLimit: "", isShareable: false });
 
   const toast = useToast();
 
@@ -110,7 +110,7 @@ export default function ApiKey() {
 
   function openAdd() {
     setEditing(null);
-    setForm({ name: "", key: "", modelWhitelist: "", rpmLimit: "", tokenLimit: "" });
+    setForm({ name: "", key: "", modelWhitelist: "", rpmLimit: "", tokenLimit: "", isShareable: false });
     setShowAdd(true);
   }
 
@@ -122,6 +122,7 @@ export default function ApiKey() {
       modelWhitelist: k.modelWhitelist,
       rpmLimit: k.rpmLimit ? String(k.rpmLimit) : "",
       tokenLimit: k.tokenLimit ? String(k.tokenLimit) : "",
+      isShareable: k.isShareable,
     });
     setShowAdd(true);
   }
@@ -132,6 +133,7 @@ export default function ApiKey() {
       modelWhitelist: form.modelWhitelist,
       rpmLimit: form.rpmLimit ? Number(form.rpmLimit) : 0,
       tokenLimit: form.tokenLimit ? Number(form.tokenLimit) : 0,
+      isShareable: form.isShareable,
     };
     try {
       if (editing) {
@@ -277,6 +279,7 @@ export default function ApiKey() {
                     <th className="px-2 py-2">Models</th>
                     <th className="px-2 py-2">RPM</th>
                     <th className="px-2 py-2">Tokens</th>
+                    <th className="px-2 py-2">Share</th>
                     <th className="px-2 py-2">Status</th>
                     <th className="px-2 py-2 text-right">Actions</th>
                   </tr>
@@ -335,6 +338,11 @@ export default function ApiKey() {
                         <td className="px-2 py-2">
                           <Badge variant={k.enabled ? (exhausted ? "warning" : "success") : "muted"} dot>
                             {!k.enabled ? "disabled" : exhausted ? "exhausted" : "active"}
+                          </Badge>
+                        </td>
+                        <td className="px-2 py-2">
+                          <Badge variant={k.isShareable ? "success" : "muted"} dot>
+                            {k.isShareable ? "shareable" : "private"}
                           </Badge>
                         </td>
                         <td className="px-2 py-2">
@@ -408,6 +416,18 @@ export default function ApiKey() {
                   <Input id="mk-tokens" type="number" min={0} value={form.tokenLimit} onChange={(e) => setForm({ ...form, tokenLimit: e.target.value })} placeholder="100000000" />
                 </Field>
               </div>
+
+              <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={form.isShareable}
+                  onChange={(e) => setForm({ ...form, isShareable: e.target.checked })}
+                  className="h-4 w-4 rounded border-[var(--border)]"
+                />
+                <span>
+                  Shareable <span className="text-xs text-[var(--muted-foreground)]">(bisa muncul di halaman share public /s)</span>
+                </span>
+              </label>
             </div>
 
             <div className="mt-5 flex justify-end gap-2">

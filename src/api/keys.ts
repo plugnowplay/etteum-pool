@@ -197,6 +197,7 @@ keysRouter.get("/managed", async (c) => {
       tokenLimit: r.tokenLimit,
       tokensUsed: r.tokensUsed,
       enabled: r.enabled,
+      isShareable: r.isShareable,
       createdAt: r.createdAt,
       updatedAt: r.updatedAt,
       lastUsedAt: r.lastUsedAt,
@@ -239,6 +240,7 @@ keysRouter.put("/managed/:id", async (c) => {
     rpmLimit?: number;
     tokenLimit?: number;
     enabled?: boolean;
+    isShareable?: boolean;
   }>();
   const updates: Record<string, any> = { updatedAt: new Date() };
   if (body.name !== undefined) updates.name = body.name.trim();
@@ -246,6 +248,7 @@ keysRouter.put("/managed/:id", async (c) => {
   if (body.rpmLimit !== undefined) updates.rpmLimit = Math.max(0, Math.floor(body.rpmLimit));
   if (body.tokenLimit !== undefined) updates.tokenLimit = Math.max(0, Math.floor(body.tokenLimit));
   if (body.enabled !== undefined) updates.enabled = body.enabled;
+  if (body.isShareable !== undefined) updates.isShareable = body.isShareable;
   await db.update(apiKeys).set(updates).where(eq(apiKeys.id, id));
   return c.json({ ok: true });
 });

@@ -309,8 +309,8 @@ ${curlSnippet}`;
                   }}
                   className="w-full rounded-md border border-[var(--border)] bg-[var(--surface-inset)] px-3 py-2 font-mono text-xs text-[var(--foreground)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
                 >
-                  <option value="">Master key (no limits)</option>
-                  {managedKeys.map((k) => (
+                  <option value="">Master key (no limits, not shareable)</option>
+                  {managedKeys.filter((k) => k.isShareable).map((k) => (
                     <option key={k.id} value={k.id}>
                       {k.name || `key-${k.id}`} — {k.key.slice(0, 12)}…
                       {k.tokenLimit > 0 ? ` · ${Math.round((k.tokensUsed / k.tokenLimit) * 100)}% tokens` : ""}

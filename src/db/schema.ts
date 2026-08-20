@@ -49,6 +49,8 @@ export const requestLogs = sqliteTable("request_logs", {
   accountQuotaAfter: real("account_quota_after").default(0),
   /** JSON-encoded CompressionStats (see src/proxy/compression/types.ts). null when compression is fully disabled. */
   compressionStats: text("compression_stats", { mode: "json" }),
+  /** Attribusi per-key (managed API key). Null untuk request tanpa key / legacy. */
+  apiKeyId: integer("api_key_id"),
   createdAt: integer("created_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
 }, (table) => [
   index("request_logs_created_at_idx").on(table.createdAt),
@@ -189,6 +191,8 @@ export const apiKeys = sqliteTable("api_keys", {
   // Total token yang sudah dipakai (increment tiap request selesai).
   tokensUsed: integer("tokens_used", { mode: "number" }).notNull().default(0),
   enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+  // Apakah key ini boleh di-share lewat halaman public /s. 0 = tidak.
+  isShareable: integer("is_shareable", { mode: "boolean" }).notNull().default(false),
   createdAt: integer("created_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
   updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
   lastUsedAt: integer("last_used_at", { mode: "timestamp" }),

@@ -162,7 +162,11 @@ app.use("/v1/*", async (c, next) => {
         const requested = String(body?.model || "").toLowerCase();
         // Strip "provider/" prefix untuk perbandingan
         const bareModel = requested.includes("/") ? requested.split("/").pop()! : requested;
-        const ok = meta.modelWhitelist.some((allowed) => bareModel === allowed || bareModel.includes(allowed));
+        // Normalize allowed: strip "provider/" prefix biar "cb/glm-5.2" match "glm-5.2"
+        const ok = meta.modelWhitelist.some((allowed) => {
+          const bareAllowed = allowed.includes("/") ? allowed.split("/").pop()! : allowed;
+          return bareModel === bareAllowed || bareModel.includes(bareAllowed);
+        });
         if (requested && !ok) {
           return c.json(
             {
