@@ -2169,6 +2169,107 @@ accountsRouter.post("/", async (c) => {
     }, 201);
   }
 
+  // ── CodeBuddy Intl: Bulk Access Token flow ─────────────────────────
+  // Mirror of codebuddy-china accessTokens flow. Accepts raw CodeBuddy
+  // access tokens (Bearer values from device flow / browser session),
+  // one per line, stored under tokens.access_token (codebuddy.ts getApiKey
+  // reads api_key → access_token → session_token).
+  if (body.provider === "codebuddy" && body.accessTokens) {
+    const tokensList = body.accessTokens
+      .split("\n")
+      .map((t: string) => t.trim())
+      .filter((t: string) => t.length > 0);
+
+    if (tokensList.length === 0) {
+      return c.json({ error: "accessTokens is empty" }, 400);
+    }
+
+    for (const tok of tokensList) {
+      if (tok.startsWith("cb-") || tok.startsWith("ck_")) {
+        return c.json({
+          error: `Token looks like an API key: ${tok.substring(0, 12)}... — use the API Key tab instead.`,
+        }, 400);
+      }
+      if (tok.length < 20) {
+        return c.json({ error: `Access token too short (min 20 chars): ${tok.substring(0, 12)}...` }, 400);
+      }
+    }
+
+    const created: Array<{ id: number; email: string }> = [];
+    const updated: Array<{ id: number; email: string }> = [];
+    let suffix = await nextLabelSuffix("codebuddy");
+
+    // Upsert by decoded JWT `sub` so re-pasting a rotated token updates the
+    // existing account row instead of duplicating it.
+    const existingCb = await db.select().from(accounts)
+      .where(eq(accounts.provider, "codebuddy"));
+    const subToAccount = new Map<string, typeof existingCb[number]>();
+    for (const acc of existingCb) {
+      const t = typeof acc.tokens === "string" ? JSON.parse(acc.tokens) : acc.tokens;
+      const raw = t?.access_token || t?.api_key;
+      if (typeof raw !== "string") continue;
+      try {
+        const payload = JSON.parse(Buffer.from(raw.split(".")[1]!, "base64").toString("utf-8"));
+        if (payload.sub) subToAccount.set(String(payload.sub), acc);
+      } catch { /* not a JWT — skip */ }
+    }
+
+    for (let i = 0; i < tokensList.length; i++) {
+      const token = tokensList[i]!;
+      const email = emailFromJwt(token) || `cb-token-${suffix++}`;
+      const encryptedToken = encrypt(token);
+      const tokens = { access_token: token, method: "device_code" };
+
+      let sub: string | null = null;
+      try {
+        const payload = JSON.parse(Buffer.from(token.split(".")[1]!, "base64").toString("utf-8"));
+        sub = payload.sub ? String(payload.sub) : null;
+      } catch { /* non-JWT — fall through to insert */ }
+      const existing = sub ? subToAccount.get(sub) : undefined;
+
+      if (existing) {
+        await db.update(accounts).set({
+          email,
+          password: encryptedToken,
+          status: "active",
+          tokens,
+          errorMessage: null,
+          lastLoginAt: new Date(),
+          updatedAt: new Date(),
+        }).where(eq(accounts.id, existing.id));
+        updated.push({ id: existing.id, email });
+        continue;
+      }
+
+      const inserted = await db.insert(accounts).values({
+        provider: "codebuddy",
+        email,
+        password: encryptedToken,
+        status: "active",
+        tokens,
+        quotaLimit: -1,
+        quotaRemaining: -1,
+        lastLoginAt: new Date(),
+      }).returning();
+
+      if (inserted[0]) {
+        created.push({ id: inserted[0].id, email });
+      }
+    }
+
+    pool.invalidate("codebuddy" as ProviderName);
+    broadcast({ type: "account_created", data: { provider: "codebuddy", count: created.length } });
+
+    return c.json({
+      success: true,
+      count: created.length + updated.length,
+      created: created.length,
+      updated: updated.length,
+      accounts: created,
+      updatedAccounts: updated,
+    }, 201);
+  }
+
   // ── CodeBuddy China: Bulk API key flow (ck_...) ─────────────────────
   // Accept multiple API keys (one per line), validate format, and create
   // account per key with auto-generated email label.

@@ -148,6 +148,7 @@ export default function Accounts() {
   const [codebuddyChinaAccessTokens, setCodebuddyChinaAccessTokens] = useState("");
   const [codebuddyChinaBusy, setCodebuddyChinaBusy] = useState(false);
   const [codebuddyBulkApiKeys, setCodebuddyBulkApiKeys] = useState("");
+  const [codebuddyBulkTokens, setCodebuddyBulkTokens] = useState("");
   const [codebuddyBusy, setCodebuddyBusy] = useState(false);
   const [cbIntlDeviceCode, setCbIntlDeviceCode] = useState<{
     deviceCode: string;
@@ -665,6 +666,42 @@ export default function Accounts() {
       });
       showSuccess(`Added ${res.count} CodeBuddy account(s) successfully`);
       setCodebuddyBulkApiKeys("");
+      setAddDialogProvider(null);
+      await load();
+    } catch (err) { showError(err); }
+    finally { setCodebuddyBusy(false); }
+  }
+
+  // ── CodeBuddy Intl: Bulk Access Token paste ────────────────────────
+  async function handleCodeBuddyBulkToken() {
+    const tokensText = codebuddyBulkTokens.trim();
+    if (!tokensText) { showError(new Error("Paste CodeBuddy access tokens")); return; }
+
+    const tokens = tokensText.split("\n").map(t => t.trim()).filter(Boolean);
+    if (tokens.length === 0) { showError(new Error("No valid tokens found")); return; }
+
+    for (const tok of tokens) {
+      if (tok.startsWith("cb-") || tok.startsWith("ck_")) {
+        showError(new Error(`Token looks like API key: ${tok.slice(0, 12)}... — use API Key tab`));
+        return;
+      }
+      if (tok.length < 20) {
+        showError(new Error(`Token too short: ${tok.slice(0, 12)}...`));
+        return;
+      }
+    }
+
+    setCodebuddyBusy(true);
+    try {
+      const res = await fetchApi<any>("/api/accounts", {
+        method: "POST",
+        body: JSON.stringify({
+          provider: "codebuddy",
+          accessTokens: tokensText,
+        }),
+      });
+      showSuccess(`Added ${res.count} CodeBuddy account(s) (${res.created} new, ${res.updated} updated)`);
+      setCodebuddyBulkTokens("");
       setAddDialogProvider(null);
       await load();
     } catch (err) { showError(err); }
@@ -1938,9 +1975,9 @@ export default function Accounts() {
               <button onClick={() => setAddMode("single")}
                 className={`flex-1 rounded px-3 py-1.5 text-xs font-medium transition-colors ${addMode === "single" ? "bg-[var(--background)] text-[var(--foreground)] shadow-sm" : "text-[var(--muted-foreground)]"}`}
               >Single</button>
-              <button onClick={() => setAddMode("github")}
-                className={`flex-1 rounded px-3 py-1.5 text-xs font-medium transition-colors ${addMode === "github" ? "bg-[var(--background)] text-[var(--foreground)] shadow-sm" : "text-[var(--muted-foreground)]"}`}
-              >GitHub</button>
+              <button onClick={() => setAddMode("token")}
+                className={`flex-1 rounded px-3 py-1.5 text-xs font-medium transition-colors ${addMode === "token" ? "bg-[var(--background)] text-[var(--foreground)] shadow-sm" : "text-[var(--muted-foreground)]"}`}
+              >Access Token</button>
               <button onClick={() => setAddMode("apikey")}
                 className={`flex-1 rounded px-3 py-1.5 text-xs font-medium transition-colors ${addMode === "apikey" ? "bg-[var(--background)] text-[var(--foreground)] shadow-sm" : "text-[var(--muted-foreground)]"}`}
               >OAuth / API Key</button>
@@ -2192,39 +2229,27 @@ export default function Accounts() {
             </div>
           )}
 
-          {addMode === "github" && addDialogProvider === "codebuddy" && (
+          {addMode === "token" && addDialogProvider === "codebuddy" && (
             <div className="space-y-4">
               <div className="rounded-md border border-[var(--border)] bg-[var(--surface-2)] p-3 space-y-3">
-                <p className="text-sm font-medium text-[var(--foreground)]">Login via GitHub OAuth</p>
+                <p className="text-sm font-medium text-[var(--foreground)]">Paste CodeBuddy Access Tokens (bulk)</p>
                 <p className="text-xs text-[var(--muted-foreground)]">
-                  Login dengan akun GitHub yang sudah ada → CodeBuddy. Hasilnya access token CodeBuddy (tanpa create API key), disimpan sebagai akun codebuddy.
+                  Satu token per baris. Access token CodeBuddy (hasil device flow / browser session) — valid setahun,
+                  disimpan sebagai akun codebuddy. Jangan paste API key (<code>cb-</code>/<code>ck_</code>) — pakai tab OAuth / API Key.
                 </p>
-                <div className="grid gap-3">
-                  <div>
-                    <label className="text-sm text-[var(--foreground)]">GitHub Email</label>
-                    <input
-                      type="email"
-                      value={addForm.email}
-                      onChange={(e) => setAddForm({ ...addForm, email: e.target.value })}
-                      className="mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--background)] p-2.5 text-sm text-[var(--foreground)] focus:outline-none focus:ring-1 focus:ring-[var(--ring)]"
-                      placeholder="you@example.com"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-sm text-[var(--foreground)]">GitHub Password</label>
-                    <input
-                      type="password"
-                      value={addForm.password}
-                      onChange={(e) => setAddForm({ ...addForm, password: e.target.value })}
-                      className="mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--background)] p-2.5 text-sm text-[var(--foreground)] focus:outline-none focus:ring-1 focus:ring-[var(--ring)]"
-                      placeholder="••••••••"
-                    />
-                  </div>
-                </div>
+                <textarea
+                  value={codebuddyBulkTokens}
+                  onChange={(e) => setCodebuddyBulkTokens(e.target.value)}
+                  className="mt-1 w-full h-32 rounded-md border border-[var(--border)] bg-[var(--background)] p-3 text-sm font-mono text-[var(--foreground)] placeholder:text-[var(--muted-foreground)] focus:outline-none focus:ring-1 focus:ring-[var(--ring)] resize-none"
+                  placeholder={"eyJhbGciOiJIUzI1NiJ9.xxxxxxxx...\neyJhbGciOiJIUzI1NiJ9.yyyyyyyy..."}
+                  disabled={codebuddyBusy}
+                />
               </div>
               <div className="flex justify-end gap-2">
-                <Button variant="outline" onClick={() => setAddDialogProvider(null)}>Cancel</Button>
-                <Button onClick={handleAdd} disabled={!addForm.email || !addForm.password}>Login via GitHub</Button>
+                <Button variant="outline" onClick={() => setAddDialogProvider(null)} disabled={codebuddyBusy}>Cancel</Button>
+                <Button onClick={handleCodeBuddyBulkToken} disabled={codebuddyBusy || !codebuddyBulkTokens.trim()}>
+                  {codebuddyBusy ? (<><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Importing...</>) : "Add Accounts"}
+                </Button>
               </div>
             </div>
           )}
