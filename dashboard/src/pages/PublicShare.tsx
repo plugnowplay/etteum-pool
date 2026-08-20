@@ -1,19 +1,18 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { API_BASE } from "@/lib/api";
 import { copyText } from "@/lib/clipboard";
-import { modelColor, formatNumber } from "@/lib/utils";
-import { Check, Copy, Eye, EyeOff, RefreshCw, Server, Zap } from "lucide-react";
+import { formatNumber } from "@/lib/utils";
 
 /**
- * Public landing page at /s — shareable read-only view of the pool:
- * connection info (base URL + key), usage bars, and the model catalogue.
- * Served unauthenticated via GET /api/share (gated by `share_page_enabled`).
+ * RETRO EDITION — halaman share public /s.
+ * CRT phosphor-green terminal: scanlines, ASCII panel, blinking cursor.
+ * Semua fungsi tetap: copy, keyId, period switch, model list.
  */
 
 const PERIODS = [
-  { id: "1d", label: "1d", hours: 24 },
-  { id: "7d", label: "7d", hours: 24 * 7 },
-  { id: "30d", label: "30d", hours: 24 * 30 },
+  { id: "1d", label: "1D", hours: 24 },
+  { id: "7d", label: "7D", hours: 24 * 7 },
+  { id: "30d", label: "30D", hours: 24 * 30 },
 ] as const;
 
 interface ShareModel {
@@ -44,48 +43,6 @@ async function fetchShare(hours: number): Promise<ShareData> {
   return res.json();
 }
 
-function CopyField({ label, value, display }: { label: string; value: string; display?: string }) {
-  const [copied, setCopied] = useState(false);
-  const [show, setShow] = useState(false);
-
-  async function copy() {
-    const ok = await copyText(value);
-    if (ok) {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    }
-  }
-
-  const secret = /sk-/.test(value);
-  const text = secret && !show ? `${value.slice(0, 8)}${"•".repeat(Math.max(0, value.length - 12))}` : (display ?? value);
-
-  return (
-    <div className="space-y-1.5">
-      <label className="block text-xs font-medium text-[var(--muted-foreground)]">{label}</label>
-      <div className="flex items-center gap-2 rounded-md border border-[var(--border)] bg-[var(--surface-inset)] px-3 py-2">
-        <pre className="min-w-0 flex-1 overflow-x-auto whitespace-pre font-mono text-xs text-[var(--foreground)]">{text}</pre>
-        {secret && (
-          <button
-            onClick={() => setShow((s) => !s)}
-            aria-label={show ? "Hide key" : "Reveal key"}
-            className="focus-ring shrink-0 rounded-md p-1.5 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--secondary)] hover:text-[var(--foreground)]"
-          >
-            {show ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
-          </button>
-        )}
-        <button
-          onClick={copy}
-          aria-label={`Copy ${label}`}
-          title={copied ? "Copied" : "Copy"}
-          className="focus-ring shrink-0 rounded-md p-1.5 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--secondary)] hover:text-[var(--foreground)]"
-        >
-          {copied ? <Check className="h-3.5 w-3.5 text-[var(--success)]" /> : <Copy className="h-3.5 w-3.5" />}
-        </button>
-      </div>
-    </div>
-  );
-}
-
 function formatCtx(n: number | null): string {
   if (!n) return "?";
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(0)}M`;
@@ -93,41 +50,100 @@ function formatCtx(n: number | null): string {
   return String(n);
 }
 
+/** Chunky retro progress bar pakai block characters █████░░░ */
+function RetroBar({ pct, width = 24, label }: { pct: number; width?: number; label?: string }) {
+  const filled = Math.round((Math.max(0, Math.min(100, pct)) / 100) * width);
+  const bar = "█".repeat(filled) + "░".repeat(width - filled);
+  return (
+    <span className="whitespace-pre">
+      <span className="text-[#9dff70]">{bar.slice(0, width)}</span>
+      {label ? <span className="ml-1 opacity-70">{label}</span> : null}
+    </span>
+  );
+}
+
+/** Retro copy button — [COPY] / [OK!] */
+function RetroCopy({ value, label }: { value: string; label?: string }) {
+  const [copied, setCopied] = useState(false);
+  async function copy() {
+    const ok = await copyText(value);
+    if (ok) {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    }
+  }
+  return (
+    <button
+      onClick={copy}
+      className="shrink-0 border border-[#9dff70]/60 px-1.5 py-0.5 font-mono text-[10px] tracking-widest text-[#9dff70] transition-colors hover:bg-[#9dff70] hover:text-black"
+      aria-label={label || "Copy"}
+      title={label || "Copy"}
+    >
+      {copied ? "[OK!]" : "[CP]"}
+    </button>
+  );
+}
+
+/** ASCII double-line panel header: ╔═ TITLE ═╗ */
+function PanelTitle({ children }: { children: string }) {
+  return (
+    <div className="mb-2 font-mono text-[11px] tracking-[0.3em] text-[#baff9e]">
+      ── {children} ─────────────────────────
+    </div>
+  );
+}
+
+const STYLE = `
+  .crt-wrap { background:#050a03; min-height:100vh; position:relative; }
+  .crt-wrap::before {
+    content:""; position:fixed; inset:0; pointer-events:none; z-index:40;
+    background:repeating-linear-gradient(0deg, rgba(0,0,0,0.22) 0px, rgba(0,0,0,0.22) 1px, transparent 1px, transparent 3px);
+  }
+  .crt-wrap::after {
+    content:""; position:fixed; inset:0; pointer-events:none; z-index:41;
+    background:radial-gradient(ellipse at center, transparent 55%, rgba(0,20,0,0.5) 100%);
+  }
+  .retro-blink { animation:blink 1.1s steps(1) infinite; }
+  @keyframes blink { 50% { opacity:0; } }
+  .retro-glow { text-shadow:0 0 6px rgba(120,255,80,0.55), 0 0 2px rgba(120,255,80,0.9); }
+`;
+
 export default function PublicShare() {
+  const [period, setPeriod] = useState<string>("1d");
   const [data, setData] = useState<ShareData | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [period, setPeriod] = useState<string>("1d");
+  const [showKey, setShowKey] = useState(false);
   const [showAllModels, setShowAllModels] = useState(false);
-  const reloadRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [tick, setTick] = useState(0);
+  const mounted = useRef(true);
 
-  const load = useCallback(async () => {
-    const cfg = PERIODS.find((p) => p.id === period) ?? PERIODS[0];
+  const load = useCallback(async (p: string) => {
+    const cfg = PERIODS.find((x) => x.id === p) ?? PERIODS[0];
     try {
       const res = await fetchShare(cfg.hours);
-      setData(res);
-      setError(null);
+      if (mounted.current) { setData(res); setError(null); }
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      if (mounted.current) setError(e instanceof Error ? e.message : String(e));
     }
-  }, [period]);
-
-  useEffect(() => {
-    load();
-  }, [load]);
-
-  useEffect(() => {
-    return () => {
-      if (reloadRef.current) clearTimeout(reloadRef.current);
-    };
   }, []);
+
+  useEffect(() => {
+    mounted.current = true;
+    load(period);
+    const iv = setInterval(() => { setTick((t) => t + 1); load(period); }, 30_000);
+    return () => { mounted.current = false; clearInterval(iv); };
+  }, [load, period]);
 
   if (error) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-[var(--background)] p-6">
-        <div className="max-w-md space-y-2 text-center">
-          <img src="/etteum.svg" alt="" className="mx-auto h-10 w-10 opacity-60" />
-          <h1 className="text-lg font-semibold text-[var(--foreground)]">Share page unavailable</h1>
-          <p className="text-sm text-[var(--muted-foreground)]">{error}</p>
+      <div className="crt-wrap flex min-h-screen items-center justify-center p-6">
+        <style>{STYLE}</style>
+        <div className="max-w-md border border-[#ff5f56]/60 bg-black/60 p-6 font-mono text-sm text-[#ff5f56]">
+          <div className="retro-glow">▓▓ ERROR ▓▓</div>
+          <p className="mt-2 text-xs opacity-80">{error}</p>
+          <button onClick={() => load(period)} className="mt-4 border border-[#ff5f56]/60 px-3 py-1 text-xs hover:bg-[#ff5f56] hover:text-black">
+            [RETRY]
+          </button>
         </div>
       </div>
     );
@@ -135,19 +151,22 @@ export default function PublicShare() {
 
   if (!data) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-[var(--background)]">
-        <img src="/etteum.svg" alt="" className="h-10 w-10 animate-pulse" />
+      <div className="crt-wrap flex min-h-screen items-center justify-center p-6">
+        <style>{STYLE}</style>
+        <div className="font-mono text-sm text-[#9dff70] retro-glow">
+          LOADING<span className="retro-blink">_</span>
+        </div>
       </div>
     );
   }
 
   if (!data.enabled) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-[var(--background)] p-6">
-        <div className="max-w-md space-y-2 text-center">
-          <img src="/etteum.svg" alt="" className="mx-auto h-10 w-10 opacity-60" />
-          <h1 className="text-lg font-semibold text-[var(--foreground)]">This share page is turned off</h1>
-          <p className="text-sm text-[var(--muted-foreground)]">The pool owner has disabled public sharing.</p>
+      <div className="crt-wrap flex min-h-screen items-center justify-center p-6">
+        <style>{STYLE}</style>
+        <div className="max-w-md border border-[#ffd75f]/60 bg-black/60 p-6 text-center font-mono">
+          <div className="text-sm text-[#ffd75f] retro-glow">▓▓ OFFLINE ▓▓</div>
+          <p className="mt-2 text-xs text-[#9dff70]/70">SHARE PAGE DISABLED BY OPERATOR</p>
         </div>
       </div>
     );
@@ -163,76 +182,85 @@ export default function PublicShare() {
   const completionPct = totalTokens > 0 ? (usage.completionTokens / totalTokens) * 100 : 0;
   const maxModelTokens = Math.max(1, ...modelUsage.map((m) => m.tokens));
   const apiKey = data.apiKey || "";
+  const maskedKey = apiKey ? `${apiKey.slice(0, 8)}${"•".repeat(Math.max(0, apiKey.length - 12))}` : "";
+  const clock = new Date().toISOString().slice(11, 19);
 
   return (
-    <div className="min-h-screen bg-[var(--background)] text-[var(--foreground)]">
-      <div className="mx-auto max-w-4xl space-y-6 px-4 py-10 sm:px-6">
-        {/* Header */}
-        <header className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-2.5">
-            <img src="/etteum.svg" alt="" className="h-8 w-8" />
-            <div>
-              <h1 className="text-lg font-semibold tracking-tight">Etteum Pool</h1>
-              <p className="text-xs text-[var(--muted-foreground)]">Shared API access</p>
+    <div className="crt-wrap">
+      <style>{STYLE}</style>
+      <div className="mx-auto max-w-3xl px-4 py-8 sm:px-6">
+        {/* ── Header ── */}
+        <div className="border border-[#9dff70]/50 bg-black/50 p-4 font-mono">
+          <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+            <div className="text-[#baff9e] retro-glow">
+              <span className="opacity-60">┌─[</span> ETTEUM POOL <span className="opacity-60">]</span>
+              <span className="ml-2 opacity-70">v1.0</span>
+            </div>
+            <div className="flex items-center gap-2 text-[10px] text-[#9dff70]/70">
+              <span className="retro-blink">●</span> ONLINE · {clock} UTC
             </div>
           </div>
-          <button
-            onClick={load}
-            className="focus-ring inline-flex items-center gap-1.5 rounded-md border border-[var(--border)] px-3 py-1.5 text-xs text-[var(--muted-foreground)] transition-colors hover:border-[var(--primary)]/50 hover:text-[var(--foreground)]"
-          >
-            <RefreshCw className="h-3.5 w-3.5" /> Refresh
-          </button>
-        </header>
+          <div className="mt-2 text-[11px] text-[#9dff70]/60">
+            SHARED API ACCESS — OPENAI COMPATIBLE<span className="retro-blink">_</span>
+          </div>
+        </div>
 
-        {/* Connection info */}
-        <section className="space-y-4 rounded-xl border border-[var(--border)] bg-[var(--card)] p-5">
-          <h2 className="flex items-center gap-2 text-sm font-medium">
-            <Server className="h-4 w-4 text-[var(--primary)]" /> Connect any OpenAI-compatible client
-          </h2>
-          <CopyField label="Base URL" value={baseUrl} />
-          <CopyField label="API Key" value={apiKey || "<not available>"} />
-          {data.apiKeyName && data.apiKeyName !== "master" && (
-            <div className="flex flex-wrap gap-1.5 text-xs text-[var(--muted-foreground)]">
-              <span className="rounded bg-[var(--secondary)] px-2 py-0.5">
-                key: {data.apiKeyName}
-              </span>
-              {data.apiKeyLimits?.modelWhitelist && (
-                <span className="rounded bg-[var(--secondary)] px-2 py-0.5 font-mono">
-                  models: {data.apiKeyLimits.modelWhitelist}
-                </span>
-              )}
-              <span className="rounded bg-[var(--secondary)] px-2 py-0.5">
-                rpm: {data.apiKeyLimits?.rpmLimit || "∞"}
-              </span>
-              {data.apiKeyLimits?.tokenLimit ? (
-                <span className="rounded bg-[var(--secondary)] px-2 py-0.5">
-                  tokens: {formatNumber(data.apiKeyLimits.tokensUsed)}/{formatNumber(data.apiKeyLimits.tokenLimit)}
-                </span>
-              ) : null}
+        {/* ── Connection ── */}
+        <div className="mt-4 border border-[#9dff70]/50 bg-black/50 p-4 font-mono">
+          <PanelTitle>CONNECTION</PanelTitle>
+          <div className="space-y-2 text-xs">
+            <div className="flex items-center gap-2">
+              <span className="w-20 shrink-0 text-[#9dff70]/60">BASE URL</span>
+              <span className="min-w-0 flex-1 overflow-x-auto whitespace-pre text-[#baff9e]">{baseUrl}</span>
+              <RetroCopy value={baseUrl} label="Copy base URL" />
             </div>
-          )}
-          <p className="text-xs leading-relaxed text-[var(--muted-foreground)]">
-            Point your client at the Base URL above and use the API key as the Bearer token. Anthropic-style clients
-            can call <code className="rounded bg-[var(--secondary)] px-1 py-0.5 font-mono">/v1/messages</code> on the
-            same host.
-          </p>
-        </section>
+            <div className="flex items-center gap-2">
+              <span className="w-20 shrink-0 text-[#9dff70]/60">API KEY</span>
+              <span className="min-w-0 flex-1 overflow-x-auto whitespace-pre text-[#baff9e]">
+                {showKey ? apiKey : maskedKey}
+              </span>
+              <button
+                onClick={() => setShowKey((v) => !v)}
+                className="shrink-0 border border-[#9dff70]/60 px-1.5 py-0.5 text-[10px] tracking-widest text-[#9dff70] hover:bg-[#9dff70] hover:text-black"
+                aria-label="Toggle key visibility"
+              >
+                {showKey ? "[HID]" : "[SHW]"}
+              </button>
+              <RetroCopy value={apiKey} label="Copy API key" />
+            </div>
+            {data.apiKeyName && data.apiKeyName !== "master" && (
+              <div className="flex flex-wrap gap-x-3 gap-y-1 border-t border-[#9dff70]/20 pt-2 text-[10px] text-[#9dff70]/70">
+                <span>KEY: {data.apiKeyName}</span>
+                {data.apiKeyLimits?.modelWhitelist && <span className="font-mono">MODELS: {data.apiKeyLimits.modelWhitelist}</span>}
+                <span>RPM: {data.apiKeyLimits?.rpmLimit || "∞"}</span>
+                {data.apiKeyLimits?.tokenLimit ? (
+                  <span>
+                    TOKENS: {formatNumber(data.apiKeyLimits.tokensUsed)}/{formatNumber(data.apiKeyLimits.tokenLimit)}
+                  </span>
+                ) : null}
+              </div>
+            )}
+            <div className="border-t border-[#9dff70]/20 pt-2 text-[10px] leading-relaxed text-[#9dff70]/60">
+              &gt; point your client at BASE URL above, use API KEY as Bearer token
+              <br />
+              &gt; anthropic-style: POST /v1/messages on same host
+            </div>
+          </div>
+        </div>
 
-        {/* Usage */}
-        <section className="space-y-4 rounded-xl border border-[var(--border)] bg-[var(--card)] p-5">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <h2 className="flex items-center gap-2 text-sm font-medium">
-              <Zap className="h-4 w-4 text-[var(--warning)]" /> Pool usage
-            </h2>
-            <div className="flex items-center gap-1">
+        {/* ── Usage ── */}
+        <div className="mt-4 border border-[#9dff70]/50 bg-black/50 p-4 font-mono">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <PanelTitle>POOL USAGE</PanelTitle>
+            <div className="flex gap-1">
               {PERIODS.map((p) => (
                 <button
                   key={p.id}
                   onClick={() => setPeriod(p.id)}
-                  className={`rounded-md px-2.5 py-1 text-xs transition-colors ${
+                  className={`border px-2 py-0.5 text-[10px] tracking-widest transition-colors ${
                     period === p.id
-                      ? "bg-[var(--primary)]/10 text-[var(--foreground)]"
-                      : "text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+                      ? "border-[#9dff70] bg-[#9dff70] text-black"
+                      : "border-[#9dff70]/40 text-[#9dff70]/70 hover:border-[#9dff70] hover:text-[#9dff70]"
                   }`}
                 >
                   {p.label}
@@ -241,130 +269,102 @@ export default function PublicShare() {
             </div>
           </div>
 
-          {/* Prompt / completion split */}
-          <div className="space-y-2">
-            <div className="flex h-2.5 overflow-hidden rounded-full bg-[var(--secondary)]">
-              <div
-                className="h-full transition-[width] duration-[var(--dur-slow)] ease-[var(--ease-out)]"
-                style={{ width: `${promptPct}%`, backgroundColor: "var(--chart-2)" }}
-              />
-              <div
-                className="h-full transition-[width] duration-[var(--dur-slow)] ease-[var(--ease-out)]"
-                style={{ width: `${completionPct}%`, backgroundColor: "var(--chart-3)" }}
-              />
+          <div className="space-y-1.5 text-xs">
+            <div className="flex items-center gap-2">
+              <span className="w-24 shrink-0 text-[#9dff70]/60">PROMPT</span>
+              <RetroBar pct={promptPct} width={26} />
+              <span className="tabular text-[#baff9e]">{formatNumber(usage.promptTokens)}</span>
+              <span className="text-[#9dff70]/50">({promptPct.toFixed(0)}%)</span>
             </div>
-            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-[var(--muted-foreground)]">
-              <span className="flex items-center gap-1.5">
-                <span className="h-2 w-2 rounded-full" style={{ backgroundColor: "var(--chart-2)" }} />
-                Prompt <span className="tabular font-medium text-[var(--foreground)]">{formatNumber(usage.promptTokens)}</span>
-                <span className="tabular">({promptPct.toFixed(0)}%)</span>
-              </span>
-              <span className="flex items-center gap-1.5">
-                <span className="h-2 w-2 rounded-full" style={{ backgroundColor: "var(--chart-3)" }} />
-                Completion{" "}
-                <span className="tabular font-medium text-[var(--foreground)]">{formatNumber(usage.completionTokens)}</span>
-                <span className="tabular">({completionPct.toFixed(0)}%)</span>
-              </span>
-              <span className="ml-auto tabular">
-                {formatNumber(usage.requests)} requests · {usage.credits.toFixed(1)} credits
-              </span>
+            <div className="flex items-center gap-2">
+              <span className="w-24 shrink-0 text-[#9dff70]/60">COMPLETION</span>
+              <RetroBar pct={completionPct} width={26} />
+              <span className="tabular text-[#baff9e]">{formatNumber(usage.completionTokens)}</span>
+              <span className="text-[#9dff70]/50">({completionPct.toFixed(0)}%)</span>
             </div>
             {usage.cachedTokens !== undefined && usage.cachedTokens > 0 && (
-              <div className="text-xs text-[var(--muted-foreground)]">
-                <span className="tabular font-medium text-[var(--foreground)]">
-                  {formatNumber(usage.cachedTokens)}
-                </span>{" "}
-                cached tokens (prompt cache hits)
+              <div className="flex items-center gap-2">
+                <span className="w-24 shrink-0 text-[#9dff70]/60">CACHED</span>
+                <RetroBar
+                  pct={totalTokens > 0 ? (usage.cachedTokens / totalTokens) * 100 : 0}
+                  width={26}
+                />
+                <span className="tabular text-[#baff9e]">{formatNumber(usage.cachedTokens)}</span>
+                <span className="text-[#9dff70]/50">(prompt-cache hits)</span>
               </div>
             )}
+            <div className="mt-2 border-t border-[#9dff70]/20 pt-2 text-[10px] text-[#9dff70]/70">
+              &gt; {formatNumber(usage.requests)} REQUESTS · {usage.credits.toFixed(1)} CREDITS ·{" "}
+              <span className="text-[#ffd75f]">AUTO-REFRESH 30s</span>
+              <span className="retro-blink">▌</span>
+            </div>
           </div>
+        </div>
 
-          {/* Per-model bars */}
-          {modelUsage.length > 0 && (
-            <div className="space-y-2.5">
-              <h3 className="text-xs font-medium text-[var(--muted-foreground)]">By model</h3>
-              {modelUsage.map((row, idx) => {
+        {/* ── By model ── */}
+        {modelUsage.length > 0 && (
+          <div className="mt-4 border border-[#9dff70]/50 bg-black/50 p-4 font-mono">
+            <PanelTitle>BY MODEL</PanelTitle>
+            <div className="space-y-1.5 text-xs">
+              {modelUsage.map((row) => {
                 const pct = (row.tokens / maxModelTokens) * 100;
                 const share = (row.tokens / Math.max(1, totalTokens)) * 100;
                 return (
-                  <div key={`${row.provider}/${row.model}`} className="space-y-1">
-                    <div className="flex items-baseline justify-between gap-3 text-xs">
-                      <span className="min-w-0 truncate font-mono text-[var(--foreground)]">{row.model}</span>
-                      <span className="shrink-0 tabular text-[var(--muted-foreground)]">
-                        {formatNumber(row.tokens)} <span className="opacity-60">tokens</span>
-                        <span className="mx-1 opacity-40">·</span>
-                        {formatNumber(row.requests)} <span className="opacity-60">req</span>
-                        <span className="mx-1 opacity-40">·</span>
-                        {share.toFixed(0)}%
-                      </span>
-                    </div>
-                    <div className="h-1.5 overflow-hidden rounded-full bg-[var(--secondary)]">
-                      <div
-                        className="h-full rounded-full transition-[width] duration-[var(--dur-slow)] ease-[var(--ease-out)]"
-                        style={{ width: `${pct}%`, backgroundColor: modelColor(`${row.provider}/${row.model}`, idx) }}
-                      />
-                    </div>
+                  <div key={`${row.provider}/${row.model}`} className="flex items-center gap-2">
+                    <span className="w-32 shrink-0 truncate text-[#baff9e]" title={`${row.provider}/${row.model}`}>
+                      {row.model}
+                    </span>
+                    <RetroBar pct={pct} width={22} />
+                    <span className="tabular text-[#9dff70]/80">{formatNumber(row.tokens)}</span>
+                    <span className="text-[#9dff70]/50">tok</span>
+                    <span className="text-[#9dff70]/50">· {formatNumber(row.requests)}req · {share.toFixed(0)}%</span>
                   </div>
                 );
               })}
             </div>
-          )}
-        </section>
-
-        {/* Models */}
-        <section className="space-y-4 rounded-xl border border-[var(--border)] bg-[var(--card)] p-5">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <h2 className="text-sm font-medium">Available models</h2>
-            <span className="text-xs text-[var(--muted-foreground)] tabular">{models.length} models</span>
           </div>
+        )}
+
+        {/* ── Model catalogue ── */}
+        <div className="mt-4 border border-[#9dff70]/50 bg-black/50 p-4 font-mono">
+          <PanelTitle>MODEL CATALOGUE ({models.length})</PanelTitle>
           {models.length === 0 ? (
-            <p className="text-xs text-[var(--muted-foreground)]">No models registered.</p>
+            <div className="text-xs text-[#9dff70]/50">&gt; no models registered</div>
           ) : (
             <>
-              <ul className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+              <ul className="space-y-1 text-[11px]">
                 {visibleModels.map((m) => (
-                  <li
-                    key={m.id}
-                    className="flex items-center justify-between gap-2 rounded-md border border-[var(--border)] bg-[var(--surface-inset)] px-3 py-2"
-                  >
-                    <div className="min-w-0">
-                      <p className="truncate font-mono text-xs text-[var(--foreground)]">{m.id}</p>
-                      <p className="text-[10px] text-[var(--muted-foreground)]">
-                        {m.provider}
-                        {m.contextWindow ? ` · ${formatCtx(m.contextWindow)} ctx` : ""}
-                        {m.maxOutput ? ` · ${formatCtx(m.maxOutput)} out` : ""}
-                      </p>
-                    </div>
-                    <div className="flex shrink-0 gap-1">
-                      {m.thinking && (
-                        <span className="rounded bg-[var(--primary)]/10 px-1.5 py-0.5 text-[9px] font-medium text-[var(--primary)]">
-                          THINK
-                        </span>
-                      )}
-                      {m.vision && (
-                        <span className="rounded bg-[var(--chart-4, #8b5cf6)]/15 px-1.5 py-0.5 text-[9px] font-medium text-[var(--chart-4, #8b5cf6)]">
-                          VISION
-                        </span>
-                      )}
-                    </div>
+                  <li key={m.id} className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                    <span className="text-[#9dff70]">▸</span>
+                    <span className="min-w-0 break-all text-[#baff9e]">{m.id}</span>
+                    <span className="text-[#9dff70]/50">[{m.provider}]</span>
+                    <span className="text-[#9dff70]/50">ctx:{formatCtx(m.contextWindow)}</span>
+                    <span className="text-[#9dff70]/50">out:{formatCtx(m.maxOutput)}</span>
+                    <span className="flex gap-1 text-[9px]">
+                      {m.thinking && <span className="border border-[#9dff70]/40 px-1">THINK</span>}
+                      {m.vision && <span className="border border-[#9dff70]/40 px-1">VIS</span>}
+                    </span>
                   </li>
                 ))}
               </ul>
               {models.length > 12 && (
                 <button
                   onClick={() => setShowAllModels((s) => !s)}
-                  className="w-full rounded-md border border-[var(--border)] py-1.5 text-xs text-[var(--muted-foreground)] transition-colors hover:border-[var(--primary)]/50 hover:text-[var(--foreground)]"
+                  className="mt-2 w-full border border-[#9dff70]/40 py-1 text-[10px] tracking-widest text-[#9dff70]/70 hover:border-[#9dff70] hover:text-[#9dff70]"
                 >
-                  {showAllModels ? "Show less" : `Show all ${models.length} models`}
+                  [{showAllModels ? "SHOW LESS" : `SHOW ALL ${models.length}`}]
                 </button>
               )}
             </>
           )}
-        </section>
+        </div>
 
-        <footer className="pb-4 text-center text-[11px] text-[var(--muted-foreground)]">
-          Powered by <span className="font-medium">Etteum Pool</span>
-        </footer>
+        {/* ── Footer ── */}
+        <div className="mt-6 pb-4 text-center font-mono text-[10px] text-[#9dff70]/50">
+          ── POWERED BY <span className="text-[#baff9e]">ETTEUM POOL</span> ──
+          <br />
+          <span className="opacity-50">press F5 to re-establish connection · session #{tick}</span>
+        </div>
       </div>
     </div>
   );
