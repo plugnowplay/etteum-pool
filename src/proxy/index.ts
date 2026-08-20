@@ -219,6 +219,7 @@ function extractUsageFromSsePayload(payload: string) {
       completionTokens: Number(usage?.completion_tokens || usage?.output_tokens || 0),
       totalTokens: Number(usage?.total_tokens || 0),
       cachedTokens: Number(
+        usage?.prompt_cache_hit_tokens ??
         usage?.cache_read_input_tokens ??
         usage?.cache_creation_input_tokens ??
         usage?.prompt_tokens_details?.cached_tokens ??
@@ -387,6 +388,7 @@ function wrapStreamWithUsageFinalizer(
       completionTokens = usage.completionTokens || completionTokens;
       totalTokens = usage.totalTokens || totalTokens;
       upstreamCredits = usage.creditsUsed || upstreamCredits;
+      cachedTokens = usage.cachedTokens || cachedTokens;
     }
   };
 
@@ -570,6 +572,7 @@ async function handleChatCompletion(body: ChatCompletionRequest) {
     const completionTokens = result.promptTokens === 0 && !result.response?.usage ? estimateTokensFromText(String(result.response?.choices?.[0]?.message?.content ?? "")) : (result.completionTokens || result.response?.usage?.completion_tokens || 0);
     const totalTokens = result.tokensUsed || result.response?.usage?.total_tokens || promptTokens + completionTokens;
     const cachedTokens =
+      Number((result.response?.usage as any)?.prompt_cache_hit_tokens || 0) ||
       Number((result.response?.usage as any)?.cache_read_input_tokens || 0) ||
       Number((result.response?.usage as any)?.prompt_tokens_details?.cached_tokens || 0);
 

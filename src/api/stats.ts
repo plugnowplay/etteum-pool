@@ -77,6 +77,13 @@ statsRouter.get("/", async (c) => {
 
   const stats = requestStats[0];
 
+  // Cached tokens dari request_logs (prompt-cache hits) dalam window yang sama
+  const cacheSince = Math.floor(Date.now() / 1000) - (hours && !isAll ? hours * 3600 : 24 * 3600);
+  const [cacheRow] = await db
+    .select({ cached: sql<number>`COALESCE(SUM(cached_tokens), 0)` })
+    .from(requestLogs)
+    .where(sql`${requestLogs.createdAt} >= ${cacheSince}`);
+
   return c.json({
     pool: poolStats,
     requests: {
@@ -89,6 +96,7 @@ statsRouter.get("/", async (c) => {
       prompt: stats?.promptTokens || 0,
       completion: stats?.completionTokens || 0,
       credits: stats?.credits || 0,
+      cached: cacheRow?.cached || 0,
     },
     performance: {
       avgDurationMs: Math.round(stats?.avgDuration || 0),
@@ -119,6 +127,7 @@ statsRouter.get("/requests", async (c) => {
     promptTokens: requestLogs.promptTokens,
     completionTokens: requestLogs.completionTokens,
     totalTokens: requestLogs.totalTokens,
+    cachedTokens: requestLogs.cachedTokens,
     creditsUsed: requestLogs.creditsUsed,
     status: requestLogs.status,
     durationMs: requestLogs.durationMs,
