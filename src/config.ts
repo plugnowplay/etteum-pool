@@ -7,10 +7,11 @@ export const config = {
   dashboardPort: Number(process.env.DASHBOARD_PORT) || 1931,
   apiKey: process.env.API_KEY || "pool-proxy-secret-key",
   databasePath: process.env.DATABASE_PATH || path.join(projectRoot, "data/poolprox3.db"),
-  authScriptPath: path.resolve(
-    projectRoot,
-    process.env.AUTH_SCRIPT_PATH || "scripts/auth/login.py",
-  ),
+  authScriptPath: (() => {
+    const raw = process.env.AUTH_SCRIPT_PATH;
+    if (!raw) return path.join(projectRoot, "scripts/auth/login.py");
+    return path.isAbsolute(raw) ? raw : path.resolve(projectRoot, raw);
+  })(),
   pythonPath:
     process.env.PYTHON_PATH ||
     path.join(
@@ -18,12 +19,12 @@ export const config = {
       "scripts/auth/.venv",
       process.platform === "win32" ? "Scripts/python.exe" : "bin/python",
     ),
-  authScriptCwd: path.resolve(
-    projectRoot,
-    process.env.AUTH_SCRIPT_CWD || "scripts/auth",
-  ),
+  authScriptCwd: (() => {
+    const raw = process.env.AUTH_SCRIPT_CWD;
+    if (!raw) return path.join(projectRoot, "scripts/auth");
+    return path.isAbsolute(raw) ? raw : path.resolve(projectRoot, raw);
+  })(),
   proxyUrl: process.env.PROXY_URL || "",
-  plengerProxyUrl: process.env.PLENGER_PROXY_URL || "",
   encryptionKey:
     process.env.ENCRYPTION_KEY || "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6",
   headless: process.env.HEADLESS !== "false", // default true
@@ -114,10 +115,8 @@ export const config = {
   browserEngine: process.env.BROWSER_ENGINE || "camoufox",
   captchaService: process.env.CAPTCHA_SERVICE || "none",
   captchaApiKey: process.env.CAPTCHA_API_KEY || "",
-  // Every provider registered in src/proxy/providers/registry.ts. Keep in sync
-  // when adding a provider — this list drives auto-warmup, /api/stats/providers
-  // and the dashboard provider cards.
-  providers: ["kiro", "kiro-pro", "codebuddy", "codebuddy-china", "canva", "codex", "qoder", "gitlab-duo", "youmind", "grok", "grok-cli"] as const,
+  // Providers: kiro, kiro-pro, codebuddy, canva, codex, qoder, gitlab-duo
+  providers: ["kiro", "kiro-pro", "codebuddy", "canva", "codex", "qoder", "gitlab-duo"] as const,
 } as const;
 
 export type Config = typeof config;

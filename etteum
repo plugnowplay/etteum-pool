@@ -94,9 +94,22 @@ do_start() {
   rotate_log
   echo "Starting etteum..."
   cd "$PROJECT_DIR"
-  # setsid → new session/process group so 'stop' can target ONLY our subtree.
-  setsid bun scripts/production.ts --skip-build >> "$LOG_FILE" 2>&1 &
-  local pid=$!
+  # New session/process group so 'stop' can target ONLY our subtree.
+  # setsid = Linux; macOS/BSD use perl POSIX::setsid (always present on macOS).
+  local pid
+  if command -v setsid >/dev/null 2>&1; then
+    setsid bun scripts/production.ts --skip-build >> "$LOG_FILE" 2>&1 &
+    pid=$!
+  elif command -v perl >/dev/null 2>&1; then
+    # perl becomes session leader, then exec → same PID as bun
+    perl -MPOSIX -e 'POSIX::setsid(); exec { $ARGV[0] } @ARGV' -- \
+      bun scripts/production.ts --skip-build >> "$LOG_FILE" 2>&1 &
+    pid=$!
+  else
+    # last resort: no isolated session (stop still uses PID file)
+    nohup bun scripts/production.ts --skip-build >> "$LOG_FILE" 2>&1 &
+    pid=$!
+  fi
   echo "$pid" > "$PID_FILE"
   sleep 1.5
 
