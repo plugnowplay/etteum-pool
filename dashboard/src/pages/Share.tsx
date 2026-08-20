@@ -146,15 +146,24 @@ export default function Share() {
   const shareUrl = `${window.location.origin}/s${selectedKeyId ? `?keyId=${selectedKeyId}` : ""}`;
 
   // Load the pool key once; fall back to the browser-stored key if unreachable.
+  // NOTE: never overwrite apiKey after user picked a managed key (race: async
+  // fetchApiKey resolving late would clobber the selected key with master).
   useEffect(() => {
     fetchApiKey()
-      .then((res: any) => setApiKey(res?.key || localStorage.getItem("api_key") || ""))
-      .catch(() => setApiKey(localStorage.getItem("api_key") || ""))
+      .then((res: any) => {
+        if (res?.key && !selectedKeyId) setApiKey(res.key);
+      })
+      .catch(() => {})
       .finally(() => setKeyLoading(false));
     // Load managed keys for selector
     fetchManagedKeys()
-      .then((res) => setManagedKeys(res.keys))
-      .catch(() => {});
+      .then((res) => {
+        setManagedKeys(res.keys);
+        // kalau user udah pilih key sebelum list ke-load, sync key value-nya
+        setKeyLoading(false);
+      })
+      .catch(() => setKeyLoading(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const load = useCallback(async () => {
@@ -286,7 +295,7 @@ ${curlSnippet}`;
                       setSelectedKeyName("master");
                       setSelectedKeyLimits(null);
                       setApiKey(localStorage.getItem("api_key") || "");
-                      fetchApiKey().then((res: any) => res?.key && setApiKey(res.key)).catch(() => {});
+                      fetchApiKey().then((res: any) => res?.key && !selectedKeyId && setApiKey(res.key)).catch(() => {});
                     } else {
                       const id = Number(v);
                       const k = managedKeys.find((m) => m.id === id);
