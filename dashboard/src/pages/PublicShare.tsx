@@ -29,13 +29,17 @@ interface ShareData {
   enabled: boolean;
   hours?: number;
   apiKey?: string;
-  usage?: { requests: number; promptTokens: number; completionTokens: number; credits: number };
+  apiKeyName?: string;
+  apiKeyLimits?: { rpmLimit: number; tokenLimit: number; tokensUsed: number; modelWhitelist: string };
+  usage?: { requests: number; promptTokens: number; completionTokens: number; credits: number; cachedTokens?: number };
   modelUsage?: Array<{ provider: string; model: string; tokens: number; requests: number }>;
   models?: ShareModel[];
 }
 
 async function fetchShare(hours: number): Promise<ShareData> {
-  const res = await fetch(`${API_BASE}/api/share?hours=${hours}`);
+  const params = new URLSearchParams(window.location.search);
+  params.set("hours", hours.toString());
+  const res = await fetch(`${API_BASE}/api/share?${params.toString()}`);
   if (!res.ok) throw new Error(`API error: ${res.status}`);
   return res.json();
 }
@@ -150,7 +154,7 @@ export default function PublicShare() {
   }
 
   const baseUrl = `${API_BASE}/v1`;
-  const usage = data.usage ?? { requests: 0, promptTokens: 0, completionTokens: 0, credits: 0 };
+  const usage = data.usage ?? { requests: 0, promptTokens: 0, completionTokens: 0, credits: 0, cachedTokens: 0 };
   const modelUsage = (data.modelUsage ?? []).slice(0, 8);
   const models = data.models ?? [];
   const visibleModels = showAllModels ? models : models.slice(0, 12);
@@ -187,6 +191,26 @@ export default function PublicShare() {
           </h2>
           <CopyField label="Base URL" value={baseUrl} />
           <CopyField label="API Key" value={apiKey || "<not available>"} />
+          {data.apiKeyName && data.apiKeyName !== "master" && (
+            <div className="flex flex-wrap gap-1.5 text-xs text-[var(--muted-foreground)]">
+              <span className="rounded bg-[var(--secondary)] px-2 py-0.5">
+                key: {data.apiKeyName}
+              </span>
+              {data.apiKeyLimits?.modelWhitelist && (
+                <span className="rounded bg-[var(--secondary)] px-2 py-0.5 font-mono">
+                  models: {data.apiKeyLimits.modelWhitelist}
+                </span>
+              )}
+              <span className="rounded bg-[var(--secondary)] px-2 py-0.5">
+                rpm: {data.apiKeyLimits?.rpmLimit || "∞"}
+              </span>
+              {data.apiKeyLimits?.tokenLimit ? (
+                <span className="rounded bg-[var(--secondary)] px-2 py-0.5">
+                  tokens: {formatNumber(data.apiKeyLimits.tokensUsed)}/{formatNumber(data.apiKeyLimits.tokenLimit)}
+                </span>
+              ) : null}
+            </div>
+          )}
           <p className="text-xs leading-relaxed text-[var(--muted-foreground)]">
             Point your client at the Base URL above and use the API key as the Bearer token. Anthropic-style clients
             can call <code className="rounded bg-[var(--secondary)] px-1 py-0.5 font-mono">/v1/messages</code> on the
@@ -245,6 +269,14 @@ export default function PublicShare() {
                 {formatNumber(usage.requests)} requests · {usage.credits.toFixed(1)} credits
               </span>
             </div>
+            {usage.cachedTokens !== undefined && usage.cachedTokens > 0 && (
+              <div className="text-xs text-[var(--muted-foreground)]">
+                <span className="tabular font-medium text-[var(--foreground)]">
+                  {formatNumber(usage.cachedTokens)}
+                </span>{" "}
+                cached tokens (prompt cache hits)
+              </div>
+            )}
           </div>
 
           {/* Per-model bars */}

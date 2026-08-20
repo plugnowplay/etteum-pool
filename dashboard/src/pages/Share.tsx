@@ -19,9 +19,11 @@ import {
   API_BASE,
   fetchApiKey,
   fetchDashboardStats,
+  fetchManagedKeys,
   fetchModelUsage,
   fetchSettings,
   updateSettings,
+  type ManagedKeyDTO,
 } from "@/lib/api";
 import { copyText } from "@/lib/clipboard";
 import { formatNumber, modelColor } from "@/lib/utils";
@@ -117,6 +119,10 @@ export default function Share() {
   const [keyLoading, setKeyLoading] = useState(true);
   const [showKey, setShowKey] = useState(false);
   const [publicEnabled, setPublicEnabled] = useState<boolean | null>(null);
+  const [managedKeys, setManagedKeys] = useState<ManagedKeyDTO[]>([]);
+  const [selectedKeyId, setSelectedKeyId] = useState<number | null>(null);
+  const [selectedKeyName, setSelectedKeyName] = useState("master");
+  const [selectedKeyLimits, setSelectedKeyLimits] = useState<ManagedKeyDTO | null>(null);
   const reloadRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -137,7 +143,7 @@ export default function Share() {
     }
   }
 
-  const shareUrl = `${window.location.origin}/s`;
+  const shareUrl = `${window.location.origin}/s${selectedKeyId ? `?keyId=${selectedKeyId}` : ""}`;
 
   // Load the pool key once; fall back to the browser-stored key if unreachable.
   useEffect(() => {
@@ -145,6 +151,10 @@ export default function Share() {
       .then((res: any) => setApiKey(res?.key || localStorage.getItem("api_key") || ""))
       .catch(() => setApiKey(localStorage.getItem("api_key") || ""))
       .finally(() => setKeyLoading(false));
+    // Load managed keys for selector
+    fetchManagedKeys()
+      .then((res) => setManagedKeys(res.keys))
+      .catch(() => {});
   }, []);
 
   const load = useCallback(async () => {
@@ -186,6 +196,7 @@ export default function Share() {
     prompt: Number(stats?.tokens?.prompt || 0),
     completion: Number(stats?.tokens?.completion || 0),
     credits: Number(stats?.tokens?.credits || 0),
+    cached: Number(stats?.tokens?.cached || 0),
   };
   const modelRows: ModelRow[] = models
     .map((m: any, idx: number) => ({
@@ -264,25 +275,79 @@ ${curlSnippet}`;
                 <Skeleton className="h-[38px] w-full rounded-md" />
               </div>
             ) : (
-              <CopyField
-                label="API Key"
-                value={apiKey}
-                display={showKey ? apiKey : "•".repeat(Math.max(apiKey.length, 8))}
-                action={
-                  <button
-                    onClick={() => setShowKey((v) => !v)}
-                    aria-label={showKey ? "Hide API key" : "Show API key"}
-                    title={showKey ? "Hide" : "Show"}
-                    className="focus-ring shrink-0 rounded-md p-1.5 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--secondary)] hover:text-[var(--foreground)]"
-                  >
-                    {showKey ? (
-                      <EyeOff className="h-3.5 w-3.5" />
+              <div className="space-y-2">
+                <label className="block text-xs font-medium text-[var(--muted-foreground)]">API Key</label>
+                <select
+                  value={selectedKeyId ?? ""}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    if (v === "") {
+                      setSelectedKeyId(null);
+                      setSelectedKeyName("master");
+                      setSelectedKeyLimits(null);
+                      setApiKey(localStorage.getItem("api_key") || "");
+                      fetchApiKey().then((res: any) => res?.key && setApiKey(res.key)).catch(() => {});
+                    } else {
+                      const id = Number(v);
+                      const k = managedKeys.find((m) => m.id === id);
+                      if (k) {
+                        setSelectedKeyId(id);
+                        setSelectedKeyName(k.name || `key-${k.id}`);
+                        setSelectedKeyLimits(k);
+                        setApiKey(k.key);
+                      }
+                    }
+                  }}
+                  className="w-full rounded-md border border-[var(--border)] bg-[var(--surface-inset)] px-3 py-2 font-mono text-xs text-[var(--foreground)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
+                >
+                  <option value="">Master key (no limits)</option>
+                  {managedKeys.map((k) => (
+                    <option key={k.id} value={k.id}>
+                      {k.name || `key-${k.id}`} — {k.key.slice(0, 12)}…
+                      {k.tokenLimit > 0 ? ` · ${Math.round((k.tokensUsed / k.tokenLimit) * 100)}% tokens` : ""}
+                      {!k.enabled ? " · disabled" : ""}
+                    </option>
+                  ))}
+                </select>
+                {selectedKeyLimits && (
+                  <div className="flex flex-wrap gap-1.5 text-[11px]">
+                    {selectedKeyLimits.modelWhitelist ? (
+                      <span className="rounded bg-[var(--surface-2)] px-1.5 py-0.5 font-mono">
+                        models: {selectedKeyLimits.modelWhitelist}
+                      </span>
                     ) : (
-                      <Eye className="h-3.5 w-3.5" />
+                      <span className="rounded bg-[var(--surface-2)] px-1.5 py-0.5">all models</span>
                     )}
-                  </button>
-                }
-              />
+                    <span className="rounded bg-[var(--surface-2)] px-1.5 py-0.5">
+                      rpm: {selectedKeyLimits.rpmLimit > 0 ? selectedKeyLimits.rpmLimit : "∞"}
+                    </span>
+                    <span className="rounded bg-[var(--surface-2)] px-1.5 py-0.5">
+                      tokens: {selectedKeyLimits.tokenLimit > 0
+                        ? `${formatNumber(selectedKeyLimits.tokensUsed)}/${formatNumber(selectedKeyLimits.tokenLimit)}`
+                        : "∞"}
+                    </span>
+                  </div>
+                )}
+                <CopyField
+                  label=""
+                  value={apiKey}
+                  display={showKey ? apiKey : "•".repeat(Math.min(apiKey.length, 8))}
+                  action={
+                    <button
+                      onClick={() => setShowKey((v) => !v)}
+                      aria-label={showKey ? "Hide API key" : "Show API key"}
+                      title={showKey ? "Hide" : "Show"}
+                      className="focus-ring shrink-0 rounded-md p-1.5 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--secondary)] hover:text-[var(--foreground)]"
+                    >
+                      {showKey ? (
+                        <EyeOff className="h-3.5 w-3.5" />
+                      ) : (
+                        <Eye className="h-3.5 w-3.5" />
+                      )}
+                    </button>
+                  }
+                />
+              </div>
             )}
           </div>
 
@@ -333,9 +398,9 @@ ${curlSnippet}`;
       </Card>
 
       {/* ── Token stat tiles ───────────────────────────────────────── */}
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
         {stats === null ? (
-          Array.from({ length: 4 }).map((_, i) => <SkeletonCard key={i} />)
+          Array.from({ length: 5 }).map((_, i) => <SkeletonCard key={i} />)
         ) : (
           <>
             <StatCard
@@ -355,6 +420,12 @@ ${curlSnippet}`;
               value={<span className="tabular">{formatNumber(tokenStats.completion)}</span>}
               icon={Zap}
               tone="info"
+            />
+            <StatCard
+              label="Cached"
+              value={<span className="tabular">{formatNumber(tokenStats.cached)}</span>}
+              icon={Zap}
+              tone="default"
             />
             <StatCard
               label="Credits"
