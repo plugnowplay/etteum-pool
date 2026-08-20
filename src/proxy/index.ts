@@ -298,6 +298,11 @@ function openAIErrorResponse(message: string, status: 400 | 503) {
 
 async function logProxyError(entry: NewRequestLog, label: string) {
   try {
+    // Auto-attach api_key_id kalau caller belum set
+    if (entry.apiKeyId === undefined) {
+      const { getRequestApiKeyId } = await import("../services/request-context");
+      entry.apiKeyId = getRequestApiKeyId();
+    }
     await db.insert(requestLogs).values(entry);
     // Also track errors in usage_summary
     void upsertUsageSummary({
@@ -607,9 +612,14 @@ async function handleChatCompletion(body: ChatCompletionRequest) {
   // Internal logging uses the plain model name (e.g. "glm-5.3" for "cb/glm-5.3").
   const logModel = displayModelName(body.model);
 
+  // Ambil api_key_id dari AsyncLocalStorage (di-set oleh middleware /v1/*)
+  const { getRequestApiKeyId } = await import("../services/request-context");
+  const apiKeyId = getRequestApiKeyId();
+
   const logEntry = {
     accountId: account.id,
     accountEmail: account.email,
+    apiKeyId,
     provider,
     model: logModel,
     promptTokens,

@@ -19,6 +19,7 @@ const Settings = lazy(() => import("./pages/Settings"));
 const BotLogs = lazy(() => import("./pages/BotLogs"));
 const VccPool = lazy(() => import("./pages/VccPool"));
 const ProxyPool = lazy(() => import("./pages/ProxyPool"));
+const Microwarp = lazy(() => import("./pages/Microwarp"));
 const ImageStudio = lazy(() => import("./pages/ImageStudio"));
 const FilterRules = lazy(() => import("./pages/FilterRules"));
 const Integration = lazy(() => import("./pages/Integration"));
@@ -110,12 +111,14 @@ export default function App() {
           <Route path="/models" element={<Models />} />
           <Route path="/combos" element={<Combos />} />
           <Route path="/api-key" element={<ApiKey />} />
+          <Route path="/share" element={<Share />} />
           <Route path="/requests" element={<Requests />} />
           <Route path="/bot-logs" element={<BotLogs />} />
           <Route path="/usage" element={<Usage />} />
           <Route path="/settings" element={<Settings />} />
           <Route path="/vcc-pool" element={<VccPool />} />
           <Route path="/proxy-pool" element={<ProxyPool />} />
+          <Route path="/microwarp" element={<Microwarp />} />
           <Route path="/filter-rules" element={<FilterRules />} />
           <Route path="/integration" element={<Integration />} />
           <Route path="/image-studio" element={<ImageStudio />} />

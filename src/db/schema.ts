@@ -172,6 +172,31 @@ export const filterRules = sqliteTable("filter_rules", {
   index("filter_rules_sort_order_idx").on(table.sortOrder),
 ]);
 
+// Multi API key dengan limits per key.
+// Legacy single-key (dari settings.pool_api_key / env API_KEY) tetap didukung oleh
+// isValidApiKey() sebagai fallback tanpa limits — untuk akses admin/master.
+export const apiKeys = sqliteTable("api_keys", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  key: text("key").notNull().unique(),
+  name: text("name").notNull().default(""),
+  // Comma-separated model names (contoh: "glm-5.3, claude-4-sonnet").
+  // Kosong = semua model boleh.
+  modelWhitelist: text("model_whitelist").notNull().default(""),
+  // Rate limit request per menit. 0 = tanpa limit.
+  rpmLimit: integer("rpm_limit").notNull().default(0),
+  // Cap total token lifetime. 0 = tanpa limit.
+  tokenLimit: integer("token_limit", { mode: "number" }).notNull().default(0),
+  // Total token yang sudah dipakai (increment tiap request selesai).
+  tokensUsed: integer("tokens_used", { mode: "number" }).notNull().default(0),
+  enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+  createdAt: integer("created_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
+  updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+  lastUsedAt: integer("last_used_at", { mode: "timestamp" }),
+}, (table) => [
+  index("api_keys_key_idx").on(table.key),
+  index("api_keys_enabled_idx").on(table.enabled),
+]);
+
 export const proxyPool = sqliteTable("proxy_pool", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   url: text("url").notNull(),

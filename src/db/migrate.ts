@@ -26,6 +26,8 @@ const IDEMPOTENT_COLUMNS: Array<{ table: string; column: string; ddl: string }> 
   { table: "request_logs", column: "cached_tokens", ddl: "ALTER TABLE request_logs ADD COLUMN cached_tokens INTEGER DEFAULT 0" },
   // 2026-08-16 — cached_tokens (upstream prompt-cache hits in request logs).
   { table: "request_logs", column: "cached_tokens", ddl: "ALTER TABLE request_logs ADD COLUMN cached_tokens INTEGER DEFAULT 0" },
+  // 2026-08-20 — multi API key: attribution per-request.
+  { table: "request_logs", column: "api_key_id", ddl: "ALTER TABLE request_logs ADD COLUMN api_key_id INTEGER" },
 ];
 
 // Whole-table additions that predate the drizzle journal or ship without it.
@@ -43,6 +45,23 @@ const IDEMPOTENT_TABLES: Array<{ name: string; ddl: string }> = [
       vision INTEGER DEFAULT 0,
       created_at INTEGER NOT NULL,
       UNIQUE(provider, model)
+    )`,
+  },
+  // 2026-08-20 — multi API keys dengan limits per-key
+  {
+    name: "api_keys",
+    ddl: `CREATE TABLE IF NOT EXISTS api_keys (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      key TEXT NOT NULL UNIQUE,
+      name TEXT NOT NULL DEFAULT '',
+      model_whitelist TEXT NOT NULL DEFAULT '',
+      rpm_limit INTEGER NOT NULL DEFAULT 0,
+      token_limit INTEGER NOT NULL DEFAULT 0,
+      tokens_used INTEGER NOT NULL DEFAULT 0,
+      enabled INTEGER NOT NULL DEFAULT 1,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER,
+      last_used_at INTEGER
     )`,
   },
 ];
@@ -71,6 +90,16 @@ async function runIdempotentColumns() {
   }
 }
 
+async function runIdempotentTables() {
+  for (const t of IDEMPOTENT_TABLES) {
+    try {
+      db.run(sql.raw(t.ddl));
+    } catch (err) {
+      console.error(`[DB] Failed to create ${t.name}:`, err);
+    }
+  }
+}
+
 export async function runMigrations() {
   const migrationsFolder = "./drizzle";
 
@@ -83,6 +112,8 @@ export async function runMigrations() {
     console.log("[DB] No migrations found, skipping. Use 'bun run db:push' to sync schema.");
   }
 
+  // Idempotent CREATE TABLE for tables that ship without drizzle journal
+  await runIdempotentTables();
   // Always run idempotent column-add migrations (works on fresh deploys without drizzle/).
   await runIdempotentColumns();
 }

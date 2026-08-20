@@ -433,6 +433,63 @@ export async function fetchProviderList(): Promise<{ data: string[] }> {
   return fetchApi("/api/settings/providers");
 }
 
+// ─── Managed API Keys (multi-key CRUD) ───
+
+export interface ManagedKeyDTO {
+  id: number;
+  key: string;
+  name: string;
+  modelWhitelist: string;
+  rpmLimit: number;
+  tokenLimit: number;
+  tokensUsed: number;
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string | null;
+  lastUsedAt: string | null;
+}
+
+export async function fetchManagedKeys(): Promise<{ count: number; keys: ManagedKeyDTO[] }> {
+  return fetchApi("/api/keys/managed");
+}
+
+export async function createManagedKey(payload: {
+  name?: string;
+  modelWhitelist?: string;
+  rpmLimit?: number;
+  tokenLimit?: number;
+  key?: string;
+}): Promise<{ ok: boolean; id: number; key: string }> {
+  return fetchApi("/api/keys/managed", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function updateManagedKey(
+  id: number,
+  payload: {
+    name?: string;
+    modelWhitelist?: string;
+    rpmLimit?: number;
+    tokenLimit?: number;
+    enabled?: boolean;
+  }
+): Promise<{ ok: boolean }> {
+  return fetchApi(`/api/keys/managed/${id}`, {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function deleteManagedKey(id: number): Promise<{ ok: boolean }> {
+  return fetchApi(`/api/keys/managed/${id}`, { method: "DELETE" });
+}
+
+export async function resetManagedKeyUsage(id: number): Promise<{ ok: boolean }> {
+  return fetchApi(`/api/keys/managed/${id}/reset-usage`, { method: "POST" });
+}
+
 export async function createAccount(account: { provider: string; email: string; password: string; browserEngine?: string; headless?: boolean }) {
   return fetchApi("/api/accounts", {
     method: "POST",

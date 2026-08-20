@@ -20,6 +20,10 @@ import { refreshByokModels, refreshGitlabDuoModels, refreshCustomModels } from "
 // Run database migrations on startup
 await runMigrations();
 
+// Start background sync: tokens_used per api key (30s interval)
+import { startApiKeyUsageSync } from "./services/api-keys-sync";
+startApiKeyUsageSync();
+
 // Seed filter rules from PUDIDIL_FILTERS if table is empty (first boot only)
 try {
   const [row] = await db.select({ count: sql<number>`COUNT(*)` }).from(filterRules);
@@ -102,14 +106,84 @@ app.use("/v1/*", async (c, next) => {
     );
   }
 
-  if (!(await isValidApiKey(token))) {
+  const { resolveApiKey, checkRpmLimit } = await import("./api/keys");
+  const meta = await resolveApiKey(token);
+  if (!meta) {
     return c.json(
       { error: { message: "Invalid API key", type: "auth_error" } },
       401
     );
   }
 
-  await next();
+  // Master key → bypass semua limit (admin)
+  if (meta.type === "master") {
+    c.set("apiKeyMeta", meta);
+    const { requestContext } = await import("./services/request-context");
+    return requestContext.run({ apiKeyId: null, apiKeyType: "master" }, () => next());
+  }
+
+  // Managed key — enforce limits
+  // 1. Token cap (lifetime)
+  if (meta.tokenLimit > 0 && meta.tokensUsed >= meta.tokenLimit) {
+    return c.json(
+      {
+        error: {
+          message: `Token quota exhausted: ${meta.tokensUsed}/${meta.tokenLimit}. Contact operator to reset.`,
+          type: "quota_exceeded",
+        },
+      },
+      429
+    );
+  }
+
+  // 2. RPM (sliding window per key)
+  const rpm = checkRpmLimit(meta.id, meta.rpmLimit);
+  if (!rpm.allowed) {
+    c.header("Retry-After", String(Math.ceil(rpm.retryAfterMs / 1000)));
+    return c.json(
+      {
+        error: {
+          message: `Rate limit exceeded: ${meta.rpmLimit} req/min. Retry in ${Math.ceil(rpm.retryAfterMs / 1000)}s.`,
+          type: "rate_limit_exceeded",
+        },
+      },
+      429
+    );
+  }
+
+  // 3. Model whitelist — cek body kalau ada model field
+  if (meta.modelWhitelist.length > 0) {
+    // Peek body untuk cek model (hanya jika ada Content-Type json)
+    const ct = c.req.header("content-type") || "";
+    if (ct.includes("json")) {
+      try {
+        const cloned = c.req.raw.clone();
+        const body: any = await cloned.json();
+        const requested = String(body?.model || "").toLowerCase();
+        // Strip "provider/" prefix untuk perbandingan
+        const bareModel = requested.includes("/") ? requested.split("/").pop()! : requested;
+        const ok = meta.modelWhitelist.some((allowed) => bareModel === allowed || bareModel.includes(allowed));
+        if (requested && !ok) {
+          return c.json(
+            {
+              error: {
+                message: `Model "${body.model}" not allowed for this API key. Allowed: ${meta.modelWhitelist.join(", ")}`,
+                type: "model_not_allowed",
+              },
+            },
+            403
+          );
+        }
+      } catch {
+        // Body bukan JSON valid — biarkan handler downstream yang reject
+      }
+    }
+  }
+
+  c.set("apiKeyMeta", meta);
+  const { requestContext } = await import("./services/request-context");
+  const apiKeyId = meta.type === "managed" ? meta.id : null;
+  return requestContext.run({ apiKeyId, apiKeyType: meta.type }, () => next());
 });
 
 // API Key authentication for management API
