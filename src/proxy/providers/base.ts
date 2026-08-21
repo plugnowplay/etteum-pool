@@ -282,29 +282,46 @@ export abstract class BaseProvider {
 
   protected async fetchWithTimeout(url: string, init: RequestInit, timeoutMs = config.providerRequestTimeoutMs): Promise<Response> {
     const { getNextProxy, markProxySuccess, markProxyFail } = await import("../../services/proxy-pool");
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
-    const proxy = await getNextProxy("model");
-    this.lastProxy = proxy;
-    if (!proxy) {
-      clearTimeout(timer);
-      throw new Error(`[NO-PROXY] ${this.name}: no active proxy in pool for ${url} — refusing direct VPS IP`);
+    const maxAttempts = 2; // 1 original + 1 retry on a fresh proxy (warp rotation mid-stream kills sockets)
+    let lastErr: unknown;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
+      const proxy = await getNextProxy("model");
+      this.lastProxy = proxy;
+      if (!proxy) {
+        clearTimeout(timer);
+        throw new Error(`[NO-PROXY] ${this.name}: no active proxy in pool for ${url} — refusing direct VPS IP`);
+      }
+      const proxyLabel = `via proxy ${proxy.id} (${proxy.url.match(/@([^:\\/]+)/)?.[1] || proxy.url})`;
+      console.log(`[PROXY] ${this.name}: ${url} ${proxyLabel}${attempt > 1 ? ` (retry ${attempt}/${maxAttempts})` : ""}`);
+      try {
+        const response = await fetch(url, {
+          ...init,
+          signal: controller.signal,
+          proxy: proxy.url,
+        } as any);
+        if (proxy) void markProxySuccess(proxy.id);
+        return response;
+      } catch (err) {
+        if (proxy) void markProxyFail(proxy.id, err instanceof Error ? err.message : String(err));
+        lastErr = err;
+        clearTimeout(timer);
+        // Only retry when the failure looks like a connection/socket problem
+        // (e.g. warp rotation restarted the egress mid-request) AND we have
+        // more than one proxy to fail over to. Do NOT retry HTTP-level
+        // errors — those reach us as Responses, not exceptions.
+        const msg = err instanceof Error ? err.message : String(err);
+        const retryable = /socket|closed unexpectedly|aborted|econnreset|econnrefused|etimedout|timeout|fetch failed|tunnel/i.test(msg);
+        if (attempt < maxAttempts && retryable) {
+          console.log(`[PROXY] ${this.name}: attempt ${attempt} failed via proxy ${proxy.id} (${msg}) — retrying with another proxy`);
+          continue;
+        }
+        throw err;
+      } finally {
+        clearTimeout(timer);
+      }
     }
-    const proxyLabel = `via proxy ${proxy.id} (${proxy.url.match(/@([^:\\/]+)/)?.[1] || proxy.url})`;
-    console.log(`[PROXY] ${this.name}: ${url} ${proxyLabel}`);
-    try {
-      const response = await fetch(url, {
-        ...init,
-        signal: controller.signal,
-        proxy: proxy.url,
-      } as any);
-      if (proxy) void markProxySuccess(proxy.id);
-      return response;
-    } catch (err) {
-      if (proxy) void markProxyFail(proxy.id, err instanceof Error ? err.message : String(err));
-      throw err;
-    } finally {
-      clearTimeout(timer);
-    }
+    throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
   }
 }
