@@ -282,7 +282,11 @@ export abstract class BaseProvider {
 
   protected async fetchWithTimeout(url: string, init: RequestInit, timeoutMs = config.providerRequestTimeoutMs): Promise<Response> {
     const { getNextProxy, markProxySuccess, markProxyFail } = await import("../../services/proxy-pool");
-    const maxAttempts = 2; // 1 original + 1 retry on a fresh proxy (warp rotation mid-stream kills sockets)
+    const maxAttempts = 3; // 1 original + up to 2 retries on fresh proxies
+    // (warp rotation restarts the egress mid-request; a dead port surfaces
+    // from Bun as "Unable to connect. Is the computer able to access the
+    // url?" which contains NONE of the classic socket errno names — match it
+    // explicitly or failover silently never happens)
     let lastErr: unknown;
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       const controller = new AbortController();
@@ -312,7 +316,11 @@ export abstract class BaseProvider {
         // more than one proxy to fail over to. Do NOT retry HTTP-level
         // errors — those reach us as Responses, not exceptions.
         const msg = err instanceof Error ? err.message : String(err);
-        const retryable = /socket|closed unexpectedly|aborted|econnreset|econnrefused|etimedout|timeout|fetch failed|tunnel/i.test(msg);
+        // NOTE: Bun's proxy-connect failure is the literal string
+        // "Unable to connect. Is the computer able to access the url?" —
+        // no errno, no "connection refused". Without the explicit match the
+        // regex below misses it and a dead proxy port never fails over.
+        const retryable = /socket|closed unexpectedly|aborted|econnreset|econnrefused|etimedout|timed out|timeout|fetch failed|tunnel|unable to connect|is the computer able/i.test(msg);
         if (attempt < maxAttempts && retryable) {
           console.log(`[PROXY] ${this.name}: attempt ${attempt} failed via proxy ${proxy.id} (${msg}) — retrying with another proxy`);
           continue;

@@ -1,6 +1,6 @@
 import { db } from "../db/index";
 import { proxyPool, settings } from "../db/schema";
-import { eq, sql, inArray } from "drizzle-orm";
+import { eq, sql, inArray, and, lt } from "drizzle-orm";
 
 interface CachedProxy {
   id: number;
@@ -17,6 +17,20 @@ async function refreshCache(): Promise<CachedProxy[]> {
   const now = Date.now();
   if (now - cacheTimestamp < CACHE_TTL_MS && cachedProxies.length > 0) {
     return cachedProxies;
+  }
+
+  // Self-heal proxies stuck in 'rotating' (rotate-warp.sh marks them before
+  // docker restart; a SIGKILL/reboot can skip the restore). Rotation takes
+  // at most ~2 min — anything older than 5 min is stale, put it back in
+  // rotation and let the outcome-window eviction deal with it if it's dead.
+  try {
+    const staleCutoff = new Date(now - 5 * 60_000);
+    await db
+      .update(proxyPool)
+      .set({ status: "active", errorMessage: "recovered from stale 'rotating' state" })
+      .where(and(eq(proxyPool.status, "rotating"), lt(proxyPool.updatedAt, staleCutoff)));
+  } catch {
+    // best-effort — never block request path on this
   }
 
   const rows = await db
@@ -141,10 +155,31 @@ export function advanceSequentialIndex() {
  *  a generic connect error, so we count consecutive failures in memory. */
 const PROXY_EXHAUST_FAILS = 3;
 
+/**
+ * Rolling outcome window per proxy. Round-robin INTERLEAVES requests across
+ * the pool, so a hard-dead proxy only fails once every N requests and never
+ * reaches the consecutive threshold on its own — it would stay "active"
+ * forever and keep eating traffic. The window tracks the last N outcomes
+ * (true = success, false = fail) per proxy; once there are enough samples,
+ * a sustained fail ratio evicts the proxy regardless of interleaving.
+ */
+const OUTCOME_WINDOW_MAX = 20;
+const OUTCOME_WINDOW_MIN = 8; // need at least this many samples before judging
+const OUTCOME_FAIL_RATIO = 0.6; // >= 60% fails in the window → evict
+
 const consecutiveFails = new Map<number, number>();
+const outcomeWindow = new Map<number, boolean[]>();
+
+function recordOutcome(id: number, ok: boolean) {
+  const window = outcomeWindow.get(id) ?? [];
+  window.push(ok);
+  if (window.length > OUTCOME_WINDOW_MAX) window.shift();
+  outcomeWindow.set(id, window);
+}
 
 export async function markProxySuccess(id: number) {
   consecutiveFails.delete(id);
+  recordOutcome(id, true);
   await db
     .update(proxyPool)
     .set({ successCount: sql`${proxyPool.successCount} + 1`, updatedAt: new Date() })
@@ -164,24 +199,42 @@ export async function markProxyFail(id: number, error?: string) {
   // In sequential mode, advance to next proxy on failure
   advanceSequentialIndex();
 
-  // Exhaustion detection: N consecutive failures with no success in between
-  // means the proxy is out of traffic (Bun collapses proxy 407
-  // TRAFFIC_EXHAUSTED into a generic "Unable to connect" throw). Mark it
-  // error, pull it from rotation, and notify the dashboard.
+  // Exhaustion detection, two signals:
+  // 1. N consecutive failures with no success in between means the proxy is
+  //    out of traffic (Bun collapses proxy 407 TRAFFIC_EXHAUSTED into a
+  //    generic "Unable to connect" throw).
+  // 2. Sustained fail RATIO over the rolling window — round-robin interleaves
+  //    requests across the pool, so a hard-dead proxy never strings together
+  //    3 consecutive fails (its successes elsewhere reset the counter) yet
+  //    keeps failing every time it's picked. The ratio signal catches that.
   const fails = (consecutiveFails.get(id) ?? 0) + 1;
   consecutiveFails.set(id, fails);
-  if (fails < PROXY_EXHAUST_FAILS) return;
+
+  const window = outcomeWindow.get(id) ?? [];
+  window.push(false);
+  if (window.length > OUTCOME_WINDOW_MAX) window.shift();
+  outcomeWindow.set(id, window);
+  const windowFails = window.filter((ok) => !ok).length;
+  const ratioEvict =
+    window.length >= OUTCOME_WINDOW_MIN &&
+    windowFails / window.length >= OUTCOME_FAIL_RATIO;
+
+  if (fails < PROXY_EXHAUST_FAILS && !ratioEvict) return;
 
   consecutiveFails.delete(id);
+  outcomeWindow.delete(id);
   const [row] = await db
     .select({ status: proxyPool.status })
     .from(proxyPool)
     .where(eq(proxyPool.id, id));
   if (!row || row.status !== "active") return;
 
+  const reason = ratioEvict && fails < PROXY_EXHAUST_FAILS
+    ? `sustained fail ratio ${windowFails}/${window.length} over last ${window.length} attempts`
+    : `${fails} consecutive failures`;
   await db
     .update(proxyPool)
-    .set({ status: "error", errorMessage: "Proxy traffic exhausted (repeated connect failures)" })
+    .set({ status: "error", errorMessage: `Proxy unusable (${reason})` })
     .where(eq(proxyPool.id, id));
   cachedProxies = cachedProxies.filter((p) => p.id !== id);
   cacheTimestamp = 0;
@@ -192,11 +245,11 @@ export async function markProxyFail(id: number, error?: string) {
       id,
       failCount: fails,
       error: error || "Unable to connect",
-      message: `Proxy #${id} traffic exhausted — removed from rotation`,
+      message: `Proxy #${id} ${reason} — removed from rotation`,
       timestamp: new Date().toISOString(),
     },
   });
-  console.warn(`[PROXY-EXHAUSTED] Proxy #${id} disabled after ${fails} consecutive failures`);
+  console.warn(`[PROXY-EXHAUSTED] Proxy #${id} disabled after ${reason}`);
 }
 
 // ── Health check ────────────────────────────────────────────────────
