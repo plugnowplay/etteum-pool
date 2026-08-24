@@ -21,6 +21,8 @@ export interface ChatCompletionRequest {
   tool_choice?: any;
   reasoning_effort?: string;
   thinking?: { type: string; budget_tokens?: number; display?: string; effort?: string; summary?: string };
+  /** Client-supplied prompt-cache key (xAI/OpenAI compat). Used by grok-cli for prompt caching. */
+  prompt_cache_key?: string;
 }
 
 export interface ChatCompletionChoice {

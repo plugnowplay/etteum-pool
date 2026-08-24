@@ -751,6 +751,10 @@ function responsesStreamToChatStream(
               // Emit usage if present
               if (event.response?.usage || event.usage) {
                 const usage = event.response?.usage || event.usage;
+                const cachedTokens = Number(
+                  usage?.input_tokens_details?.cached_tokens ??
+                  usage?.prompt_tokens_details?.cached_tokens ?? 0
+                ) || 0;
                 const usageChunk = {
                   id,
                   object: "chat.completion.chunk",
@@ -761,6 +765,7 @@ function responsesStreamToChatStream(
                     prompt_tokens: usage.input_tokens || usage.prompt_tokens || 0,
                     completion_tokens: usage.output_tokens || usage.completion_tokens || 0,
                     total_tokens: (usage.input_tokens || 0) + (usage.output_tokens || 0),
+                    ...(cachedTokens > 0 ? { prompt_tokens_details: { cached_tokens: cachedTokens } } : {}),
                   },
                 };
                 controller.enqueue(encoder.encode(`data: ${JSON.stringify(usageChunk)}\n\n`));
@@ -839,6 +844,10 @@ function responsesToChatCompletion(data: any, originalModel: string): ChatComple
 
   const finishReason = toolCalls.length > 0 ? "tool_calls" : "stop";
   const usage = data.usage || {};
+  const cachedTokens = Number(
+    (usage as any)?.input_tokens_details?.cached_tokens ??
+    (usage as any)?.prompt_tokens_details?.cached_tokens ?? 0
+  ) || 0;
 
   return {
     id: data.id || `chatcmpl-${Date.now().toString(36)}`,
@@ -858,6 +867,7 @@ function responsesToChatCompletion(data: any, originalModel: string): ChatComple
       prompt_tokens: usage.input_tokens || 0,
       completion_tokens: usage.output_tokens || 0,
       total_tokens: (usage.input_tokens || 0) + (usage.output_tokens || 0),
+      ...(cachedTokens > 0 ? { prompt_tokens_details: { cached_tokens: cachedTokens } } : {}),
     },
   };
 }
@@ -977,6 +987,24 @@ export class GrokCliProvider extends BaseProvider {
       stream: true, // cli-chat-proxy forces streaming
       store: false,
     };
+
+    // Prompt caching: xAI caches ≥1024-token stable prefixes. Send a stable
+    // cache key so repeated prompts from the same client hit the cache.
+    // Explicit client key wins; otherwise derive a stable key from the
+    // system+tools prefix (FNV-1a hash, cheap, no crypto dependency).
+    if (request.prompt_cache_key) {
+      body.prompt_cache_key = String(request.prompt_cache_key).slice(0, 64);
+    } else {
+      let h = 0x811c9dc5;
+      const prefix = (body.instructions || "") + JSON.stringify(body.tools || []);
+      for (let i = 0; i < prefix.length; i++) {
+        h ^= prefix.charCodeAt(i);
+        h = Math.imul(h, 0x01000193) >>> 0;
+      }
+      if (prefix.length > 0) {
+        body.prompt_cache_key = `etteum-${h.toString(16)}-${def.upstream}`;
+      }
+    }
 
     if (instructions) body.instructions = instructions;
 
@@ -1381,6 +1409,9 @@ export class GrokCliProvider extends BaseProvider {
         prompt_tokens: usage?.input_tokens || 0,
         completion_tokens: usage?.output_tokens || 0,
         total_tokens: (usage?.input_tokens || 0) + (usage?.output_tokens || 0),
+        ...((Number(usage?.input_tokens_details?.cached_tokens ?? 0) || 0) > 0
+          ? { prompt_tokens_details: { cached_tokens: Number(usage!.input_tokens_details!.cached_tokens) } }
+          : {}),
       },
     };
 
