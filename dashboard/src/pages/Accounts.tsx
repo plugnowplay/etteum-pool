@@ -1346,10 +1346,17 @@ export default function Accounts() {
         usedTotal = reported.reduce((sum, a) => sum + Math.max(0, Number(a.metadata!.serverQuota!.used ?? 0)), 0);
         quotaLimit = reported.reduce((sum, a) => sum + Math.max(0, Number(a.metadata!.serverQuota!.limit ?? 0)), 0);
         quotaRemaining = reported.reduce((sum, a) => sum + Math.max(0, Number(a.metadata!.serverQuota!.remaining ?? 0)), 0);
-        // Daily free bucket from request_logs (billing endpoint only exposes monthly)
-        dailyFreeUsed = activeRows.reduce((sum, a) => sum + Number((a as any).dailyFreeUsed ?? 0), 0);
-        dailyFreeLimit = activeRows.reduce((sum, a) => sum + Number((a as any).dailyFreeLimit ?? 0), 0);
-        const reset = activeRows.find((a) => (a as any).dailyFreeResetAt);
+        // Daily free bucket from request_logs (billing endpoint only exposes
+        // monthly). Aggregate across ALL grok-cli rows — not just active — so
+        // the card keeps its Free bar when every account is exhausted. An
+        // exhausted account has burned its daily bucket even if the local log
+        // sum lags, so count it as fully used.
+        dailyFreeUsed = rows.reduce(
+          (sum, a) => sum + (a.status === "exhausted" ? Number((a as any).dailyFreeLimit ?? 500_000) : Number((a as any).dailyFreeUsed ?? 0)),
+          0
+        );
+        dailyFreeLimit = rows.reduce((sum, a) => sum + Number((a as any).dailyFreeLimit ?? 0), 0);
+        const reset = rows.find((a) => (a as any).dailyFreeResetAt);
         dailyFreeResetAt = (reset as any)?.dailyFreeResetAt ?? null;
       }
       return {
@@ -1458,7 +1465,10 @@ export default function Accounts() {
                 </div>
               </div>
 
-              {/* Credits used */}
+              {/* Credits used — hidden for grok-cli: the monthly billing meter
+                  reads near-zero and the real constraint is the daily free
+                  bucket shown below. */}
+              {stat.provider !== "grok-cli" && (
               <div className="space-y-1.5">
                 <div className="flex justify-between text-xs">
                   <span className="text-[var(--muted-foreground)]">Credits</span>
@@ -1476,6 +1486,7 @@ export default function Accounts() {
                   className="h-2"
                 />
               </div>
+              )}
 
               {/* Daily free quota (Grok CLI Build 500K/day) */}
               {stat.dailyFreeLimit > 0 && (
