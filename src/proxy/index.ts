@@ -729,6 +729,24 @@ proxyRouter.get("/v1/models", async (c) => {
     return usable.has(provider);
   });
 
+  // Append combo models (combo:<name>) so clients can discover them in the
+  // listing. A combo is listed only when at least one of its member models
+  // resolves to a provider with a usable account — otherwise it would fail
+  // with "No active accounts available" on call.
+  try {
+    const { listCombos, comboModels } = await import("./combos");
+    const combos = await listCombos();
+    const listable = combos.filter((combo) =>
+      combo.models.some((m) => {
+        const { provider } = parseModelId(m);
+        return !provider || usable.has(provider);
+      }),
+    );
+    models.push(...comboModels(listable));
+  } catch (e) {
+    console.error("[Combos] listing failed:", e instanceof Error ? e.message : e);
+  }
+
   return c.json({
     object: "list",
     data: models,
