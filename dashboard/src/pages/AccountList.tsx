@@ -281,38 +281,30 @@ function GrokCliQuotaCell({ account }: { account: Account }) {
   }, []);
 
   // Parse metadata.serverQuota fallback
-  const q = account.metadata?.serverQuota;
-  const unlimited = q?.limit == null || q?.limit < 0;
-  const localUsed = Math.max(0, Number(q?.used ?? usage?.used ?? 0));
-  const limit = usage ? usage.limit : (unlimited ? null : Math.max(0, Number(q?.limit ?? 0)));
-  const remaining = usage ? usage.remaining : (unlimited ? null : Math.max(0, Number(q?.remaining ?? 0)));
   const valid = usage?.valid ?? account.status !== "error";
   const tokenExpired = usage?.tokenExpired ?? false;
   const errorMsg = usage?.errorMsg ?? account.errorMessage ?? null;
   const isExhausted = account.status === "exhausted";
-  // Show used/limit (not remaining/limit) so a fresh account reads 0/500k
-  // and an exhausted one reads 500k/500k (full bar, red) — matching Grok.
-  const used = isExhausted ? (limit ?? 0)
-    : Number(usage?.used ?? q?.used ?? 0) || 0;
-  const displayUsed = used;
-  const displayPct = isExhausted ? 100
-    : limit != null && limit > 0 ? Math.min(100, Math.round((used / limit) * 100)) : null;
-  const tone = isExhausted ? "bg-[var(--error)]"
-    : displayPct == null ? "bg-[var(--primary)]"
-    : displayPct >= 90 ? "bg-[var(--error)]"
-    : displayPct >= 60 ? "bg-[var(--warning)]" : "bg-[var(--success)]";
-  const resetSec = usage?.resetAt ? Math.round((Date.parse(usage.resetAt) - Date.now()) / 1000) : null;
-  const reset = resetSec ? formatResetIn(resetSec) : null;
 
   // Daily free bucket (Grok Build 500K/day, UTC-midnight reset). The billing
   // endpoint only exposes the MONTHLY meter, so the daily number comes from
   // the grok-real-usage endpoint (local request_logs sum since UTC midnight).
+  // This is the ONLY quota bar shown for grok-cli: the daily free allowance
+  // is the real constraint (429 subscription:free-usage-exhausted fires on
+  // it), while billing "used" is a monthly meter that reads near-zero and
+  // just confuses the dashboard.
   const dailyUsed = Number(usage?.dailyUsed ?? 0);
   const dailyLimit = Number(usage?.dailyLimit ?? 0);
   const dailyHasData = dailyLimit > 0;
-  const dailyPct = dailyHasData ? Math.max(0, Math.min(100, (dailyUsed / dailyLimit) * 100)) : null;
+  // An exhausted account has burned its daily bucket even if the local log
+  // sum lags (e.g. requests failed upstream after quota was already out).
+  const effectiveUsed = isExhausted ? dailyLimit : dailyUsed;
+  const dailyPct = dailyHasData ? Math.max(0, Math.min(100, (effectiveUsed / dailyLimit) * 100)) : null;
   const dailyResetSec = usage?.dailyResetAt ? Math.round((Date.parse(usage.dailyResetAt) - Date.now()) / 1000) : null;
   const dailyReset = dailyResetSec && dailyResetSec > 0 ? formatResetIn(dailyResetSec) : null;
+  const tone = isExhausted || (dailyPct != null && dailyPct >= 90) ? "bg-[var(--error)]"
+    : dailyPct != null && dailyPct >= 60 ? "bg-[var(--warning)]"
+    : "bg-[var(--success)]";
 
   // Badge logic: distinguish token-expired from quota-exhausted from probe-error.
   // - tokenExpired (401/403 from billing) → red EXPIRED
@@ -324,7 +316,7 @@ function GrokCliQuotaCell({ account }: { account: Account }) {
     badge = <span className="text-[var(--warning)]">…</span>;
   } else if (tokenExpired) {
     badge = <span className="inline-flex items-center gap-1 px-1 py-0 rounded bg-[var(--error)] text-white"><XCircle className="w-2 h-2" /> EXPIRED</span>;
-  } else if (isExhausted || (valid && remaining != null && remaining <= 0)) {
+  } else if (isExhausted || (valid && dailyHasData && effectiveUsed >= dailyLimit)) {
     badge = <span className="inline-flex items-center gap-1 px-1 py-0 rounded bg-[var(--warning)] text-white"><AlertTriangle className="w-2 h-2" /> EXHAUSTED</span>;
   } else if (valid && errorMsg && !loading) {
     badge = <span className="inline-flex items-center gap-1 px-1 py-0 rounded bg-[var(--warning)] text-white"><AlertTriangle className="w-2 h-2" /> PROBE ERR</span>;
@@ -338,40 +330,29 @@ function GrokCliQuotaCell({ account }: { account: Account }) {
         <span className="truncate">{account.email.split("@")[0]}</span>
         {badge}
       </div>
-      {/* Daily free bucket (Grok Build 500K/day) */}
-      {dailyHasData && (
+      {/* Free daily bucket (Grok Build 500K/day) — the only quota that matters
+          for grok-cli. Monthly billing meter is intentionally NOT shown: it
+          reads near-zero (570/500k) while the real 429s fire on the daily
+          bucket, which just confuses the dashboard. */}
+      {dailyHasData ? (
         <div className="space-y-0.5">
           <div className="flex items-center justify-between text-[10px] text-[var(--muted-foreground)]">
             <span className="font-medium">Free</span>
             <span>
-              {formatCredit(dailyUsed)}/{formatCredit(dailyLimit)}
+              {formatCredit(effectiveUsed)}/{formatCredit(dailyLimit)}
               {dailyReset ? ` · reset ${dailyReset}` : ""}
             </span>
           </div>
           <div className="h-1 w-full rounded-full bg-[var(--secondary)] overflow-hidden">
-            {dailyPct != null && (
-              <div
-                className={`h-full ${dailyPct >= 90 ? "bg-[var(--error)]" : dailyPct >= 60 ? "bg-[var(--warning)]" : "bg-[var(--success)]"}`}
-                style={{ width: `${dailyPct}%` }}
-              />
-            )}
+            {dailyPct != null && <div className={`h-full ${tone}`} style={{ width: `${dailyPct}%` }} />}
           </div>
         </div>
+      ) : (
+        <div className="flex items-center justify-between text-[10px] text-[var(--muted-foreground)]">
+          <span className="font-medium">Free</span>
+          <span className="opacity-60">n/a</span>
+        </div>
       )}
-      {/* Monthly (billing) */}
-      <div className="flex items-center justify-between text-[10px] text-[var(--muted-foreground)]">
-        <span>Used</span>
-        <span>
-          {limit != null
-            ? `${formatCredit(displayUsed)} / ${formatCredit(limit)}`
-            : formatCredit(displayUsed)}
-          {reset ? ` · reset ${reset}` : ""}
-        </span>
-      </div>
-      <div className="h-1.5 w-full rounded-full bg-[var(--secondary)] overflow-hidden">
-        {displayPct != null && <div className={`h-full ${tone}`} style={{ width: `${displayPct}%` }} />}
-        {displayPct == null && <div className={`h-full ${tone} opacity-60`} style={{ width: "100%" }} />}
-      </div>
       {errorMsg && !tokenExpired && <div className="text-[9px] text-[var(--warning)] truncate" title={errorMsg}>{errorMsg.slice(0, 40)}</div>}
     </div>
   );
