@@ -1337,12 +1337,20 @@ export default function Accounts() {
       let quotaRemaining = activeRows.reduce((sum, a) => sum + (a.quotaRemaining || 0), 0);
       let unlimitedCount = 0;
       let usedTotal = 0;
+      let dailyFreeUsed = 0;
+      let dailyFreeLimit = 0;
+      let dailyFreeResetAt: string | null = null;
       if (provider === "grok-cli") {
         const reported = activeRows.filter((a) => a.metadata?.serverQuota);
         unlimitedCount = reported.filter((a) => Number(a.metadata!.serverQuota!.limit ?? -1) <= 0).length;
         usedTotal = reported.reduce((sum, a) => sum + Math.max(0, Number(a.metadata!.serverQuota!.used ?? 0)), 0);
         quotaLimit = reported.reduce((sum, a) => sum + Math.max(0, Number(a.metadata!.serverQuota!.limit ?? 0)), 0);
         quotaRemaining = reported.reduce((sum, a) => sum + Math.max(0, Number(a.metadata!.serverQuota!.remaining ?? 0)), 0);
+        // Daily free bucket from request_logs (billing endpoint only exposes monthly)
+        dailyFreeUsed = activeRows.reduce((sum, a) => sum + Number((a as any).dailyFreeUsed ?? 0), 0);
+        dailyFreeLimit = activeRows.reduce((sum, a) => sum + Number((a as any).dailyFreeLimit ?? 0), 0);
+        const reset = activeRows.find((a) => (a as any).dailyFreeResetAt);
+        dailyFreeResetAt = (reset as any)?.dailyFreeResetAt ?? null;
       }
       return {
         provider,
@@ -1354,6 +1362,9 @@ export default function Accounts() {
         unlimitedCount,
         usedTotal,
         credits: { used: provider === "grok-cli" ? usedTotal : Math.max(0, quotaLimit - quotaRemaining), total: quotaLimit, remaining: quotaRemaining },
+        dailyFreeUsed,
+        dailyFreeLimit,
+        dailyFreeResetAt,
       };
     });
   }, [accounts]);
@@ -1465,6 +1476,25 @@ export default function Accounts() {
                   className="h-2"
                 />
               </div>
+
+              {/* Daily free quota (Grok CLI Build 500K/day) */}
+              {stat.dailyFreeLimit > 0 && (
+                <div className="space-y-1.5">
+                  <div className="flex justify-between text-xs">
+                    <span className="text-[var(--muted-foreground)]">Free daily</span>
+                    <span className="text-[var(--foreground)]">
+                      {stat.dailyFreeUsed.toFixed(1)} / {stat.dailyFreeLimit.toFixed(1)}
+                      {stat.dailyFreeResetAt && Date.parse(stat.dailyFreeResetAt) > Date.now()
+                        ? ` · reset ${Math.max(1, Math.round((Date.parse(stat.dailyFreeResetAt) - Date.now()) / 3600000))}h`
+                        : ""}
+                    </span>
+                  </div>
+                  <Progress
+                    value={stat.dailyFreeLimit > 0 ? Math.min(100, Math.round((stat.dailyFreeUsed / stat.dailyFreeLimit) * 100)) : 0}
+                    className="h-2"
+                  />
+                </div>
+              )}
 
               {/* WarmUp progress - shown while warmup is active */}
               {warmupProgress[stat.provider] && warmupProgress[stat.provider].total > 0 && (

@@ -192,8 +192,40 @@ accountsRouter.get("/", async (c) => {
       nextRefreshAt: nextCreditResetAt || nextTokenRefreshAt,
       nextCreditResetAt,
       nextTokenRefreshAt,
+      // Daily free bucket (Grok CLI Build 500K/day): billing endpoint only
+      // exposes the monthly meter, so daily comes from local request_logs.
+      // Filled in below for grok-cli accounts only.
+      dailyFreeUsed: 0,
+      dailyFreeLimit: 0,
+      dailyFreeResetAt: null,
     };
   });
+
+  // Batch-fill daily free-bucket usage for grok-cli accounts (one query for
+  // all of them — the card on /accounts aggregates this per provider).
+  const grokCliIds = sanitized.filter((a) => a.provider === "grok-cli").map((a) => a.id);
+  if (grokCliIds.length > 0) {
+    const startOfDayUtc = new Date();
+    startOfDayUtc.setUTCHours(0, 0, 0, 0);
+    const nextMidnightUtc = new Date();
+    nextMidnightUtc.setUTCHours(24, 0, 0, 0);
+    const daily = await db
+      .select({
+        accountId: requestLogs.accountId,
+        sum: sql`COALESCE(SUM(credits_used), 0)`,
+      })
+      .from(requestLogs)
+      .where(and(inArray(requestLogs.accountId, grokCliIds), gte(requestLogs.createdAt, startOfDayUtc)))
+      .groupBy(requestLogs.accountId);
+    const dailyByAccount = new Map(daily.map((r) => [r.accountId, Number(r.sum) || 0]));
+    for (const acc of sanitized) {
+      if (acc.provider === "grok-cli") {
+        acc.dailyFreeUsed = dailyByAccount.get(acc.id) ?? 0;
+        acc.dailyFreeLimit = 500_000;
+        acc.dailyFreeResetAt = nextMidnightUtc.toISOString();
+      }
+    }
+  }
 
   return c.json({ data: sanitized, total: sanitized.length });
 });
