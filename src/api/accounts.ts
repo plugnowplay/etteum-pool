@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { db } from "../db/index";
 import { accounts, requestLogs, vccCards, vccTransactions, settings, customModels } from "../db/schema";
-import { eq, inArray, and } from "drizzle-orm";
+import { eq, inArray, and, gte, sql } from "drizzle-orm";
 import { encrypt, decrypt } from "../utils/crypto";
 import { broadcast } from "../ws/index";
 import type { NewAccount } from "../db/schema";
@@ -3530,13 +3530,30 @@ accountsRouter.post("/:id/grok-real-usage", async (c) => {
     //    didn't return authoritative data (or failed transiently).
     if (!serverUsed && !tokenExpired) {
       const [logs] = await db
-        .select({ sum: db.sql`COALESCE(SUM(credits_used), 0)` })
+        .select({ sum: sql`COALESCE(SUM(credits_used), 0)` })
         .from(requestLogs)
         .where(eq(requestLogs.accountId, account.id));
       serverUsed = Number(logs?.sum ?? 0);
       remaining = Math.max(0, limit - serverUsed);
       resetAt = resetAt ?? new Date(Date.now() + 86400_000).toISOString();
     }
+
+    // 3) Daily free-bucket usage: Grok Build free allowance is 500K
+    //    tokens/day, resetting at UTC midnight. The billing endpoint only
+    //    exposes the MONTHLY meter (config.used), so the daily number must
+    //    come from local request_logs — same source the proxy decrements
+    //    against. Expose both meters so the dashboard can show them
+    //    separately instead of mixing monthly-used with the daily plan cap.
+    const DAILY_FREE_LIMIT = 500_000;
+    const startOfDayUtc = new Date();
+    startOfDayUtc.setUTCHours(0, 0, 0, 0);
+    const [dailyLogs] = await db
+      .select({ sum: sql`COALESCE(SUM(credits_used), 0)` })
+      .from(requestLogs)
+      .where(and(eq(requestLogs.accountId, account.id), gte(requestLogs.createdAt, startOfDayUtc)));
+    const dailyUsed = Number(dailyLogs?.sum ?? 0);
+    const nextMidnightUtc = new Date();
+    nextMidnightUtc.setUTCHours(24, 0, 0, 0);
 
     return c.json({
       accountId: account.id,
@@ -3548,6 +3565,10 @@ accountsRouter.post("/:id/grok-real-usage", async (c) => {
       tokenExpired,
       errorMsg,
       resetAt,
+      dailyUsed,
+      dailyLimit: DAILY_FREE_LIMIT,
+      dailyRemaining: Math.max(0, DAILY_FREE_LIMIT - dailyUsed),
+      dailyResetAt: nextMidnightUtc.toISOString(),
     });
   } catch (err) {
     return c.json({ error: err instanceof Error ? err.message : String(err) }, 500);

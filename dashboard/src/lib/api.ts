@@ -410,6 +410,11 @@ export interface GrokRealUsageResult {
   tokenExpired?: boolean;
   errorMsg: string | null;
   resetAt: string;
+  /** Daily free-bucket (Grok Build 500K/day, resets UTC midnight). */
+  dailyUsed?: number;
+  dailyLimit?: number;
+  dailyRemaining?: number;
+  dailyResetAt?: string;
 }
 
 export async function fetchGrokCliRealUsage(accountId: number): Promise<GrokRealUsageResult> {

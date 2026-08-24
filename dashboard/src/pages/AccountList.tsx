@@ -304,6 +304,16 @@ function GrokCliQuotaCell({ account }: { account: Account }) {
   const resetSec = usage?.resetAt ? Math.round((Date.parse(usage.resetAt) - Date.now()) / 1000) : null;
   const reset = resetSec ? formatResetIn(resetSec) : null;
 
+  // Daily free bucket (Grok Build 500K/day, UTC-midnight reset). The billing
+  // endpoint only exposes the MONTHLY meter, so the daily number comes from
+  // the grok-real-usage endpoint (local request_logs sum since UTC midnight).
+  const dailyUsed = Number(usage?.dailyUsed ?? 0);
+  const dailyLimit = Number(usage?.dailyLimit ?? 0);
+  const dailyHasData = dailyLimit > 0;
+  const dailyPct = dailyHasData ? Math.max(0, Math.min(100, (dailyUsed / dailyLimit) * 100)) : null;
+  const dailyResetSec = usage?.dailyResetAt ? Math.round((Date.parse(usage.dailyResetAt) - Date.now()) / 1000) : null;
+  const dailyReset = dailyResetSec && dailyResetSec > 0 ? formatResetIn(dailyResetSec) : null;
+
   // Badge logic: distinguish token-expired from quota-exhausted from probe-error.
   // - tokenExpired (401/403 from billing) → red EXPIRED
   // - exhausted                         → orange EXHAUSTED
@@ -328,6 +338,27 @@ function GrokCliQuotaCell({ account }: { account: Account }) {
         <span className="truncate">{account.email.split("@")[0]}</span>
         {badge}
       </div>
+      {/* Daily free bucket (Grok Build 500K/day) */}
+      {dailyHasData && (
+        <div className="space-y-0.5">
+          <div className="flex items-center justify-between text-[10px] text-[var(--muted-foreground)]">
+            <span className="font-medium">Free</span>
+            <span>
+              {formatCredit(dailyUsed)}/{formatCredit(dailyLimit)}
+              {dailyReset ? ` · reset ${dailyReset}` : ""}
+            </span>
+          </div>
+          <div className="h-1 w-full rounded-full bg-[var(--secondary)] overflow-hidden">
+            {dailyPct != null && (
+              <div
+                className={`h-full ${dailyPct >= 90 ? "bg-[var(--error)]" : dailyPct >= 60 ? "bg-[var(--warning)]" : "bg-[var(--success)]"}`}
+                style={{ width: `${dailyPct}%` }}
+              />
+            )}
+          </div>
+        </div>
+      )}
+      {/* Monthly (billing) */}
       <div className="flex items-center justify-between text-[10px] text-[var(--muted-foreground)]">
         <span>Used</span>
         <span>
