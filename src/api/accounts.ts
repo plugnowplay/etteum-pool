@@ -1819,7 +1819,10 @@ accountsRouter.post("/", async (c) => {
           access_token: accessToken,
           refresh_token: "",
           id_token: "",
-          expires_at: null as string | null,
+          // Raw access tokens carry no refresh token — decode the JWT exp so
+          // the account still shows a real expiry (and gets re-login-prompted
+          // when it lapses) instead of living with null expiry forever.
+          expires_at: grokCliAccessTokenExpiry(accessToken),
           email: finalEmail,
           method: "device_code" as const,
           providerSpecificData: {
@@ -1893,7 +1896,9 @@ accountsRouter.post("/", async (c) => {
       const finalEmail = profile.email || email || `grok-cli-${accessToken.slice(-8)}@device`;
       const expiresAt = body.expiresIn
         ? new Date(Date.now() + Number(body.expiresIn) * 1000).toISOString()
-        : null;
+        : refreshToken
+          ? null // refresh token present — real expiry will come from the next refresh cycle
+          : grokCliAccessTokenExpiry(accessToken); // raw token: decode JWT exp
 
       const tokens = {
         access_token: accessToken,
@@ -2817,6 +2822,22 @@ const CODEX_TOKEN_URL = `${CODEX_ISSUER}/oauth/token`;
 const CODEX_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
 const CODEX_USAGE_URL = "https://chatgpt.com/backend-api/wham/usage";
 const CODEX_SCOPE = "openid profile email offline_access";
+
+/**
+ * Best-effort expiry for a raw access token: if the token is a JWT, read
+ * the `exp` claim; otherwise fall back to a conservative 2h window (xAI
+ * device-code access tokens are short-lived, and better to mark expired
+ * early and prompt re-login than to let requests fail cryptically).
+ */
+function grokCliAccessTokenExpiry(accessToken: string): string | null {
+  const payload = decodeJwtPayload(accessToken);
+  const exp = Number(payload?.exp ?? 0);
+  if (exp > 0 && Number.isFinite(exp)) {
+    const expMs = exp * 1000;
+    if (expMs > Date.now()) return new Date(expMs).toISOString();
+  }
+  return new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString();
+}
 
 export function decodeJwtPayload(token: string): Record<string, any> {
   try {

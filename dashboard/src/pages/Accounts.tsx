@@ -140,6 +140,7 @@ export default function Accounts() {
   } | null>(null);
   const [grokCliAutoPolling, setGrokCliAutoPolling] = useState(false);
   const [grokCliAccessToken, setGrokCliAccessToken] = useState("");
+  const [grokCliRefreshToken, setGrokCliRefreshToken] = useState("");
   const [grokCliBulkTokens, setGrokCliBulkTokens] = useState("");
   const [grokCliError, setGrokCliError] = useState<string | null>(null);
   const [grokCliBusy, setGrokCliBusy] = useState(false);
@@ -595,12 +596,17 @@ export default function Accounts() {
     try {
       const res = await fetchApi<any>("/api/accounts", {
         method: "POST",
-        body: JSON.stringify({ provider: "grok-cli", accessToken: token }),
+        body: JSON.stringify({
+          provider: "grok-cli",
+          accessToken: token,
+          refreshToken: grokCliRefreshToken.trim(),
+        }),
       });
       showSuccess(res?.updated
         ? `Grok CLI key updated (${res.email})`
         : `Grok CLI ${res.email} added successfully`);
       setGrokCliAccessToken("");
+      setGrokCliRefreshToken("");
       setAddDialogProvider(null);
       await load();
     } catch (err) {
@@ -1061,6 +1067,8 @@ export default function Accounts() {
       stopCodexOAuth(state).catch(() => {});
     }
     setCodebuddyChinaBulkApiKeys("");
+    setGrokCliAccessToken("");
+    setGrokCliRefreshToken("");
     setAddDialogProvider(null);
   }
 
@@ -2106,6 +2114,19 @@ export default function Accounts() {
                     />
                     <p className="mt-1 text-xs text-[var(--muted-foreground)]">
                       Sign in with your xAI/Grok account via device code. Uses Grok Build subscription credits (cli-chat-proxy.grok.com).
+                    </p>
+                  </div>
+                  <div>
+                    <label className="text-sm text-[var(--foreground)]">Refresh Token (opsional — biar auto-refresh jalan)</label>
+                    <textarea
+                      value={grokCliRefreshToken}
+                      onChange={(e) => setGrokCliRefreshToken(e.target.value)}
+                      className="mt-1 w-full h-20 rounded-md border border-[var(--border)] bg-[var(--background)] p-3 text-sm font-mono text-[var(--foreground)] placeholder:text-[var(--muted-foreground)] focus:outline-none focus:ring-1 focus:ring-[var(--ring)] resize-none"
+                      placeholder="fa9hLb8ip1D…"
+                      disabled={grokCliBusy}
+                    />
+                    <p className="mt-1 text-xs text-[var(--muted-foreground)]">
+                      Kalau cuma punya access token, biarkan kosong — expiry otomatis di-decode dari JWT.
                     </p>
                   </div>
                   {grokCliError && <p className="text-xs text-[var(--error)]">{grokCliError}</p>}
