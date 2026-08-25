@@ -16,7 +16,14 @@ export function isBadUpstreamRequest(error?: string): boolean {
   const normalized = error.toLowerCase();
   return (
     normalized.includes("improperly formed request") ||
-    normalized.includes("unsupported parameter")
+    normalized.includes("unsupported parameter") ||
+    // DeepSeek / OpenAI-compatible 400s that are caused by the request
+    // payload (not the account). These must not poison the account —
+    // the same error reproduces regardless of which key is used.
+    normalized.includes("max_tokens must be") ||
+    normalized.includes('"type":"invalid_request_error"') ||
+    normalized.includes('"type":"api_error"') ||
+    normalized.includes("invalid_request_error")
   );
 }
 

@@ -115,8 +115,10 @@ export const config = {
   browserEngine: process.env.BROWSER_ENGINE || "camoufox",
   captchaService: process.env.CAPTCHA_SERVICE || "none",
   captchaApiKey: process.env.CAPTCHA_API_KEY || "",
-  // Providers: kiro, kiro-pro, codebuddy, canva, codex, qoder, gitlab-duo
-  providers: ["kiro", "kiro-pro", "codebuddy", "canva", "codex", "qoder", "gitlab-duo"] as const,
+  // Every provider registered in src/proxy/providers/registry.ts. Keep in sync
+  // when adding a provider — this list drives auto-warmup, /api/stats/providers
+  // and the dashboard provider cards.
+  providers: ["kiro", "kiro-pro", "codebuddy", "codebuddy-china", "canva", "codex", "qoder", "gitlab-duo", "youmind", "grok", "grok-cli"] as const,
 } as const;
 
 export type Config = typeof config;

@@ -972,7 +972,7 @@ accountsRouter.post("/models/test", async (c) => {
   try {
     const { routeRequest } = await import("../proxy/router");
     const { result, account, provider } = await routeRequest(
-      { model, messages: [{ role: "user", content: "Hi" }], max_tokens: 1, stream: false } as any,
+      { model, messages: [{ role: "user", content: "Hi" }], max_tokens: 10, stream: false } as any,
       false,
     );
     const latencyMs = Date.now() - started;
@@ -1047,12 +1047,12 @@ accountsRouter.post("/byok/:id/test", async (c) => {
     ? {
         model: testModel,
         messages: [{ role: "user", content: "Hi" }],
-        max_tokens: 1,
+        max_tokens: 10,
       }
     : {
         model: testModel,
         messages: [{ role: "user", content: "Hi" }],
-        max_tokens: 1,
+        max_tokens: 10,
       };
 
   if (isAnthropic) {

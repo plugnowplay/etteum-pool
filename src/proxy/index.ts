@@ -22,6 +22,27 @@ export const proxyRouter = new Hono();
 
 const MAX_REQUEST_LOGS = 50;
 
+/**
+ * Display name for the `provider` column in logs. All BYOK accounts carry the
+ * generic provider name "byok"; with multiple BYOK groups (b, hs, ...) that
+ * makes logs ambiguous. Show the group prefix (from the account email
+ * "<prefix>#<keyLabel>", or from a model id "<prefix>/<model>") instead so
+ * each request can be attributed to the right BYOK group.
+ */
+function logProviderName(
+  provider: string,
+  account?: { email?: string | null } | null,
+  model?: string
+): string {
+  if (provider !== "byok") return provider;
+  const email = account?.email || "";
+  const hashIdx = email.indexOf("#");
+  if (hashIdx > 0) return email.slice(0, hashIdx);
+  const slashIdx = (model || "").indexOf("/");
+  if (slashIdx > 0) return (model || "").slice(0, slashIdx);
+  return provider;
+}
+
 /** Upsert a request's stats into the usage_summary table (hourly bucket) */
 async function upsertUsageSummary(entry: {
   provider: string;
@@ -474,7 +495,7 @@ function wrapStreamWithUsageFinalizer(
             accountId: context.accountId,
             accountEmail: context.accountEmail,
             email: context.accountEmail,
-            provider: context.provider,
+            provider: logProviderName(context.provider, { email: context.accountEmail }),
             model: context.model,
             promptTokens: finalPromptTokens,
             completionTokens: finalCompletionTokens,
@@ -500,7 +521,7 @@ function wrapStreamWithUsageFinalizer(
 
         // Upsert to usage_summary + periodic prune
         void upsertUsageSummary({
-          provider: context.provider, model: context.model, status: "success",
+          provider: logProviderName(context.provider, { email: context.accountEmail }), model: context.model, status: "success",
           promptTokens: finalPromptTokens, completionTokens: finalCompletionTokens,
           totalTokens: finalTotalTokens, creditsUsed, durationMs,
         });
@@ -552,18 +573,60 @@ async function handleChatCompletion(body: ChatCompletionRequest) {
   body = { ...body, model: resolveModelAlias(normalizeModelId(body.model)) };
 
   // Combo resolution: if model is "combo:<name>" (or a bare name matching a
-  // saved combo), resolve to the combo's first model. Bare names are checked
-  // AFTER alias/prefix resolution so provider-prefixed ids always win.
+  // saved combo), resolve to the combo's models in strategy order. Bare names
+  // are checked AFTER alias/prefix resolution so provider-prefixed ids always
+  // win. For "fallback" strategy, try each model in order until one succeeds;
+  // for other strategies, the first model is used (round_robin/capacity
+  // ordering is handled by orderComboModels).
   const comboMatch = /^combo:(.+)$/i.exec(body.model.trim());
   const comboName = comboMatch?.[1] ?? body.model.trim();
   const { getCombo } = await import("./combos");
   const combo = await getCombo(comboName);
-  const comboModel = combo?.models[0];
-  if (comboModel) {
-    body = { ...body, model: comboModel };
+  const isStream = body.stream === true;
+
+  if (combo && combo.models.length > 0) {
+    // Use orderComboModels for proper ordering (fallback = original order).
+    const { orderComboModels } = await import("./combo-utils");
+    const { getAllModels } = await import("./providers/registry");
+    const allModels = getAllModels();
+    const modelInfo = (id: string) => allModels.find((m) => m.id === id);
+    const orderedModels = orderComboModels(combo, body, modelInfo);
+
+    // For non-fallback strategies (round_robin, capacity_auto_switch), just
+    // use the first ordered model. For fallback, loop through all models.
+    if (combo.strategy !== "fallback") {
+      body = { ...body, model: orderedModels[0] };
+      return handleChatCompletionRoute(body, isStream);
+    }
+
+    // Fallback strategy: try each model in order until one succeeds.
+    // Skip non-account errors (invalid model id, bad request) — those will
+    // fail on every model, so no point retrying.
+    const { isNonAccountRequestError } = await import("./errors");
+    let lastError = "";
+    for (const comboModelId of orderedModels) {
+      try {
+        return await handleChatCompletionRoute({ ...body, model: comboModelId }, isStream);
+      } catch (error) {
+        const errMsg = error instanceof Error ? error.message : String(error);
+        // Don't fallback on client-side errors (bad model, content moderation).
+        if (isNonAccountRequestError(errMsg)) throw error;
+        lastError = errMsg;
+        console.log(`[Combo:${comboName}] model "${comboModelId}" failed: ${errMsg.slice(0, 120)}, trying next…`);
+      }
+    }
+    throw new Error(`All combo models failed for "${comboName}". Last error: ${lastError}`);
   }
 
-  const isStream = body.stream === true;
+  // Non-combo request — route directly.
+  return handleChatCompletionRoute(body, isStream);
+}
+
+/**
+ * Inner route + logging — extracted so combo fallback can call it per model.
+ * This is the original body of handleChatCompletion from routeRequest onward.
+ */
+async function handleChatCompletionRoute(body: ChatCompletionRequest, isStream: boolean) {
   const { result, account, provider, durationMs, compressionStats, proxyUsed } = await routeRequest(body, isStream);
   let shouldReleaseTracking = true;
 
@@ -623,7 +686,7 @@ async function handleChatCompletion(body: ChatCompletionRequest) {
     accountId: account.id,
     accountEmail: account.email,
     apiKeyId,
-    provider,
+          provider: logProviderName(provider, account),
     model: logModel,
     promptTokens,
     completionTokens,
@@ -680,7 +743,7 @@ async function handleChatCompletion(body: ChatCompletionRequest) {
 
   // Upsert to usage_summary + periodic prune
   void upsertUsageSummary({
-    provider, model: logModel, status: "success",
+    provider: logProviderName(provider, account), model: logModel, status: "success",
     promptTokens, completionTokens, totalTokens, creditsUsed, durationMs,
   });
   if (++requestCounter % 10 === 0) void pruneRequestLogs();
@@ -755,8 +818,12 @@ proxyRouter.get("/v1/models", async (c) => {
 
 /**
  * POST /v1/chat/completions - Chat completion (streaming + non-streaming)
+ *
+ * Also mounted (see bottom of this section) at /chat/completions for clients
+ * that omit the /v1 prefix (opencode with baseURL not ending in /v1). The
+ * frontend nginx routes /chat/* to this backend, so both paths work.
  */
-proxyRouter.post("/v1/chat/completions", async (c) => {
+const chatCompletionsHandler = async (c: any) => {
   let body: ChatCompletionRequest;
   try {
     body = await c.req.json<ChatCompletionRequest>();
@@ -827,9 +894,27 @@ proxyRouter.post("/v1/chat/completions", async (c) => {
     const mappedModel = resolveModelAlias(normalizeModelId(body.model));
 
     // Log the error without masking the original proxy failure.
-    const provider = pool.getProviderForModel(mappedModel) || "unknown";
+    // For combo models, resolve the first combo model to get the real provider
+    // (instead of falling through to the kiro fallback provider).
+    let provider = "unknown";
+    let providerModel = mappedModel;
+    try {
+      const comboMatch = /^combo:(.+)$/i.exec(mappedModel.trim());
+      const comboName = comboMatch?.[1] ?? mappedModel.trim();
+      // Check if mappedModel IS a combo (bare name) — if so, resolve first model
+      const { getCombo } = await import("./combos");
+      const combo = await getCombo(comboName);
+      if (combo && combo.models.length > 0) {
+        providerModel = combo.models[0];
+        provider = pool.getProviderForModel(combo.models[0]) || "unknown";
+      } else {
+        provider = pool.getProviderForModel(mappedModel) || "unknown";
+      }
+    } catch {
+      provider = pool.getProviderForModel(mappedModel) || "unknown";
+    }
     await logProxyError({
-      provider,
+      provider: logProviderName(provider, null, providerModel),
       model: mappedModel,
       status: "error",
       errorMessage,
@@ -857,7 +942,12 @@ proxyRouter.post("/v1/chat/completions", async (c) => {
       invalidModel || badUpstreamRequest ? 400 : 503
     );
   }
-});
+};
+
+// Mount at both paths: canonical /v1 prefix and prefix-less /chat/completions
+// (opencode sends the latter when its baseURL lacks a trailing /v1).
+proxyRouter.post("/v1/chat/completions", chatCompletionsHandler);
+proxyRouter.post("/chat/completions", chatCompletionsHandler);
 
 /**
  * POST /v1/messages - Anthropic Messages-compatible endpoint

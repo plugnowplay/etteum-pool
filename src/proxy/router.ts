@@ -158,6 +158,12 @@ export async function routeRequest(
         }))?.account ?? null
       : await pool.getNextAccount(providerName);
     if (!account) {
+      // BYOK is key-based (not an account pool): if a previous attempt
+      // already captured the real upstream error, surface THAT instead of
+      // the misleading "no active accounts" pool message.
+      if (providerName === "byok" && lastError) {
+        throw new Error(lastError);
+      }
       throw new Error(
         `No active accounts available for provider: ${providerName}`
       );

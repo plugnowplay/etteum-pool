@@ -383,22 +383,26 @@ class AccountPool {
     model: string,
     options: { excludeAccountIds?: Set<number> } = {}
   ): Promise<{ account: Account; provider: ProviderName } | null> {
+    // BYOK prefixes are dynamic (DB-backed) and its ownsModel() depends on a
+    // 10s cache. findAccountForModel() internally calls ensureCache(), so a
+    // stale/empty cache is refreshed before the lookup — a byok-prefixed model
+    // can never fall through to the fallback provider (kiro) due to cache lag.
+    const { getByokProvider } = await import("./providers/registry");
+    const byokProvider = getByokProvider();
+    const byokAccount = await byokProvider.findAccountForModel(model, {
+      excludeAccountIds: options.excludeAccountIds,
+      loadBalancingMethod: await this.getLoadBalancingMethod("byok"),
+      getInFlightCount: (accountId) => this.getInFlightCount(accountId),
+    });
+    if (byokAccount) return { account: byokAccount, provider: "byok" };
+
     // Determine which provider handles this model
     const provider = this.getProviderForModel(model);
     if (!provider) return null;
 
     // BYOK requires special handling - find account by prefix
     if (provider === "byok") {
-      const { getByokProvider } = await import("./providers/registry");
-      const byokProvider = getByokProvider();
-      const prefix = byokProvider.findPrefixForModel(model);
-      const account = await byokProvider.findAccountForModel(model, {
-        excludeAccountIds: options.excludeAccountIds,
-        loadBalancingMethod: prefix ? await this.getByokLoadBalancingMethod(prefix) : await this.getLoadBalancingMethod("byok"),
-        getInFlightCount: (accountId) => this.getInFlightCount(accountId),
-      });
-      if (!account) return null;
-      return { account, provider: "byok" };
+      return null;
     }
 
     const account = await this.getNextAccount(provider);
