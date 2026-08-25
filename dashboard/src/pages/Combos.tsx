@@ -7,7 +7,7 @@ import { PageHeader, PageShell } from "@/components/ui/page-header";
 import { EmptyState } from "@/components/ui/empty-state";
 import { useToast } from "@/components/ui/toast";
 import { fetchApi } from "@/lib/api";
-import { Layers, Plus, Trash2, Save } from "lucide-react";
+import { Layers, Plus, Trash2, Save, ArrowUp, ArrowDown } from "lucide-react";
 
 type Strategy = "fallback" | "round_robin" | "fusion" | "capacity_auto_switch";
 type Combo = { name: string; strategy: Strategy; models: string[]; judgeModel?: string | null };
@@ -40,6 +40,17 @@ export default function Combos() {
 
   const modelOptions = useMemo(() => models.map((model) => model.id), [models]);
   const updateSelected = (patch: Partial<Combo>) => setSelected((current) => current ? { ...current, ...patch } : current);
+
+  function moveModel(index: number, dir: -1 | 1) {
+    setSelected((current) => {
+      if (!current) return current;
+      const target = index + dir;
+      if (target < 0 || target >= current.models.length) return current;
+      const next = [...current.models];
+      [next[index], next[target]] = [next[target], next[index]];
+      return { ...current, models: next };
+    });
+  }
 
   async function save() {
     if (!selected) return;
@@ -172,6 +183,24 @@ export default function Combos() {
                           <option key={id} value={id}>{id}</option>
                         ))}
                       </Select>
+                      <Button
+                        variant="outline"
+                        size="icon"
+                        aria-label={`Move panel model ${index + 1} up`}
+                        disabled={index === 0}
+                        onClick={() => moveModel(index, -1)}
+                      >
+                        <ArrowUp className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="icon"
+                        aria-label={`Move panel model ${index + 1} down`}
+                        disabled={index === selected.models.length - 1}
+                        onClick={() => moveModel(index, 1)}
+                      >
+                        <ArrowDown className="h-4 w-4" />
+                      </Button>
                       <Button
                         variant="outline"
                         size="icon"
