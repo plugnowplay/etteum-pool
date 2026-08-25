@@ -57,8 +57,11 @@ const XAI_OAUTH_CLIENT_ID = "b1a00492-073a-47ea-816f-4c329264a828";
 const XAI_OAUTH_SCOPE =
   "openid profile email offline_access grok-cli:access api:access conversations:read conversations:write";
 
-// Refresh token 5 minutes before expiry
-const REFRESH_LEAD_MS = 5 * 60 * 1000;
+// Refresh token before expiry. Lead must EXCEED the auto-warmup interval
+// (default 15 min) so a token is guaranteed to be rotated before it expires
+// even if the scheduler tick lands just after the old lead window opened.
+// 20 min > 15 min interval ⇒ always refreshed in time.
+const REFRESH_LEAD_MS = 20 * 60 * 1000;
 
 const EFFORT_LEVELS = ["low", "medium", "high", "xhigh"];
 
@@ -82,13 +85,14 @@ const PLENGER_EXPECTED = "909";
 const PLENGER_DISABLE_MS = 5 * 60 * 60 * 1000; // 5 hours
 const PLENGER_PROBE_TIMEOUT_MS = 90_000;
 const PLENGER_PROBE_MODEL = "grok-4.6";
-// Probe traffic is routed via a dedicated rotating mobile proxy (rotate per
-// request) so validation doesn't share an IP with real account traffic and
-// doesn't burn a pool proxy. Kept separate from the account proxy pool.
-// Value comes from config.plengerProxyUrl (env PLENGER_PROXY_URL) so the
-// proxy credentials never land in the public repo.
-function plengerProxyUrl(): string {
-  return config.plengerProxyUrl;
+// Probe traffic is routed through the same proxy pool as account traffic —
+// getNextProxy() pulls from proxy_pool (gost bridges → microwarp egress).
+// No dedicated env needed; the pool IS the egress. Refuses to probe without
+// an active proxy so the VPS IP never leaks to xAI.
+async function plengerProxyUrl(): Promise<string | null> {
+  const { getNextProxy } = await import("../../services/proxy-pool");
+  const proxy = await getNextProxy("model");
+  return proxy?.url ?? null;
 }
 // A fresh "valid" verdict is trusted for this long — without it every chat
 // request would pay the probe round-trip.
@@ -1180,16 +1184,15 @@ export class GrokCliProvider extends BaseProvider {
     const accessToken = this.getAccessToken(account);
     if (!accessToken) return { success: false, error: "No access token" };
 
-    // Plenger probe DISABLED for now (user request, 2026-08-19). Marker + proxy
-    // are ready (909 + PLENGER_PROXY_URL) but probe stays off until re-enabled.
-    // To re-enable:
-    //   const plengerResult = await this.checkGrokCliPlenger(account);
-    //   if (plengerResult.status === "plenger") {
-    //     return { success: false, error: `Account disabled by plenger probe (until ${plengerResult.disabledUntil})` };
-    //   }
-    //   if (plengerResult.status === "error") {
-    //     console.log(`[PLENGER] ${account.email}: probe failed, not disabling: ${plengerResult.error}`);
-    //   }
+    // Plenger probe: validate account before use. A wrong probe answer marks
+    // the account plenger (disabled 5h); transport errors never do.
+    const plengerResult = await this.checkGrokCliPlenger(account);
+    if (plengerResult.status === "plenger") {
+      return { success: false, error: `Account disabled by plenger probe (until ${plengerResult.disabledUntil})` };
+    }
+    if (plengerResult.status === "error") {
+      console.log(`[PLENGER] ${account.email}: probe failed, not disabling: ${plengerResult.error}`);
+    }
 
     // cli-chat-proxy forces streaming, so we make a streaming request and
     // aggregate the full response.
@@ -1253,9 +1256,9 @@ export class GrokCliProvider extends BaseProvider {
     if (tokens?.user_id) headers["x-userid"] = String(tokens.user_id);
 
     try {
-      const proxyUrl = plengerProxyUrl();
+      const proxyUrl = await plengerProxyUrl();
       if (!proxyUrl) {
-        return { status: "error", error: "No PLENGER_PROXY_URL configured — probe would leak VPS IP, refusing" };
+        return { status: "error", error: "No active proxy in pool — probe would leak VPS IP, refusing" };
       }
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), PLENGER_PROBE_TIMEOUT_MS);
@@ -1434,15 +1437,14 @@ export class GrokCliProvider extends BaseProvider {
     const accessToken = this.getAccessToken(account);
     if (!accessToken) return { success: false, error: "No access token" };
 
-    // Plenger probe DISABLED for now (user request, 2026-08-19). Same as
-    // chatCompletion() — ready to re-enable, kept off for now.
-    //   const plengerResult = await this.checkGrokCliPlenger(account);
-    //   if (plengerResult.status === "plenger") {
-    //     return { success: false, error: `Account disabled by plenger probe (until ${plengerResult.disabledUntil})` };
-    //   }
-    //   if (plengerResult.status === "error") {
-    //     console.log(`[PLENGER] ${account.email}: probe failed, not disabling: ${plengerResult.error}`);
-    //   }
+    // Plenger probe: same validation as chatCompletion().
+    const plengerResult = await this.checkGrokCliPlenger(account);
+    if (plengerResult.status === "plenger") {
+      return { success: false, error: `Account disabled by plenger probe (until ${plengerResult.disabledUntil})` };
+    }
+    if (plengerResult.status === "error") {
+      console.log(`[PLENGER] ${account.email}: probe failed, not disabling: ${plengerResult.error}`);
+    }
     const body = this.toResponsesBody(request, def);
     const headers = this.buildHeaders(account, def.upstream);
 
