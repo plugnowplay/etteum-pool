@@ -1,6 +1,6 @@
 import TokenUsage from "@/components/dashboard/TokenUsage";
 import { useEffect, useRef, useState } from "react";
-import { Activity, CheckCircle, RefreshCw, Users, Zap } from "lucide-react";
+import { Activity, CheckCircle, RefreshCw, Users, Zap, Package } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { PageHeader, PageShell } from "@/components/ui/page-header";
 import { StatCard } from "@/components/ui/stat-card";
@@ -67,6 +67,7 @@ export default function Dashboard() {
     requests: totalRequests,
     successRate: totalRequests > 0 ? Number(((successRequests / totalRequests) * 100).toFixed(1)) : 0,
     totalTokens: Number(stats?.tokens?.total || 0),
+    cachedTokens: Number(stats?.tokens?.cached || 0),
   };
 
   const tokenStats = {
@@ -108,9 +109,9 @@ export default function Dashboard() {
         }
       />
 
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
         {loading && !stats ? (
-          Array.from({ length: 4 }).map((_, i) => <SkeletonCard key={i} />)
+          Array.from({ length: 5 }).map((_, i) => <SkeletonCard key={i} />)
         ) : (
           <>
             <StatCard
@@ -144,6 +145,13 @@ export default function Dashboard() {
               hint="All time"
               icon={Zap}
               tone="warning"
+            />
+            <StatCard
+              label="Cached"
+              value={<span className="tabular">{formatTokens(dashboardStats.cachedTokens)}</span>}
+              hint="prompt cache"
+              icon={Package}
+              tone="success"
             />
           </>
         )}
