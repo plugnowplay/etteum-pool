@@ -567,6 +567,18 @@ function wrapStreamWithUsageFinalizer(
   });
 }
 
+// Round-robin combo cursor: one counter per combo name, advanced on every
+// request so orderComboModels() rotates through the panel models instead of
+// always picking the first one.
+const comboRoundRobinCursors = new Map<string, number>();
+
+function nextComboCursor(name: string, modelCount: number): number {
+  if (modelCount < 2) return 0;
+  const next = (comboRoundRobinCursors.get(name) ?? 0) + 1;
+  comboRoundRobinCursors.set(name, next);
+  return next;
+}
+
 async function handleChatCompletion(body: ChatCompletionRequest) {
   // Rewrite the incoming model id to its mapped target (CLI integration, e.g.
   // the assistant's hardcoded haiku/sonnet/opus ids -> a model in the pool).
@@ -590,27 +602,33 @@ async function handleChatCompletion(body: ChatCompletionRequest) {
     const { getAllModels } = await import("./providers/registry");
     const allModels = getAllModels();
     const modelInfo = (id: string) => allModels.find((m) => m.id === id);
-    const orderedModels = orderComboModels(combo, body, modelInfo);
+    const roundRobinCursor = nextComboCursor(comboName, combo.models.length);
+    const orderedModels = orderComboModels(combo, body, modelInfo, roundRobinCursor);
 
     // For non-fallback strategies (round_robin, capacity_auto_switch), just
     // use the first ordered model. For fallback, loop through all models.
     if (combo.strategy !== "fallback") {
-      body = { ...body, model: orderedModels[0] };
+      const firstModel = orderedModels[0];
+      if (!firstModel) {
+        throw new Error(`Combo "${comboName}" has no routable model`);
+      }
+      body = { ...body, model: firstModel };
       return handleChatCompletionRoute(body, isStream);
     }
 
     // Fallback strategy: try each model in order until one succeeds.
-    // Skip non-account errors (invalid model id, bad request) — those will
-    // fail on every model, so no point retrying.
-    const { isNonAccountRequestError } = await import("./errors");
+    // Only stop on errors that reproduce on every model (content moderation,
+    // proxy outage). A 400 from one model (e.g. unsupported parameter) is
+    // often accepted by the next one — that's the point of a fallback combo.
+    const { isComboNonRetryableError } = await import("./errors");
     let lastError = "";
     for (const comboModelId of orderedModels) {
       try {
         return await handleChatCompletionRoute({ ...body, model: comboModelId }, isStream);
       } catch (error) {
         const errMsg = error instanceof Error ? error.message : String(error);
-        // Don't fallback on client-side errors (bad model, content moderation).
-        if (isNonAccountRequestError(errMsg)) throw error;
+        // Don't fallback on errors that would fail on every model anyway.
+        if (isComboNonRetryableError(errMsg)) throw error;
         lastError = errMsg;
         console.log(`[Combo:${comboName}] model "${comboModelId}" failed: ${errMsg.slice(0, 120)}, trying next…`);
       }
@@ -826,7 +844,7 @@ proxyRouter.get("/v1/models", async (c) => {
 const chatCompletionsHandler = async (c: any) => {
   let body: ChatCompletionRequest;
   try {
-    body = await c.req.json<ChatCompletionRequest>();
+    body = await c.req.json() as ChatCompletionRequest;
   } catch (error) {
     if (isJsonParseError(error)) {
       return c.json(openAIErrorResponse("Invalid JSON request body", 400), 400);
@@ -904,9 +922,10 @@ const chatCompletionsHandler = async (c: any) => {
       // Check if mappedModel IS a combo (bare name) — if so, resolve first model
       const { getCombo } = await import("./combos");
       const combo = await getCombo(comboName);
-      if (combo && combo.models.length > 0) {
-        providerModel = combo.models[0];
-        provider = pool.getProviderForModel(combo.models[0]) || "unknown";
+      const firstComboModel = combo?.models.find(Boolean);
+      if (firstComboModel) {
+        providerModel = firstComboModel;
+        provider = pool.getProviderForModel(firstComboModel) || "unknown";
       } else {
         provider = pool.getProviderForModel(mappedModel) || "unknown";
       }

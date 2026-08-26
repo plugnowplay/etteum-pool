@@ -50,7 +50,7 @@ const CBC_MODEL_MAP: Record<string, string> = {
  */
 export class CodeBuddyChinaProvider extends BaseProvider {
   name = "codebuddy-china";
-  alias = "cbcn";
+  override alias = "cbcn";
 
   override ownsModel(model: string): boolean {
     const m = model.toLowerCase();

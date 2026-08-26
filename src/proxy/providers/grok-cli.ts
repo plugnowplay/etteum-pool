@@ -862,7 +862,7 @@ function responsesToChatCompletion(data: any, originalModel: string): ChatComple
       index: 0,
       message: {
         role: "assistant",
-        content: textContent || null,
+        content: textContent || "",
         ...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {}),
       },
       finish_reason: finishReason,
@@ -880,7 +880,7 @@ function responsesToChatCompletion(data: any, originalModel: string): ChatComple
 
 export class GrokCliProvider extends BaseProvider {
   name = "grok-cli";
-  alias = "gcli";
+  override alias = "gcli";
 
   /**
    * Native wire format. Grok CLI uses OpenAI Responses API which we translate
@@ -907,7 +907,7 @@ export class GrokCliProvider extends BaseProvider {
    */
   override getProviderCreditRate(model: string): number {
     const info = this.getModelInfo(model);
-    if (info && info.creditRate <= 0) return 0;
+    if (info && info.creditRate !== undefined && info.creditRate <= 0) return 0;
     return 1;
   }
 
@@ -1403,7 +1403,7 @@ export class GrokCliProvider extends BaseProvider {
         index: 0,
         message: {
           role: "assistant",
-          content: textContent || null,
+          content: textContent || "",
           ...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {}),
         },
         finish_reason: finishReason,
@@ -1878,7 +1878,7 @@ function decodeJwtPayload(token: string): any {
   try {
     const parts = token.split(".");
     if (parts.length !== 3) return {};
-    const payload = Buffer.from(parts[1], "base64url").toString("utf-8");
+    const payload = Buffer.from(parts[1]!, "base64").toString("utf-8");
     return JSON.parse(payload);
   } catch {
     return {};

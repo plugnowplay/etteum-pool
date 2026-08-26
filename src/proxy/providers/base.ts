@@ -51,7 +51,7 @@ export interface StreamChunk {
   model: string;
   choices: {
     index: number;
-      delta: Partial<ChatMessage> & { tool_calls?: any[] };
+      delta: Partial<ChatMessage> & { tool_calls?: any[]; reasoning_content?: string };
     finish_reason: string | null;
   }[];
   usage?: {

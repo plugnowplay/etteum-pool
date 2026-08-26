@@ -38,10 +38,10 @@ async function syncTokensUsed() {
 
     if (rows.length === 0) {
       // Tetap advance lastSyncedLogId biar gak scan ulang log tanpa api_key_id
-      const [{ maxId }] = await db
+      const maxRows = await db
         .select({ maxId: sql<number>`COALESCE(MAX(${requestLogs.id}), 0)` })
         .from(requestLogs);
-      lastSyncedLogId = Math.max(lastSyncedLogId, Number(maxId) || 0);
+      lastSyncedLogId = Math.max(lastSyncedLogId, Number(maxRows[0]?.maxId || 0));
       return;
     }
 

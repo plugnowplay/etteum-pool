@@ -174,7 +174,7 @@ export function getAllModels(): ModelInfo[] {
   const builtin = PROVIDER_ORDER.flatMap((provider) =>
     provider.getModels().map((m) => ({
       ...m,
-      id: formatModelId(provider.name, m.id),
+      id: formatModelId(provider.name as ProviderName, m.id),
     })),
   );
   return [...builtin, ...customModelCache];

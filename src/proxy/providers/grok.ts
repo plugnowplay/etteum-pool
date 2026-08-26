@@ -137,7 +137,7 @@ const MODEL_BY_ID: Record<string, GrokModelDef> = Object.fromEntries(
 
 export class GrokProvider extends BaseProvider {
   name = "grok";
-  alias = "xai";
+  override alias = "xai";
 
   /**
    * Native wire format. Grok uses OpenAI-compatible Chat Completions API.

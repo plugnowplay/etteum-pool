@@ -228,7 +228,7 @@ authRouter.post("/import", async (c) => {
   }
 
   const providers = (body.providers || ["kiro", "kiro-pro", "codebuddy", "canva", "codex", "qoder"]).filter((p) =>
-    ALL_LOGIN_PROVIDERS.includes(p)
+    (ALL_LOGIN_PROVIDERS as readonly string[]).includes(p)
   );
 
   const lines = body.text.trim().split("\n");

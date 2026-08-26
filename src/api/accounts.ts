@@ -197,7 +197,7 @@ accountsRouter.get("/", async (c) => {
       // Filled in below for grok-cli accounts only.
       dailyFreeUsed: 0,
       dailyFreeLimit: 0,
-      dailyFreeResetAt: null,
+      dailyFreeResetAt: null as string | null,
     };
   });
 

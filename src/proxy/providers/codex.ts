@@ -54,7 +54,7 @@ interface CodexReasoningConfig {
 
 export class CodexProvider extends BaseProvider {
   name = "codex";
-  alias = "cx";
+  override alias = "cx";
 
   override ownsModel(model: string): boolean {
     const m = model.toLowerCase();

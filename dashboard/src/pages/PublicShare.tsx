@@ -272,20 +272,20 @@ export default function PublicShare() {
           </div>
 
           <div className="space-y-1.5 text-xs">
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
               <span className="w-24 shrink-0 text-[#9dff70]/60">PROMPT</span>
               <RetroBar pct={promptPct} width={26} />
               <span className="tabular text-[#baff9e]">{formatNumber(usage.promptTokens)}</span>
               <span className="text-[#9dff70]/50">({promptPct.toFixed(0)}%)</span>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
               <span className="w-24 shrink-0 text-[#9dff70]/60">COMPLETION</span>
               <RetroBar pct={completionPct} width={26} />
               <span className="tabular text-[#baff9e]">{formatNumber(usage.completionTokens)}</span>
               <span className="text-[#9dff70]/50">({completionPct.toFixed(0)}%)</span>
             </div>
             {usage.cachedTokens !== undefined && usage.cachedTokens > 0 && (
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                 <span className="w-24 shrink-0 text-[#9dff70]/60">CACHED</span>
                 <RetroBar
                   pct={totalTokens > 0 ? (usage.cachedTokens / totalTokens) * 100 : 0}
@@ -316,7 +316,7 @@ export default function PublicShare() {
                 const pct = (row.tokens / maxModelTokens) * 100;
                 const share = (row.tokens / Math.max(1, totalTokens)) * 100;
                 return (
-                  <div key={`${row.provider}/${row.model}`} className="flex items-center gap-2">
+                  <div key={`${row.provider}/${row.model}`} className="flex flex-wrap items-center gap-x-2 gap-y-1">
                     <span className="w-32 shrink-0 truncate text-[#baff9e]" title={`${row.provider}/${row.model}`}>
                       {row.model}
                     </span>
@@ -333,7 +333,7 @@ export default function PublicShare() {
 
         {/* ── Model catalogue ── */}
         <div className="mt-4 border border-[#9dff70]/50 bg-black/50 p-4 font-mono">
-          <PanelTitle>MODEL CATALOGUE ({models.length})</PanelTitle>
+          <PanelTitle>{`MODEL CATALOGUE (${models.length})`}</PanelTitle>
           {models.length === 0 ? (
             <div className="text-xs text-[#9dff70]/50">&gt; no models registered</div>
           ) : (

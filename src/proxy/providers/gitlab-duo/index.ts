@@ -220,7 +220,7 @@ function describeModel(ref: string): ModelMeta {
 
 export class GitlabDuoProvider extends BaseProvider {
   name = "gitlab-duo";
-  alias = "gl";
+  override alias = "gl";
   override supportedModels: ModelInfo[] = FALLBACK_MODEL_REFS.map((ref) => this.buildModelInfo(ref));
   override isFallback = false;
   override nativeFormat: "openai" | "anthropic" = "openai";

@@ -90,7 +90,7 @@ export default function Microwarp() {
   const [refreshing, setRefreshing] = useState(false);
   const [rotatingN, setRotatingN] = useState<number | null>(null);
   const [rotatingAll, setRotatingAll] = useState(false);
-  const { toast } = useToast();
+  const toast = useToast();
 
   const load = useCallback(async (silent = false) => {
     if (!silent) setRefreshing(true);
@@ -98,7 +98,7 @@ export default function Microwarp() {
       const res = await fetchApi<MicrowarpStatus>("/api/microwarp/status");
       setData(res);
     } catch (err: any) {
-      toast({ title: "Gagal memuat status warp", description: err.message, variant: "destructive" });
+      toast.error(`Gagal memuat status warp: ${err?.message || err}`);
     } finally {
       setLoading(false);
       if (!silent) setRefreshing(false);
@@ -119,18 +119,17 @@ export default function Microwarp() {
         { method: "POST" },
       );
       if (res.bridgeOk) {
-        toast({
-          title: `warp${n} rotated`,
-          description: res.changed
-            ? `IP: ${res.oldIp} → ${res.newIp}`
-            : `IP tetap ${res.newIp} (jarang, coba rotate lagi)`,
-        });
+        toast.success(
+          res.changed
+            ? `warp${n} rotated: IP ${res.oldIp} → ${res.newIp}`
+            : `warp${n} rotated: IP tetap ${res.newIp} (jarang, coba rotate lagi)`,
+        );
       } else {
-        toast({ title: `warp${n} rotate: bridge belum ready`, description: "Coba refresh sebentar lagi", variant: "destructive" });
+        toast.error(`warp${n} rotate: bridge belum ready. Coba refresh sebentar lagi`);
       }
       await load(true);
     } catch (err: any) {
-      toast({ title: `Gagal rotate warp${n}`, description: err.message, variant: "destructive" });
+      toast.error(`Gagal rotate warp${n}: ${err?.message || err}`);
     } finally {
       setRotatingN(null);
     }
@@ -146,10 +145,10 @@ export default function Microwarp() {
       );
       const okCount = res.results.filter((r) => r.ok).length;
       const changedCount = res.results.filter((r) => r.changed).length;
-      toast({ title: "Rotate all selesai", description: `${okCount}/10 healthy, ${changedCount}/10 IP berubah` });
+      toast.success(`Rotate all selesai: ${okCount}/10 healthy, ${changedCount}/10 IP berubah`);
       await load(true);
     } catch (err: any) {
-      toast({ title: "Gagal rotate all", description: err.message, variant: "destructive" });
+      toast.error(`Gagal rotate all: ${err?.message || err}`);
     } finally {
       setRotatingAll(false);
     }

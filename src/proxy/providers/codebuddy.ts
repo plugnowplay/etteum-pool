@@ -85,7 +85,7 @@ const CB_MODEL_MAP: Record<string, string> = {
  */
 export class CodeBuddyProvider extends BaseProvider {
   name = "codebuddy";
-  alias = "cb";
+  override alias = "cb";
 
   /** Cache for resolved tool schemas — Claude Code sends the same tools every request */
   private schemaCache = new Map<string, any>();

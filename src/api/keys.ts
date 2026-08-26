@@ -125,9 +125,9 @@ export function checkRpmLimit(keyId: number, limit: number): { allowed: boolean;
     rpmBuckets.set(keyId, bucket);
   }
   // Drop stale
-  while (bucket.length > 0 && bucket[0] < windowStart) bucket.shift();
+  while (bucket.length > 0 && bucket[0]! < windowStart) bucket.shift();
   if (bucket.length >= limit) {
-    const retryAfterMs = bucket[0] + 60_000 - now;
+    const retryAfterMs = bucket[0]! + 60_000 - now;
     return { allowed: false, retryAfterMs: Math.max(retryAfterMs, 100) };
   }
   bucket.push(now);
@@ -223,6 +223,9 @@ keysRouter.post("/managed", async (c) => {
     const [inserted] = await db.insert(apiKeys)
       .values({ key, name, modelWhitelist, rpmLimit, tokenLimit })
       .returning();
+    if (!inserted) {
+      return c.json({ error: "insert returned no row" }, 500);
+    }
     return c.json({ ok: true, id: inserted.id, key: inserted.key });
   } catch (err: any) {
     if (String(err?.message || err).includes("UNIQUE")) {

@@ -700,13 +700,13 @@ export default function AccountList() {
                   <th className="text-left text-xs font-medium text-[var(--muted-foreground)] uppercase tracking-wide p-4 cursor-pointer select-none hover:text-[var(--foreground)]" onClick={() => handleSort("enabled")}>
                     <span className="inline-flex items-center">Enabled<SortIcon column="enabled" /></span>
                   </th>
-                  <th className="text-left text-xs font-medium text-[var(--muted-foreground)] uppercase tracking-wide p-4 cursor-pointer select-none hover:text-[var(--foreground)] hidden sm:table-cell" onClick={() => handleSort("credit")}>
+                  <th className="text-left text-xs font-medium text-[var(--muted-foreground)] uppercase tracking-wide p-4 cursor-pointer select-none hover:text-[var(--foreground)]" onClick={() => handleSort("credit")}>
                     <span className="inline-flex items-center">Credit<SortIcon column="credit" /></span>
                   </th>
-                  <th className="text-left text-xs font-medium text-[var(--muted-foreground)] uppercase tracking-wide p-4 cursor-pointer select-none hover:text-[var(--foreground)] hidden md:table-cell" onClick={() => handleSort("lastLogin")}>
+                  <th className="text-left text-xs font-medium text-[var(--muted-foreground)] uppercase tracking-wide p-4 cursor-pointer select-none hover:text-[var(--foreground)]" onClick={() => handleSort("lastLogin")}>
                     <span className="inline-flex items-center">Last Login<SortIcon column="lastLogin" /></span>
                   </th>
-                  <th className="text-left text-xs font-medium text-[var(--muted-foreground)] uppercase tracking-wide p-4 hidden lg:table-cell" title="When upstream credits refresh (billing cycle end) — hover a cell for the token expiry">
+                  <th className="text-left text-xs font-medium text-[var(--muted-foreground)] uppercase tracking-wide p-4" title="When upstream credits refresh (billing cycle end) — hover a cell for the token expiry">
                     <span className="inline-flex items-center">Next Refresh</span>
                   </th>
                   <th className="text-left text-xs font-medium text-[var(--muted-foreground)] uppercase tracking-wide p-4">Actions</th>
@@ -743,7 +743,7 @@ export default function AccountList() {
                         <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-[var(--es-1)] transition-transform duration-[var(--dur-fast)] ease-[var(--ease-out)] ${isEnabled ? "translate-x-4" : "translate-x-0.5"}`} />
                       </button>
                     </td>
-                    <td className="p-4 text-sm text-[var(--muted-foreground)] hidden sm:table-cell">
+                    <td className="p-4 text-sm text-[var(--muted-foreground)]">
                       {account.provider === "codex"
                         ? <CodexQuotaCell codex={account.metadata?.codex_quota} fallbackRemaining={account.quotaRemaining} fallbackLimit={account.quotaLimit} />
                         : account.provider === "qoder"
@@ -759,8 +759,8 @@ export default function AccountList() {
                             )}
                           </span>}
                     </td>
-                    <td className="p-4 text-xs text-[var(--muted-foreground)] hidden md:table-cell">{formatDate(account.lastLoginAt || account.lastUsedAt)}</td>
-                    <td className="p-4 text-xs hidden lg:table-cell">
+                    <td className="p-4 text-xs text-[var(--muted-foreground)]">{formatDate(account.lastLoginAt || account.lastUsedAt)}</td>
+                    <td className="p-4 text-xs">
                       {(() => {
                         // Credit reset (billing CycleEndTime) is the primary value;
                         // token expiry rides along in the tooltip when present.

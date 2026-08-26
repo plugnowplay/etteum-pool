@@ -889,7 +889,7 @@ function parseSseLine(line: string): ParsedDelta | null {
 
 export class QoderProvider extends BaseProvider {
   name = "qoder";
-  alias = "qd";
+  override alias = "qd";
 
   override ownsModel(model: string): boolean {
     const m = model.toLowerCase();

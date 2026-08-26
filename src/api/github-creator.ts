@@ -233,6 +233,11 @@ async function readVerificationCode(
         to: emailTo,
         since,
       });
+      // imapflow search() resolves to `number[] | false` — `false` means the
+      // server returned no usable sequence set (e.g. connection hiccup).
+      if (!messages) {
+        return null;
+      }
 
       // Filter by GitHub sender domains — imapflow search doesn't support
       // FROM + TO together in all servers, so we filter client-side.
@@ -281,7 +286,12 @@ async function readVerificationCode(
           code,
           subject,
           from: fromHeader,
-          date: msg.internalDate ? msg.internalDate.toISOString() : new Date().toISOString(),
+          date: msg.internalDate
+            ? (typeof msg.internalDate === "string"
+                ? new Date(msg.internalDate)
+                : msg.internalDate
+              ).toISOString()
+            : new Date().toISOString(),
           raw: source.slice(0, 5000),
         };
       }
@@ -314,7 +324,7 @@ async function registerGitHubAccount(account: GithubAccount): Promise<{
   username?: string | null;
 }> {
   // 1. Get a proxy
-  const proxy = await getNextProxy("github");
+  const proxy = await getNextProxy("auth");
   if (!proxy) {
     return { ok: false, status: "error", error: "No active proxy available in the pool" };
   }

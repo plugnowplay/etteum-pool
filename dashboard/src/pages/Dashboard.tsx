@@ -152,6 +152,7 @@ export default function Dashboard() {
               hint="prompt cache"
               icon={Package}
               tone="success"
+              className="col-span-2 lg:col-span-1"
             />
           </>
         )}

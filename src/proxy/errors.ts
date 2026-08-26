@@ -73,6 +73,18 @@ export function isNonAccountRequestError(error?: string): boolean {
 }
 
 /**
+ * Errors that are guaranteed to reproduce identically on EVERY panel model of
+ * a combo. A combo fallback must stop on these (the same content or infra
+ * fails on all models), but MUST keep trying on everything else — a 400 from
+ * model A (e.g. unsupported parameter) is frequently accepted by model B, and
+ * that is exactly the point of a fallback combo.
+ */
+export function isComboNonRetryableError(error?: string): boolean {
+  if (!error) return false;
+  return isContentModerationError(error) || isProxyOutageError(error);
+}
+
+/**
  * Transient errors that are temporary and should not permanently mark an account as errored.
  * These include network issues, timeouts, rate limits, upstream server errors,
  * and bad-request errors that are caused by the request format (not the account).

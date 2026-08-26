@@ -117,7 +117,6 @@ app.use("/v1/*", async (c, next) => {
 
   // Master key → bypass semua limit (admin)
   if (meta.type === "master") {
-    c.set("apiKeyMeta", meta);
     const { requestContext } = await import("./services/request-context");
     return requestContext.run({ apiKeyId: null, apiKeyType: "master" }, () => next());
   }
@@ -184,7 +183,6 @@ app.use("/v1/*", async (c, next) => {
     }
   }
 
-  c.set("apiKeyMeta", meta);
   const { requestContext } = await import("./services/request-context");
   const apiKeyId = meta.type === "managed" ? meta.id : null;
   return requestContext.run({ apiKeyId, apiKeyType: meta.type }, () => next());

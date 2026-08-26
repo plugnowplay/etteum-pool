@@ -20,6 +20,7 @@ interface GrokAccount {
   id: number;
   email: string;
   username: string | null;
+  hasPassword: boolean;
   status: string;
   imapServerId: number | null;
   proxyId: number | null;
@@ -281,7 +282,7 @@ export default function GrokCreator() {
                   {statusBadge(a.status)}
                 </div>
                 <p className="text-xs text-muted-foreground font-mono break-all">
-                  {a.username || "-"} · pass: {a.passwordHidden !== undefined ? "***" : "-"}
+                  {a.username || "-"} · pass: {a.hasPassword ? "***" : "-"}
                 </p>
                 {a.token && (
                   <p className="text-xs font-mono break-all bg-muted rounded p-1.5 text-emerald-300">

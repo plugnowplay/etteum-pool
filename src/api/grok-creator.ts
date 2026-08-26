@@ -97,15 +97,13 @@ async function getImapServerDecrypted(id: number): Promise<{
   };
 }
 
-/** Sanitise a grok_accounts row for API output (decrypt password). */
+/** Sanitise a grok_accounts row for API output (never expose the decrypted password). */
 function sanitizeGrokAccount(row: GrokAccount) {
-  let password = "";
-  try { password = row.password ? decrypt(row.password) : ""; } catch { password = ""; }
   return {
     id: row.id,
     email: row.email,
     username: row.username,
-    password,
+    hasPassword: Boolean(row.password),
     status: row.status,
     imapServerId: row.imapServerId,
     proxyId: row.proxyId,
@@ -121,7 +119,7 @@ function sanitizeGrokAccount(row: GrokAccount) {
 async function registerGrokAccount(account: GrokAccount, opts?: { mode?: "http" | "browser" }): Promise<{
   ok: boolean; status: string; token?: string | null; error?: string;
 }> {
-  const proxy = await getNextProxy("grok");
+  const proxy = await getNextProxy("auth");
   const proxyUrl = proxy?.url || null;
 
   let plainPassword = "";
