@@ -2,13 +2,13 @@ import { Hono } from "hono";
 
 export const microwarpRouter = new Hono();
 
-// Definisi 10 warp container — sinkron dengan docker-compose.yml + gost-warp-pool.yml
+// Definisi 5 warp container — sinkron dengan docker-compose.yml + gost-warp-pool.yml
 interface WarpDef {
   n: number;
   container: string;
   socksPort: number;
   httpPort: number;
-  poolLabel: string; // label di proxy_pool DB (warp1..warp10)
+  poolLabel: string; // label di proxy_pool DB (warp1..warp5)
 }
 
 const WARPS: WarpDef[] = [
@@ -17,11 +17,6 @@ const WARPS: WarpDef[] = [
   { n: 3, container: "microwarp-3", socksPort: 1083, httpPort: 2083, poolLabel: "warp3" },
   { n: 4, container: "microwarp-4", socksPort: 1084, httpPort: 2084, poolLabel: "warp4" },
   { n: 5, container: "microwarp-5", socksPort: 1085, httpPort: 2085, poolLabel: "warp5" },
-  { n: 6, container: "microwarp-6", socksPort: 1086, httpPort: 2086, poolLabel: "warp6" },
-  { n: 7, container: "microwarp-7", socksPort: 1087, httpPort: 2087, poolLabel: "warp7" },
-  { n: 8, container: "microwarp-8", socksPort: 1088, httpPort: 2088, poolLabel: "warp8" },
-  { n: 9, container: "microwarp-9", socksPort: 1089, httpPort: 2089, poolLabel: "warp9" },
-  { n: 10, container: "microwarp-10", socksPort: 1090, httpPort: 2090, poolLabel: "warp10" },
 ];
 
 interface WarpStatus {
@@ -134,7 +129,7 @@ microwarpRouter.get("/status", async (c) => {
   // Info timer auto-rotate (10 timer per-warp, staggered)
   const rotateInfo: { warp: number; next: string | null; last: string | null }[] = [];
   let anyEnabled = false;
-  for (let n = 1; n <= 10; n++) {
+  for (let n = 1; n <= 5; n++) {
     try {
       const proc = Bun.spawn(
         ["systemctl", "list-timers", `warp-rotate-${n}.timer`, "--no-pager", "--output=json"],
@@ -182,12 +177,12 @@ microwarpRouter.get("/status", async (c) => {
 });
 
 // ─────────────────────────────────────────────────────────────────────
-// POST /api/microwarp/rotate/:n — restart 1 warp (n=1..10)
+// POST /api/microwarp/rotate/:n — restart 1 warp (n=1..5)
 // ─────────────────────────────────────────────────────────────────────
 microwarpRouter.post("/rotate/:n", async (c) => {
   const n = Number(c.req.param("n"));
   const w = WARPS.find((w) => w.n === n);
-  if (!w) return c.json({ error: "invalid warp number (expected 1..10)" }, 400);
+  if (!w) return c.json({ error: "invalid warp number (expected 1..5)" }, 400);
 
   const before = await probeIp(w.httpPort);
 
