@@ -145,7 +145,7 @@ export class GrokProvider extends BaseProvider {
   override nativeFormat: "openai" | "anthropic" = "openai";
 
   override ownsModel(model: string): boolean {
-    return model.toLowerCase().startsWith("grok-");
+    return this.resolveModel(model) !== null;
   }
 
   supportedModels: ModelInfo[] = GROK_MODELS.map((m) => ({
@@ -674,45 +674,113 @@ export interface GrokActivation {
  * Throws a human-readable Error on validation failure.
  */
 export async function activateGrokKey(apiKey: string): Promise<GrokActivation> {
-  const trimmed = apiKey.trim();
-  if (!trimmed.startsWith("xai-")) {
-    throw new Error("Grok API key must start with xai-");
-  }
+   const trimmed = apiKey.trim();
+   if (!trimmed.startsWith("xai-")) {
+     throw new Error("Grok API key must start with xai-");
+   }
+ 
+   // Probe 1 — validate the key against the models listing endpoint
+   const resp = await fetch(XAI_MODELS_URL, {
+     headers: { Authorization: `Bearer ${trimmed}` },
+   });
+ 
+   if (resp.status === 401 || resp.status === 403) {
+     const text = await resp.text().catch(() => "");
+     throw new Error(`Invalid Grok API key (HTTP ${resp.status}): ${text.slice(0, 160)}`);
+   }
+   if (!resp.ok) {
+     const text = await resp.text().catch(() => "");
+     throw new Error(`Grok API key validation failed (HTTP ${resp.status}): ${text.slice(0, 160)}`);
+   }
+ 
+   // Probe 2 — best-effort models list. Used only to enrich metadata; a
+   // failure here is non-fatal (key was already validated by probe 1).
+   let availableModels: string[] = [];
+   try {
+     const modelsData = (await resp.json().catch(() => null)) as
+       | { data?: Array<{ id?: string }> }
+       | null;
+     if (modelsData?.data) {
+       availableModels = modelsData.data.map((m) => m.id || "").filter(Boolean);
+     }
+   } catch { /* non-fatal */ }
+ 
+   // Derive a stable email-like label from the key tail so different keys
+   // produce distinct rows but the same key always maps to the same row.
+   const email = `grok-${trimmed.slice(-12)}@apikey`;
+ 
+   const metadata: Record<string, unknown> = {
+     available_models: availableModels,
+     validated_at: new Date().toISOString(),
+   };
+ 
+   return { email, metadata };
+ }
 
-  // Probe 1 — validate the key against the models listing endpoint
-  const resp = await fetch(XAI_MODELS_URL, {
-    headers: { Authorization: `Bearer ${trimmed}` },
-  });
+// ============================================================================
+// Import via JSON (mirip G2A)
+// ============================================================================
 
-  if (resp.status === 401 || resp.status === 403) {
-    const text = await resp.text().catch(() => "");
-    throw new Error(`Invalid Grok API key (HTTP ${resp.status}): ${text.slice(0, 160)}`);
-  }
-  if (!resp.ok) {
-    const text = await resp.text().catch(() => "");
-    throw new Error(`Grok API key validation failed (HTTP ${resp.status}): ${text.slice(0, 160)}`);
-  }
-
-  // Probe 2 — best-effort models list. Used only to enrich metadata; a
-  // failure here is non-fatal (key was already validated by probe 1).
-  let availableModels: string[] = [];
+export async function importGrokAccountsFromJson(jsonPath: string): Promise<{
+  success: boolean;
+  count: number;
+  message: string;
+}> {
   try {
-    const modelsData = (await resp.json().catch(() => null)) as
-      | { data?: Array<{ id?: string }> }
-      | null;
-    if (modelsData?.data) {
-      availableModels = modelsData.data.map((m) => m.id || "").filter(Boolean);
+    const fs = await import("fs/promises");
+    const data = await fs.readFile(jsonPath, "utf-8");
+    const accounts = JSON.parse(data);
+
+    if (!Array.isArray(accounts)) {
+      return { success: false, count: 0, message: "JSON harus berupa array objek" };
     }
-  } catch { /* non-fatal */ }
 
-  // Derive a stable email-like label from the key tail so different keys
-  // produce distinct rows but the same key always maps to the same row.
-  const email = `grok-${trimmed.slice(-12)}@apikey`;
+    const { db } = await import("../../db/index");
+    const { accounts: accountsTable } = await import("../../db/schema");
 
-  const metadata: Record<string, unknown> = {
-    available_models: availableModels,
-    validated_at: new Date().toISOString(),
-  };
+    let imported = 0;
+    const errors: string[] = [];
 
-  return { email, metadata };
+    for (const acc of accounts) {
+      const email = acc.email?.trim();
+      const password = acc.password?.trim() || acc.token || "";
+      const token = acc.token || "";
+
+      if (!email || !password) continue;
+
+      // Cek duplikat
+      const existing = await db
+        .select()
+        .from(accountsTable)
+        .where(eq(accountsTable.email, email))
+        .limit(1);
+
+      if (existing.length > 0) continue;
+
+      await db.insert(accountsTable).values({
+        provider: "grok",
+        email,
+        password: token || password,   // simpan password terenkripsi nanti
+        tokens: JSON.stringify({ source: "json_import", imported_at: new Date().toISOString() }),
+        status: "active",
+        enabled: true,
+        created_at: new Date(),
+      });
+
+      imported++;
+    }
+
+    return {
+      success: true,
+      count: imported,
+      message: `Berhasil import ${imported} akun Grok`,
+    };
+  } catch (err) {
+    return {
+      success: false,
+      count: 0,
+      message: `Import gagal: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
 }
+

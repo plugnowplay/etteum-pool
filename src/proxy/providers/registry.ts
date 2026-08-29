@@ -76,20 +76,18 @@ for (const [key, val] of Object.entries(providers)) {
 // Reverted: keep gcli/ prefix as default for grok-cli
 
 const BUILTIN_MODEL_ALIASES: Record<string, string> = {
-  "grok-build": "grok-build",
-  "grok-4.6": "grok-4.6",
-  "grok-4.6-high": "grok-4.6-high",
-  "grok-4.6-xhigh": "grok-4.6-xhigh",
-  "grok-4.6-medium": "grok-4.6-medium",
-  "grok-4.6-low": "grok-4.6-low",
-  "grok-4.5": "grok-4.5",
-  "grok-4.5-high": "grok-4.5-high",
-  "grok-4.5-medium": "grok-4.5-medium",
-  "grok-4.5-low": "grok-4.5-low",
-  "grok-4": "grok-4",
-  "grok-4-fast": "grok-4-fast",
-  "grok-4-fast-reasoning": "grok-4-fast-reasoning",
-  "grok-3": "grok-3",
+  "grok-build": "gcli/grok-build",
+  "grok-composer-2.5-fast": "gcli/grok-composer-2.5-fast",
+  "grok-4.6": "gcli/grok-4.6",
+  "grok-4.6-high": "gcli/grok-4.6-high",
+  "grok-4.6-xhigh": "gcli/grok-4.6-xhigh",
+  "grok-4.6-medium": "gcli/grok-4.6-medium",
+  "grok-4.6-low": "gcli/grok-4.6-low",
+  "grok-4.5": "gcli/grok-4.5",
+  "grok-4.5-high": "gcli/grok-4.5-high",
+  "grok-4.5-medium": "gcli/grok-4.5-medium",
+  "grok-4.5-low": "gcli/grok-4.5-low",
+  "grok-4-fast-reasoning": "gcli/grok-4-fast-reasoning",
 };
 
 interface ParsedModelId {
@@ -126,7 +124,7 @@ export function parseModelId(modelStr: string): ParsedModelId {
   }
 
   const aliased = BUILTIN_MODEL_ALIASES[modelStr];
-  if (aliased) return parseModelId(aliased);
+  if (aliased && aliased !== modelStr) return parseModelId(aliased);
 
   return { provider: null, model: modelStr };
 }
