@@ -12,7 +12,7 @@ import { pool, type ProviderName } from "../proxy/pool";
 import { activateQoderPat } from "../proxy/providers/qoder";
 import { activateYouMindKey } from "../proxy/providers/youmind";
 import { activateGrokKey } from "../proxy/providers/grok";
-import { fetchGrokCliUserProfile } from "../proxy/providers/grok-cli";
+import { exchangeGrokCliRefreshToken, fetchGrokCliUserProfile, parseGrokCliImportEntries } from "../proxy/providers/grok-cli";
 import { getAllModels, refreshCustomModels } from "../proxy/providers/registry";
 import { config } from "../config";
 import { getActiveApiKey } from "./keys";
@@ -1628,7 +1628,7 @@ accountsRouter.post("/", async (c) => {
     personalToken?: string;
     apiKey?: string; // YouMind sk-ym-... / Grok xai-... key
     apiKeys?: string; // CodeBuddy China bulk: newline-separated ck_... keys
-    accessTokens?: string; // CodeBuddy China bulk: newline-separated raw access tokens (non ck_...) — stored as tokens.access_token
+    accessTokens?: string; // CodeBuddy China bulk: newline-separated raw access tokens; grok-cli bulk: g2a JSON export or token list (see parseGrokCliImportEntries)
     tokens?: Record<string, unknown>;
     status?: "active" | "pending";
     browserEngine?: string;
@@ -1787,48 +1787,59 @@ accountsRouter.post("/", async (c) => {
     }
   }
 
-  // ── Grok CLI: Bulk Access Token import ──────────────────────────────
-  // Accepts one access token per line. Each token is validated via
-  // fetchGrokCliUserProfile (same as single flow). Skips duplicates,
-  // collects successes + failures, returns a summary.
+  // ── Grok CLI: Bulk token import (etteum legacy + grok2api "g2a") ────
+  // Accepts g2a JSON exports ({"accounts":[...]}, arrays, NDJSON), plain
+  // refresh tokens per line (rt=/refresh_token= prefix optional), and the
+  // legacy one-JWT-access-token-per-line paste. Refresh-only entries are
+  // exchanged for an access token first; xAI rotates refresh tokens on
+  // every use, so the newest one is persisted.
   if (body.provider === "grok-cli" && body.accessTokens) {
-    const tokensList = String(body.accessTokens)
-      .split("\n")
-      .map((t: string) => t.trim())
-      .filter((t: string) => t.length > 0);
-
-    if (tokensList.length === 0) {
-      return c.json({ error: "accessTokens is empty" }, 400);
-    }
-
-    for (const tok of tokensList) {
-      if (tok.length < 20) {
-        return c.json({ error: `Access token too short (min 20 chars): ${tok.substring(0, 12)}...` }, 400);
-      }
+    const parsed = parseGrokCliImportEntries(String(body.accessTokens));
+    if (parsed.entries.length === 0) {
+      return c.json({
+        error: parsed.errors.length > 0
+          ? parsed.errors.join("; ")
+          : "accessTokens contains no importable entries",
+      }, 400);
     }
 
     const created: Array<{ id: number; email: string }> = [];
     const updated: Array<{ id: number; email: string }> = [];
     const errors: Array<{ token: string; error: string }> = [];
 
-    for (const accessToken of tokensList) {
+    for (const entry of parsed.entries) {
+      const tokenHint = (entry.accessToken || entry.refreshToken).slice(-8);
       try {
+        let accessToken = entry.accessToken;
+        let refreshToken = entry.refreshToken;
+        let idToken = entry.idToken;
+        if (!accessToken) {
+          const exchanged = await exchangeGrokCliRefreshToken(refreshToken);
+          if (!exchanged.success || !exchanged.accessToken) {
+            errors.push({ token: tokenHint, error: exchanged.error || "Refresh token exchange failed" });
+            continue;
+          }
+          accessToken = exchanged.accessToken;
+          refreshToken = exchanged.refreshToken || refreshToken;
+          idToken = exchanged.idToken || idToken;
+        }
+
         const profile = await fetchGrokCliUserProfile(accessToken);
-        const finalEmail = profile.email || `grok-cli-${accessToken.slice(-8)}@device`;
+        const finalEmail = profile.email || entry.email || `grok-cli-${accessToken.slice(-8)}@device`;
         const tokens = {
           access_token: accessToken,
-          refresh_token: "",
-          id_token: "",
+          refresh_token: refreshToken,
+          id_token: idToken,
           // Raw access tokens carry no refresh token — decode the JWT exp so
           // the account still shows a real expiry (and gets re-login-prompted
           // when it lapses) instead of living with null expiry forever.
-          expires_at: grokCliAccessTokenExpiry(accessToken),
+          expires_at: entry.expiresAt ?? (refreshToken ? null : grokCliAccessTokenExpiry(accessToken)),
           email: finalEmail,
           method: "device_code" as const,
           providerSpecificData: {
             authMethod: "device_code",
             email: profile.email || null,
-            userId: profile.userId || null,
+            userId: profile.userId || entry.userId || null,
             hasGrokCodeAccess: profile.hasGrokCodeAccess ?? null,
             subscriptionTier: profile.subscriptionTier ?? null,
           },
@@ -1868,7 +1879,7 @@ accountsRouter.post("/", async (c) => {
         }
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
-        errors.push({ token: accessToken.slice(-8), error: msg });
+        errors.push({ token: tokenHint, error: msg });
       }
     }
 
@@ -1881,6 +1892,7 @@ accountsRouter.post("/", async (c) => {
       created: created.length,
       updated: updated.length,
       errors,
+      skipped: parsed.errors,
     }, 201);
   }
 

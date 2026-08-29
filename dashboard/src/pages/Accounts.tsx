@@ -618,7 +618,7 @@ export default function Accounts() {
 
   async function handleGrokCliBulkTokens() {
     const text = grokCliBulkTokens.trim();
-    if (!text) { setGrokCliError("Paste access tokens (one per line)"); return; }
+    if (!text) { setGrokCliError("Paste access/refresh tokens (one per line) or a grok2api JSON export"); return; }
     const tokens = text.split("\n").map((t) => t.trim()).filter(Boolean);
     if (tokens.length === 0) { setGrokCliError("No valid tokens found"); return; }
     setGrokCliBusy(true);
@@ -632,9 +632,12 @@ export default function Accounts() {
       if (res.created) parts.push(`${res.created} created`);
       if (res.updated) parts.push(`${res.updated} updated`);
       if (res.errors?.length) parts.push(`${res.errors.length} failed`);
+      if (res.skipped?.length) parts.push(`${res.skipped.length} skipped`);
       showSuccess(`Grok CLI bulk: ${parts.join(", ") || "no changes"}`);
-      if (res.errors?.length) {
-        setGrokCliError(res.errors.map((e: any) => `…${e.token}: ${e.error}`).join("\n"));
+      if (res.errors?.length || res.skipped?.length) {
+        const failed = (res.errors || []).map((e: any) => `…${e.token}: ${e.error}`);
+        const skipped = (res.skipped || []).map((s: string) => `skipped: ${s}`);
+        setGrokCliError([...failed, ...skipped].join("\n"));
       } else {
         setGrokCliBulkTokens("");
         setAddDialogProvider(null);
@@ -2188,16 +2191,17 @@ export default function Accounts() {
           {addMode === "token" && addDialogProvider === "grok-cli" && (
             <div className="space-y-4">
               <div>
-                <label className="text-sm text-[var(--foreground)]">Grok CLI Access Tokens (bulk)</label>
+                <label className="text-sm text-[var(--foreground)]">Grok CLI Tokens (bulk)</label>
                 <textarea
                   value={grokCliBulkTokens}
                   onChange={(e) => setGrokCliBulkTokens(e.target.value)}
                   className="mt-1 w-full h-32 rounded-md border border-[var(--border)] bg-[var(--background)] p-3 text-sm font-mono text-[var(--foreground)] placeholder:text-[var(--muted-foreground)] focus:outline-none focus:ring-1 focus:ring-[var(--ring)] resize-none"
-                  placeholder={"eyJ0eX...d3Qi…\neyJ0eX...d3Qi…\neyJ0eX...d3Qi…"}
+                  placeholder={"eyJ0eX...d3Qi… (access token)\neyJ0eX...d3Qi…\nrt=grok2api-refresh-token…\n…atau paste export JSON grok2api (g2a)"}
                   disabled={grokCliBusy}
                 />
                 <p className="mt-1 text-xs text-[var(--muted-foreground)]">
-                  Satu access token per baris. Setiap token divalidasi via xAI billing/profile. Duplikat di-update, bukan di-skip.
+                  Access token per baris, refresh token (<code>rt=…</code>), atau export JSON grok2api (g2a){" "}
+                  <code>{"{\"accounts\":[…]}"}</code>. Refresh token di-exchange otomatis. Duplikat di-update, bukan di-skip.
                 </p>
               </div>
               {grokCliError && <p className="text-xs text-[var(--error)] whitespace-pre-line">{grokCliError}</p>}
