@@ -12,8 +12,15 @@ import { decrypt, encrypt } from "../../utils/crypto";
 import { db } from "../../db/index";
 import { accounts } from "../../db/schema";
 import { eq } from "drizzle-orm";
-import { pool } from "../pool";
 import { config } from "../../config";
+import {
+  GROK_CLI_XAI_RESPONSES_URL,
+  applyGrokCliResponseDefaults,
+  grokCliInferenceHeaders,
+  isReasoningDecodeFailure,
+  shouldSkipXaiFallback,
+  stripReasoningEncryptedContent,
+} from "./grok-cli-protocol";
 
 // Logger dari hono — tersedia di semua service
 import { logger } from "hono/logger";
@@ -49,6 +56,13 @@ const GROK_CLI_BILLING_URL = `${GROK_CLI_BASE}/billing`;
 const GROK_CLI_VERSION = "1.0.5";
 const GROK_CLI_CLIENT_IDENTIFIER = "grok-shell";
 const GROK_CLI_USER_AGENT = `grok-shell/${GROK_CLI_VERSION} (linux; x86_64)`;
+const GROK_CLI_HEADER_CONSTANTS = {
+  userAgent: GROK_CLI_USER_AGENT,
+  clientVersion: GROK_CLI_VERSION,
+  clientIdentifier: GROK_CLI_CLIENT_IDENTIFIER,
+} as const;
+/** Process-lifetime agent id — grok2api never regenerates this per request. */
+const GROK_CLI_AGENT_ID = crypto.randomUUID();
 
 // OAuth config (same client_id as xAI, different scope + referrer)
 const XAI_DEVICE_CODE_URL = "https://auth.x.ai/oauth2/device/code";
@@ -206,6 +220,15 @@ const GROK_CLI_MODELS: GrokCliModelDef[] = [
   {
     id: "grok-build",
     upstream: "grok-build",
+    context_window: 500000,
+    max_output: 64000,
+    thinking: false,
+    vision: false,
+    creditRate: 0,
+  },
+  {
+    id: "grok-composer-2.5-fast",
+    upstream: "grok-composer-2.5-fast",
     context_window: 500000,
     max_output: 64000,
     thinking: false,
@@ -940,43 +963,119 @@ export class GrokCliProvider extends BaseProvider {
   }
 
   /**
-   * Build the headers required by cli-chat-proxy.grok.com.
-   * These mirror the official @xai-official/grok CLI wire format.
+   * Build headers for cli-chat-proxy / api.x.ai Responses.
+   * Session id is derived from prompt_cache_key (grok2api) — never a random UUID.
    */
-  private buildHeaders(account: Account, model?: string): Record<string, string> {
-    const accessToken = this.getAccessToken(account);
+  private buildHeaders(
+    account: Account,
+    model?: string,
+    promptCacheKey?: string,
+  ): Record<string, string> {
     const tokens = getTokens(account);
+    return grokCliInferenceHeaders(
+      {
+        accessToken: this.getAccessToken(account),
+        agentId: GROK_CLI_AGENT_ID,
+        model,
+        promptCacheKey,
+        userId: tokens?.user_id,
+      },
+      GROK_CLI_HEADER_CONSTANTS,
+    );
+  }
 
-    const headers: Record<string, string> = {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${accessToken}`,
-      Accept: "text/event-stream",
-      "User-Agent": GROK_CLI_USER_AGENT,
-      "x-xai-token-auth": "xai-grok-cli",
-      "x-grok-client-version": GROK_CLI_VERSION,
-      "x-grok-client-identifier": GROK_CLI_CLIENT_IDENTIFIER,
-      "x-grok-client-mode": "headless",
-    };
+  /**
+   * POST /responses with grok2api recovery:
+   *   400 decode-failure → strip encrypted_content, retry same plane
+   *   403 (not blocked/safety) → retry once on api.x.ai
+   */
+  private async postResponses(
+    account: Account,
+    model: string,
+    body: Record<string, unknown>,
+  ): Promise<Response> {
+    const headers = this.buildHeaders(
+      account,
+      model,
+      typeof body.prompt_cache_key === "string" ? body.prompt_cache_key : undefined,
+    );
+    const payload = JSON.stringify(body);
+    const primary = await this.fetchWithTimeout(GROK_CLI_RESPONSES_URL, {
+      method: "POST",
+      headers,
+      body: payload,
+    });
+    if (primary.ok) return primary;
 
-    // Identity headers — surface email/userId from tokens
-    const email = tokens?.email;
-    const userId = tokens?.user_id;
-    if (email) headers["x-email"] = email;
-    if (userId) headers["x-userid"] = userId;
+    if (primary.status === 400) {
+      const recovered = await this.retryReasoningDecode(primary, headers, body);
+      if (recovered) return recovered;
+    }
 
-    // Session/turn tracking — use random UUIDs per request
-    // (the official CLI uses persistent session IDs, but per-request is safe
-    // for a proxy that serves multiple clients)
-    const sessionId = crypto.randomUUID();
-    headers["x-grok-session-id"] = sessionId;
-    headers["x-grok-conv-id"] = sessionId;
-    headers["x-grok-req-id"] = crypto.randomUUID();
-    headers["x-grok-turn-idx"] = "1";
+    if (primary.status === 403) {
+      const text = await primary.text().catch(() => "");
+      if (!shouldSkipXaiFallback(text)) {
+        const fallback = await this.fetchWithTimeout(GROK_CLI_XAI_RESPONSES_URL, {
+          method: "POST",
+          headers,
+          body: payload,
+        });
+        if (fallback.ok) return fallback;
+        return fallback;
+      }
+      return new Response(text, {
+        status: primary.status,
+        statusText: primary.statusText,
+        headers: primary.headers,
+      });
+    }
 
-    // Model override
-    if (model) headers["x-grok-model-override"] = model;
+    return primary;
+  }
 
-    return headers;
+  private async retryReasoningDecode(
+    primary: Response,
+    headers: Record<string, string>,
+    body: Record<string, unknown>,
+  ): Promise<Response | null> {
+    const text = await primary.text().catch(() => "");
+    if (!isReasoningDecodeFailure(text)) {
+      return new Response(text, {
+        status: primary.status,
+        statusText: primary.statusText,
+        headers: primary.headers,
+      });
+    }
+    const stripped = stripReasoningEncryptedContent(body);
+    if (!stripped) {
+      return new Response(text, {
+        status: primary.status,
+        statusText: primary.statusText,
+        headers: primary.headers,
+      });
+    }
+    const retry = await this.fetchWithTimeout(GROK_CLI_RESPONSES_URL, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(stripped),
+    });
+    if (retry.ok || retry.status === 429) return retry;
+    if (retry.status === 400) {
+      const retryText = await retry.text().catch(() => "");
+      if (isReasoningDecodeFailure(retryText)) {
+        return new Response(text, {
+          status: primary.status,
+          statusText: primary.statusText,
+          headers: primary.headers,
+        });
+      }
+      return new Response(retryText, {
+        status: retry.status,
+        statusText: retry.statusText,
+        headers: retry.headers,
+      });
+    }
+    return retry;
   }
 
   /**
@@ -991,24 +1090,6 @@ export class GrokCliProvider extends BaseProvider {
       stream: true, // cli-chat-proxy forces streaming
       store: false,
     };
-
-    // Prompt caching: xAI caches ≥1024-token stable prefixes. Send a stable
-    // cache key so repeated prompts from the same client hit the cache.
-    // Explicit client key wins; otherwise derive a stable key from the
-    // system+tools prefix (FNV-1a hash, cheap, no crypto dependency).
-    if (request.prompt_cache_key) {
-      body.prompt_cache_key = String(request.prompt_cache_key).slice(0, 64);
-    } else {
-      let h = 0x811c9dc5;
-      const prefix = (body.instructions || "") + JSON.stringify(body.tools || []);
-      for (let i = 0; i < prefix.length; i++) {
-        h ^= prefix.charCodeAt(i);
-        h = Math.imul(h, 0x01000193) >>> 0;
-      }
-      if (prefix.length > 0) {
-        body.prompt_cache_key = `etteum-${h.toString(16)}-${def.upstream}`;
-      }
-    }
 
     if (instructions) body.instructions = instructions;
 
@@ -1035,12 +1116,26 @@ export class GrokCliProvider extends BaseProvider {
     if (request.temperature !== undefined) body.temperature = request.temperature;
     if (request.top_p !== undefined) body.top_p = request.top_p;
 
+    if (request.prompt_cache_key) {
+      body.prompt_cache_key = String(request.prompt_cache_key).slice(0, 64);
+    } else {
+      let h = 0x811c9dc5;
+      const prefix = String(body.instructions || "") + JSON.stringify(body.tools || []);
+      for (let i = 0; i < prefix.length; i++) {
+        h ^= prefix.charCodeAt(i);
+        h = Math.imul(h, 0x01000193) >>> 0;
+      }
+      if (prefix.length > 0) {
+        body.prompt_cache_key = `etteum-${h.toString(16)}-${def.upstream}`;
+      }
+    }
+
     // Filter to allowlist only
     for (const k of Object.keys(body)) {
       if (!RESPONSES_API_ALLOWLIST.has(k)) delete body[k];
     }
 
-    return body;
+    return applyGrokCliResponseDefaults(body);
   }
 
   /**
@@ -1194,24 +1289,12 @@ export class GrokCliProvider extends BaseProvider {
       console.log(`[PLENGER] ${account.email}: probe failed, not disabling: ${plengerResult.error}`);
     }
 
-    // cli-chat-proxy forces streaming, so we make a streaming request and
-    // aggregate the full response.
     const body = this.toResponsesBody(request, def);
-    const headers = this.buildHeaders(account, def.upstream);
-
     try {
-      const resp = await this.fetchWithTimeout(GROK_CLI_RESPONSES_URL, {
-        method: "POST",
-        headers,
-        body: JSON.stringify(body),
-      });
-
+      const resp = await this.postResponses(account, def.upstream, body);
       const errResult = await this.handleErrorResponse(resp);
       if (errResult) return errResult;
-
-      // Read the full SSE stream and aggregate
-      const fullText = await this.aggregateStream(resp, def.upstream);
-      return fullText;
+      return this.aggregateStream(resp, def.upstream);
     } catch (err) {
       return {
         success: false,
@@ -1287,6 +1370,11 @@ export class GrokCliProvider extends BaseProvider {
 
       const answer = finalTextFromSse(raw);
       const checkedAt = new Date().toISOString();
+
+      // Lazy import: static `pool` here would create a load cycle
+      // (grok-cli → pool → registry → grok-cli) that TDZ-crashes when this
+      // module is the entry point.
+      const { pool } = await import("../pool");
 
       if (answer === PLENGER_EXPECTED) {
         // Account is valid — clear plenger flag
@@ -1446,24 +1534,16 @@ export class GrokCliProvider extends BaseProvider {
       console.log(`[PLENGER] ${account.email}: probe failed, not disabling: ${plengerResult.error}`);
     }
     const body = this.toResponsesBody(request, def);
-    const headers = this.buildHeaders(account, def.upstream);
-
     try {
-      const resp = await this.fetchWithTimeout(GROK_CLI_RESPONSES_URL, {
-        method: "POST",
-        headers,
-        body: JSON.stringify(body),
-      });
-
+      const resp = await this.postResponses(account, def.upstream, body);
+      const errResult = await this.handleErrorResponse(resp);
+      if (errResult) return errResult;
       if (!resp.body) {
         return { success: false, error: "No response body from Grok CLI" };
       }
-
-      const stream = responsesStreamToChatStream(resp.body, def.upstream);
-
       return {
         success: true,
-        stream,
+        stream: responsesStreamToChatStream(resp.body, def.upstream),
       };
     } catch (err) {
       return {
@@ -1487,58 +1567,29 @@ export class GrokCliProvider extends BaseProvider {
       return { success: false, error: "No refresh token" };
     }
 
-    try {
-      const resp = await fetch(XAI_TOKEN_URL, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/x-www-form-urlencoded",
-          Accept: "application/json",
-          "User-Agent": GROK_CLI_USER_AGENT,
-        },
-        body: new URLSearchParams({
-          grant_type: "refresh_token",
-          refresh_token: tokens.refresh_token,
-          client_id: XAI_OAUTH_CLIENT_ID,
-        }),
-      });
-
-      if (!resp.ok) {
-        const text = await resp.text().catch(() => "");
-        const isInvalidGrant = text.includes("invalid_grant") || text.includes("invalid_request");
-        return {
-          success: false,
-          error: isInvalidGrant
-            ? `expired: Refresh token invalid or expired`
-            : `Token refresh failed (HTTP ${resp.status}): ${text.slice(0, 160)}`,
-        };
-      }
-
-      const data = await resp.json() as any;
-
-      const expiresAt = data.expires_in
-        ? new Date(Date.now() + data.expires_in * 1000).toISOString()
-        : undefined;
-
-      const newTokens: GrokCliTokens = {
-        access_token: data.access_token,
-        refresh_token: data.refresh_token || tokens.refresh_token,
-        id_token: data.id_token || tokens.id_token,
-        expires_at: expiresAt,
-        email: tokens.email,
-        user_id: tokens.user_id,
-        subscription_tier: tokens.subscription_tier,
-      };
-
-      return {
-        success: true,
-        tokens: JSON.stringify(newTokens),
-      };
-    } catch (err) {
-      return {
-        success: false,
-        error: err instanceof Error ? err.message : String(err),
-      };
+    const exchanged = await exchangeGrokCliRefreshToken(tokens.refresh_token);
+    if (!exchanged.success || !exchanged.accessToken) {
+      return { success: false, error: exchanged.error };
     }
+
+    const expiresAt = exchanged.expiresIn
+      ? new Date(Date.now() + exchanged.expiresIn * 1000).toISOString()
+      : undefined;
+
+    const newTokens: GrokCliTokens = {
+      access_token: exchanged.accessToken,
+      refresh_token: exchanged.refreshToken || tokens.refresh_token,
+      id_token: exchanged.idToken || tokens.id_token,
+      expires_at: expiresAt,
+      email: tokens.email,
+      user_id: tokens.user_id,
+      subscription_tier: tokens.subscription_tier,
+    };
+
+    return {
+      success: true,
+      tokens: JSON.stringify(newTokens),
+    };
   }
 
   async validateAccount(account: Account): Promise<boolean> {
@@ -1883,6 +1934,253 @@ function decodeJwtPayload(token: string): any {
   } catch {
     return {};
   }
+}
+
+/**
+ * Standalone refresh-token exchange against auth.x.ai (grant_type=refresh_token).
+ * Shared by GrokCliProvider.refreshToken() and the g2a bulk-import path.
+ */
+export async function exchangeGrokCliRefreshToken(refreshToken: string): Promise<{
+  success: boolean;
+  accessToken?: string;
+  refreshToken?: string;
+  idToken?: string;
+  expiresIn?: number;
+  error?: string;
+}> {
+  try {
+    const resp = await fetch(XAI_TOKEN_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        Accept: "application/json",
+        "User-Agent": GROK_CLI_USER_AGENT,
+      },
+      body: new URLSearchParams({
+        grant_type: "refresh_token",
+        refresh_token: refreshToken,
+        client_id: XAI_OAUTH_CLIENT_ID,
+      }),
+    });
+
+    if (!resp.ok) {
+      const text = await resp.text().catch(() => "");
+      const isInvalidGrant = text.includes("invalid_grant") || text.includes("invalid_request");
+      return {
+        success: false,
+        error: isInvalidGrant
+          ? `expired: Refresh token invalid or expired`
+          : `Token refresh failed (HTTP ${resp.status}): ${text.slice(0, 160)}`,
+      };
+    }
+
+    const data = await resp.json() as {
+      access_token?: string;
+      refresh_token?: string;
+      id_token?: string;
+      expires_in?: number;
+    };
+    if (!data.access_token) {
+      return { success: false, error: "Token refresh response missing access_token" };
+    }
+
+    return {
+      success: true,
+      accessToken: data.access_token,
+      refreshToken: data.refresh_token,
+      idToken: data.id_token,
+      expiresIn: data.expires_in,
+    };
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+// ── g2a (grok2api) Grok Build credential import ────────────────────────────
+// Parses chenyme/grok2api v3.x CLI credential exports so accounts can be
+// imported directly from a g2a deployment. Accepted shapes (g2a parity):
+//   {"accounts":[{...},...]} | [{...},...] | single {...} | one {...} per line (NDJSON)
+//   plain text: one token per line, optional rt=/refresh_token= prefix
+// Bare plain-text lines that are JWT-shaped stay access tokens (etteum's
+// original bulk format); everything else is a refresh token (g2a semantics).
+
+const GROK_BUILD_IMPORT_PROVIDER = "grok_build";
+const GROK_CLI_IMPORT_MAX_TOKEN_BYTES = 16 << 10;
+const GROK_CLI_IMPORT_MAX_ACCOUNTS = 10_000;
+const GROK_CLI_IMPORT_MAX_EXPIRES_IN_SECONDS = 365 * 24 * 60 * 60;
+
+export interface GrokCliImportEntry {
+  accessToken: string;
+  refreshToken: string;
+  idToken: string;
+  email: string;
+  userId: string;
+  name: string;
+  expiresAt: string | null;
+}
+
+export interface GrokCliImportParseResult {
+  entries: GrokCliImportEntry[];
+  errors: string[];
+}
+
+function importStr(value: unknown): string {
+  if (typeof value !== "string") return "";
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : "";
+}
+
+function looksLikeJwt(token: string): boolean {
+  const parts = token.split(".");
+  return (
+    token.startsWith("eyJ") &&
+    parts.length === 3 &&
+    parts.every((part) => /^[A-Za-z0-9_-]*$/.test(part))
+  );
+}
+
+function parseGrokCliImportDocument(text: string, errors: string[]): unknown[] {
+  try {
+    const doc: unknown = JSON.parse(text);
+    if (Array.isArray(doc)) return doc;
+    if (doc && typeof doc === "object") {
+      const accounts = (doc as { accounts?: unknown }).accounts;
+      if (Array.isArray(accounts)) return accounts;
+      return [doc];
+    }
+    return [];
+  } catch {
+    // NDJSON fallback: one JSON object per line
+    const items: unknown[] = [];
+    for (const line of text.split("\n")) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      try {
+        items.push(JSON.parse(trimmed) as unknown);
+      } catch {
+        errors.push(`Unparseable line: ${trimmed.slice(0, 48)}`);
+      }
+    }
+    return items;
+  }
+}
+
+function parseGrokCliImportText(text: string): unknown[] {
+  const items: unknown[] = [];
+  for (const rawLine of text.split("\n")) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith("#")) continue;
+
+    let accessToken = "";
+    let refreshToken = "";
+    const eq = line.indexOf("=");
+    if (eq > 0) {
+      const key = line.slice(0, eq).trim().toLowerCase();
+      const value = line.slice(eq + 1).trim();
+      if (key === "rt" || key === "refresh_token") refreshToken = value;
+      else if (key === "at" || key === "access_token") accessToken = value;
+    }
+    if (!accessToken && !refreshToken) {
+      // g2a semantics: bare line = refresh token. JWT-shaped lines stay
+      // access tokens for compatibility with etteum's original bulk format.
+      if (looksLikeJwt(line)) accessToken = line;
+      else refreshToken = line;
+    }
+    items.push(accessToken ? { access_token: accessToken } : { refresh_token: refreshToken });
+  }
+  return items;
+}
+
+function normalizeGrokCliImportEntry(entry: unknown, index: number): GrokCliImportEntry | string {
+  if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+    return `entry ${index + 1}: not a JSON object`;
+  }
+  const e = entry as Record<string, unknown>;
+  const provider = importStr(e.provider);
+  if (provider && provider !== GROK_BUILD_IMPORT_PROVIDER) {
+    return `entry ${index + 1}: unsupported provider "${provider}" (expected grok_build)`;
+  }
+  const tokenType = importStr(e.token_type);
+  if (tokenType && tokenType.toLowerCase() !== "bearer") {
+    return `entry ${index + 1}: unsupported token_type "${tokenType}" (expected Bearer)`;
+  }
+  const accessToken = importStr(e.access_token);
+  const refreshToken = importStr(e.refresh_token);
+  const idToken = importStr(e.id_token);
+  if (!accessToken && !refreshToken) {
+    return `entry ${index + 1}: missing access_token/refresh_token`;
+  }
+  if (accessToken && accessToken.length < 20) {
+    return `entry ${index + 1}: access token too short (min 20 chars)`;
+  }
+  for (const token of [accessToken, refreshToken, idToken]) {
+    if (token.length > GROK_CLI_IMPORT_MAX_TOKEN_BYTES) {
+      return `entry ${index + 1}: token exceeds ${GROK_CLI_IMPORT_MAX_TOKEN_BYTES} bytes`;
+    }
+    if (token && /\s/.test(token)) {
+      return `entry ${index + 1}: token must not contain whitespace`;
+    }
+  }
+
+  // Identity/email: explicit entry fields win, then JWT claims (g2a parity).
+  const claims = decodeJwtPayload(idToken || accessToken) as {
+    email?: unknown;
+    sub?: unknown;
+    exp?: unknown;
+  };
+  const email = importStr(e.email) || importStr(claims.email);
+  const userId = importStr(e.user_id) || importStr(e.sub) || importStr(claims.sub);
+  const name = importStr(e.name) || email || userId || "Grok Build account";
+
+  let expiresAt: string | null = null;
+  const expiresAtRaw = importStr(e.expires_at);
+  if (expiresAtRaw) {
+    const ms = Date.parse(expiresAtRaw);
+    if (!Number.isFinite(ms)) {
+      return `entry ${index + 1}: expires_at must be an RFC3339 timestamp`;
+    }
+    expiresAt = new Date(ms).toISOString();
+  } else if (typeof claims.exp === "number" && claims.exp > 0) {
+    expiresAt = new Date(claims.exp * 1000).toISOString();
+  } else if (
+    typeof e.expires_in === "number" &&
+    e.expires_in > 0 &&
+    e.expires_in <= GROK_CLI_IMPORT_MAX_EXPIRES_IN_SECONDS
+  ) {
+    expiresAt = new Date(Date.now() + e.expires_in * 1000).toISOString();
+  }
+
+  return { accessToken, refreshToken, idToken, email, userId, name, expiresAt };
+}
+
+/**
+ * Parse a grok-cli bulk token paste into importable entries.
+ * Accepts g2a (grok2api) JSON exports, NDJSON, and plain-text token lists.
+ * Per-entry problems are collected in `errors`; entries keep flowing.
+ */
+export function parseGrokCliImportEntries(raw: string): GrokCliImportParseResult {
+  const text = raw.replace(/^\uFEFF/, "").trim();
+  if (!text) return { entries: [], errors: [] };
+
+  const errors: string[] = [];
+  const list = text.startsWith("{") || text.startsWith("[")
+    ? parseGrokCliImportDocument(text, errors)
+    : parseGrokCliImportText(text);
+
+  const entries: GrokCliImportEntry[] = [];
+  for (let index = 0; index < list.length; index++) {
+    if (entries.length >= GROK_CLI_IMPORT_MAX_ACCOUNTS) {
+      errors.push(`Import limit reached (max ${GROK_CLI_IMPORT_MAX_ACCOUNTS} accounts)`);
+      break;
+    }
+    const normalized = normalizeGrokCliImportEntry(list[index], index);
+    if (typeof normalized === "string") errors.push(normalized);
+    else entries.push(normalized);
+  }
+  return { entries, errors };
 }
 
 /**
