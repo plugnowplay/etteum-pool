@@ -18,7 +18,7 @@ interface CodeBuddyChinaTokens {
 
 const CBC_UPSTREAM = new Set([
   "deepseek-v4-flash", "deepseek-v4-pro", "kimi-k2.6", "kimi-k2.7", "kimi-k3",
-  "glm-5.2", "glm-5.3", "minimax-m2.7", "minimax-m3",
+  "glm-5.2", "glm-5.3", "glm-5.3-flash", "minimax-m2.7", "minimax-m3",
 ]);
 
 /** Map cbc- prefixed model IDs to actual CodeBuddy China API model names. */
@@ -33,6 +33,7 @@ const CBC_MODEL_MAP: Record<string, string> = {
   // GLM (Zhipu)
   "cbc-glm-5.2": "glm-5.2",
   "cbc-glm-5.3": "glm-5.3",
+  "cbc-glm-5.3-flash": "glm-5.3-flash",
   // MiniMax
   "cbc-minimax-m2.7": "minimax-m2.7",
   "cbc-minimax-m3": "minimax-m3",
@@ -75,6 +76,7 @@ export class CodeBuddyChinaProvider extends BaseProvider {
     // GLM — 5.2 / 5.3 support vision
     { id: "glm-5.2", object: "model", created: Date.now(), owned_by: "codebuddy-china", context_window: 1000000, max_output: 8192, thinking: false, vision: true, creditUnit: "credit", creditRate: 0.02, creditSource: "upstream" },
     { id: "glm-5.3", object: "model", created: Date.now(), owned_by: "codebuddy-china", context_window: 1000000, max_output: 8192, thinking: true, vision: true, creditUnit: "credit", creditRate: 0.02, creditSource: "upstream" },
+    { id: "glm-5.3-flash", object: "model", created: Date.now(), owned_by: "codebuddy-china", context_window: 1000000, max_output: 8192, thinking: false, vision: true, creditUnit: "credit", creditRate: 0.02, creditSource: "upstream" },
     // MiniMax — vision support is flaky upstream (model often replies "I don't see"), kept enabled for parity
     { id: "minimax-m2.7", object: "model", created: Date.now(), owned_by: "codebuddy-china", context_window: 512000, max_output: 8192, thinking: false, vision: true, creditUnit: "credit", creditRate: 0.10, creditSource: "upstream" },
     { id: "minimax-m3", object: "model", created: Date.now(), owned_by: "codebuddy-china", context_window: 512000, max_output: 8192, thinking: false, vision: true, creditUnit: "credit", creditRate: 0.10, creditSource: "upstream" },
