@@ -120,6 +120,10 @@ export class KiroProvider extends BaseProvider {
       return this.getModelInfo(bare) !== undefined;
     }
     const m2 = model.toLowerCase().replace("-thinking", "");
+    // Kiro owns bare model names only. BYOK-shaped "prefix/model" ids (e.g.
+    // "openrouter/claude-sonnet-4.6") must not match the claude/sonnet/haiku
+    // substrings — they belong to byok, not the catch-all fallback.
+    if (m2.includes("/")) return false;
     if (this.getModelInfo(model)) return true;
     if (m2 === "auto") return true;
     if (m2 === "deepseek-3.2" || m2 === "glm-5") return true;

@@ -154,6 +154,16 @@ export function getProviderForModel(model: string): ProviderName | null {
   }
   const custom = customModelCache.find((m) => m.id === model || m.id.endsWith(`/${model}`));
   if (custom) return custom.owned_by as ProviderName;
+
+  // Unknown "prefix/model" ids are BYOK-shaped: formatByokModelId emits
+  // "<label>/<model>" and BYOK labels are dynamic DB rows, so they can never
+  // appear in PROVIDER_ALIAS_MAP. Route them to byok even when its sync
+  // prefix cache is cold — the isFallback catch-all (kiro) would otherwise
+  // steal e.g. "openrouter/claude-sonnet-4.6" out of a BYOK combo. If no
+  // BYOK account owns the prefix, the router fails with a clear error
+  // instead of silently serving from kiro.
+  if (bare.includes("/")) return "byok";
+
   const fallback = PROVIDER_ORDER.find((p) => p.isFallback);
   return (fallback?.name as ProviderName) ?? null;
 }
