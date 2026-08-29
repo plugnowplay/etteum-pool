@@ -252,6 +252,71 @@ export async function markProxyFail(id: number, error?: string) {
   console.warn(`[PROXY-EXHAUSTED] Proxy #${id} disabled after ${reason}`);
 }
 
+// ── Auto-recovery loop ──────────────────────────────────────────────
+// Proxies evicted to status='error' (traffic exhausted / sustained fails)
+// are periodically re-checked. Healthy ones return to rotation
+// automatically — no more manual "check" clicks after a bad patch.
+const PROXY_RECOVERY_INTERVAL_MS = 2 * 60_000; // check every 2 min
+const PROXY_RECOVERY_MAX_AGE_MS = 60 * 60_000; // skip proxies evicted <1 min ago
+
+let recoveryRunning = false;
+
+async function runProxyRecovery() {
+  if (recoveryRunning) return;
+  recoveryRunning = true;
+  try {
+    const cutoff = new Date(Date.now() - PROXY_RECOVERY_MAX_AGE_MS);
+    const candidates = await db
+      .select({ id: proxyPool.id, url: proxyPool.url, errorMessage: proxyPool.errorMessage })
+      .from(proxyPool)
+      .where(and(eq(proxyPool.status, "error"), lt(proxyPool.updatedAt, cutoff)));
+
+    for (const p of candidates) {
+      const result = await checkProxyHealth(p.url);
+      if (result.ok) {
+        await db
+          .update(proxyPool)
+          .set({
+            status: "active",
+            errorMessage: null,
+            latencyMs: result.latencyMs,
+            updatedAt: new Date(),
+          })
+          .where(eq(proxyPool.id, p.id));
+        outcomeWindow.delete(p.id);
+        consecutiveFails.delete(p.id);
+        invalidateProxyCache();
+        console.log(`[PROXY-RECOVERY] Proxy #${p.id} (${p.url}) healthy again (ip=${result.ip ?? "?"}, ${result.latencyMs}ms) — back in rotation`);
+        const { broadcast } = await import("../ws/index");
+        broadcast({
+          type: "proxy_recovered",
+          data: {
+            id: p.id,
+            url: p.url,
+            ip: result.ip,
+            latencyMs: result.latencyMs,
+            timestamp: new Date().toISOString(),
+          },
+        });
+      } else {
+        console.log(`[PROXY-RECOVERY] Proxy #${p.id} (${p.url}) still down: ${result.error ?? "unknown"}`);
+      }
+    }
+  } catch (err) {
+    console.error(`[PROXY-RECOVERY] loop error: ${err instanceof Error ? err.message : String(err)}`);
+  } finally {
+    recoveryRunning = false;
+  }
+}
+
+export function startProxyRecoveryLoop() {
+  if (recoveryTimer) return;
+  recoveryTimer = setInterval(runProxyRecovery, PROXY_RECOVERY_INTERVAL_MS);
+  console.log(`[PROXY-RECOVERY] auto-recovery loop started (every ${PROXY_RECOVERY_INTERVAL_MS / 60_000} min)`);
+}
+
+let recoveryTimer: ReturnType<typeof setInterval> | undefined;
+
 // ── Health check ────────────────────────────────────────────────────
 export async function checkProxyHealth(proxyUrl: string): Promise<{ ok: boolean; latencyMs: number; error?: string; ip?: string }> {
   const start = Date.now();

@@ -24,6 +24,10 @@ await runMigrations();
 import { startApiKeyUsageSync } from "./services/api-keys-sync";
 startApiKeyUsageSync();
 
+// Start proxy auto-recovery loop: re-check evicted ('error') proxies every 2 min
+import { startProxyRecoveryLoop } from "./services/proxy-pool";
+startProxyRecoveryLoop();
+
 // Seed filter rules from PUDIDIL_FILTERS if table is empty (first boot only)
 try {
   const [row] = await db.select({ count: sql<number>`COUNT(*)` }).from(filterRules);
