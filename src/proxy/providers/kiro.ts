@@ -56,18 +56,10 @@ interface KiroTokens {
  * shows. So it is a *variant* of this one provider class, not a subclass.
  */
 const KIRO_PRO_MODELS: ModelInfo[] = [
-  { id: "auto", object: "model", created: Date.now(), owned_by: "kiro-pro", context_window: 1000000, max_output: 64000, thinking: true, vision: true, creditUnit: "credit", creditRate: 0.018 / 1000, creditSource: "estimated" },
-  { id: "opus-4.8", object: "model", created: Date.now(), owned_by: "kiro-pro", context_window: 1000000, max_output: 64000, thinking: true, vision: true, creditUnit: "credit", creditRate: 0.022 / 1000, creditSource: "estimated" },
-  { id: "opus-4.8-thinking", object: "model", created: Date.now(), owned_by: "kiro-pro", context_window: 1000000, max_output: 64000, thinking: true, vision: true, creditUnit: "credit", creditRate: 0.022 / 1000, creditSource: "estimated" },
-  { id: "opus-4.7", object: "model", created: Date.now(), owned_by: "kiro-pro", context_window: 1000000, max_output: 64000, thinking: true, vision: true, creditUnit: "credit", creditRate: 0.022 / 1000, creditSource: "estimated" },
-  { id: "opus-4.7-thinking", object: "model", created: Date.now(), owned_by: "kiro-pro", context_window: 1000000, max_output: 64000, thinking: true, vision: true, creditUnit: "credit", creditRate: 0.022 / 1000, creditSource: "estimated" },
-  { id: "opus-4.6", object: "model", created: Date.now(), owned_by: "kiro-pro", context_window: 1000000, max_output: 64000, thinking: true, vision: true, creditUnit: "credit", creditRate: 0.022 / 1000, creditSource: "estimated" },
-  { id: "opus-4.6-thinking", object: "model", created: Date.now(), owned_by: "kiro-pro", context_window: 1000000, max_output: 64000, thinking: true, vision: true, creditUnit: "credit", creditRate: 0.022 / 1000, creditSource: "estimated" },
-  { id: "opus-4.5", object: "model", created: Date.now(), owned_by: "kiro-pro", context_window: 200000, max_output: 64000, thinking: true, vision: true, creditUnit: "credit", creditRate: 0.018 / 1000, creditSource: "estimated" },
-  { id: "sonnet-4.6", object: "model", created: Date.now(), owned_by: "kiro-pro", context_window: 1000000, max_output: 64000, thinking: true, vision: true, creditUnit: "credit", creditRate: 0.012 / 1000, creditSource: "estimated" },
-  { id: "sonnet-4.6-thinking", object: "model", created: Date.now(), owned_by: "kiro-pro", context_window: 1000000, max_output: 64000, thinking: true, vision: true, creditUnit: "credit", creditRate: 0.015 / 1000, creditSource: "estimated" },
-  { id: "haiku-4.5", object: "model", created: Date.now(), owned_by: "kiro-pro", context_window: 200000, max_output: 64000, thinking: true, vision: true, creditUnit: "credit", creditRate: 0.003 / 1000, creditSource: "estimated" },
-  { id: "haiku-4.5-thinking", object: "model", created: Date.now(), owned_by: "kiro-pro", context_window: 200000, max_output: 64000, thinking: true, vision: true, creditUnit: "credit", creditRate: 0.004 / 1000, creditSource: "estimated" },
+  { id: "opus-4.8", object: "model", created: Date.now(), owned_by: "kiro", context_window: 1000000, max_output: 64000, thinking: true, vision: true, creditUnit: "credit", creditRate: 0.022 / 1000, creditSource: "estimated" },
+  { id: "opus-4.7", object: "model", created: Date.now(), owned_by: "kiro", context_window: 1000000, max_output: 64000, thinking: true, vision: true, creditUnit: "credit", creditRate: 0.022 / 1000, creditSource: "estimated" },
+  { id: "opus-4.6", object: "model", created: Date.now(), owned_by: "kiro", context_window: 1000000, max_output: 64000, thinking: true, vision: true, creditUnit: "credit", creditRate: 0.022 / 1000, creditSource: "estimated" },
+  { id: "opus-4.5", object: "model", created: Date.now(), owned_by: "kiro", context_window: 200000, max_output: 64000, thinking: true, vision: true, creditUnit: "credit", creditRate: 0.018 / 1000, creditSource: "estimated" },
 ];
 
 /** Map plain model IDs to the actual Kiro API model names (legacy kp- ids also accepted). */
@@ -88,37 +80,34 @@ const KIRO_PRO_MODEL_MAP: Record<string, string> = {
 
 export type KiroVariant = "standard" | "pro";
 
+/**
+ * Kiro Provider — standard + pro merged into one provider (2026-08-29).
+ * The pro-tier catalog (kp- / opus / plain alias ids) is served by this single
+ * provider from the one shared account pool; KIRO_PRO_MODEL_MAP still resolves
+ * those ids to the real Kiro API model names upstream.
+ */
 export class KiroProvider extends BaseProvider {
-  /** "standard" = kiro (catch-all); "pro" = kiro-pro (kp- models, Pro pool). */
+  /** Kept for API compatibility; a standalone kiro-pro provider no longer exists. */
   readonly variant: KiroVariant;
   name = "kiro";
   override alias = "kiro";
-  // Standard kiro is the catch-all (any unmatched model + bare claude/sonnet/
-  // haiku). It speaks Anthropic natively (AWS CodeWhisperer event-stream). See
-  // registry.ts and proxy/index.ts. The "pro" variant resets isFallback and
-  // owns only its kp- prefixed models (see constructor + ownsModel).
+  // Kiro is the catch-all (any unmatched model + bare claude/sonnet/haiku).
+  // It speaks Anthropic natively (AWS CodeWhisperer event-stream). See
+  // registry.ts and proxy/index.ts.
   override isFallback = true;
   override nativeFormat: "openai" | "anthropic" = "anthropic";
 
   constructor(opts: { variant?: KiroVariant } = {}) {
     super();
     this.variant = opts.variant ?? "standard";
-    if (this.variant === "pro") {
-      this.name = "kiro-pro";
-      this.alias = "kp";
-      this.isFallback = false;
-      this.supportedModels = KIRO_PRO_MODELS;
-    }
   }
 
   override ownsModel(model: string): boolean {
     const m = model.toLowerCase();
-    if (this.variant === "pro") {
-      // Legacy kp- prefixed ids + plain ids from the pro catalog
-      if (m.startsWith("kp-")) return true;
-      const bare = m.replace(/-thinking$/, "");
-      return this.getModelInfo(bare) !== undefined;
-    }
+    // Legacy kiro-pro ids (kp-…) + pro catalog ids (opus-*, sonnet-4.6, haiku-4.5)
+    if (m.startsWith("kp-")) return true;
+    const bare = m.replace(/-thinking$/, "");
+    if (KIRO_PRO_MODEL_MAP[bare]) return true;
     const m2 = model.toLowerCase().replace("-thinking", "");
     // Kiro owns bare model names only. BYOK-shaped "prefix/model" ids (e.g.
     // "openrouter/claude-sonnet-4.6") must not match the claude/sonnet/haiku
@@ -132,9 +121,8 @@ export class KiroProvider extends BaseProvider {
     return m2.includes("claude") || m2.includes("sonnet") || m2.includes("haiku");
   }
 
-  /** For the pro variant, resolve plain ids (or legacy kp-*) to the real Kiro API model names. */
+  /** Resolve pro catalog ids (or legacy kp-*) to the real Kiro API model names. */
   private resolveModel(model: string): string {
-    if (this.variant !== "pro") return model;
     const m = model.toLowerCase();
     if (KIRO_PRO_MODEL_MAP[m]) return KIRO_PRO_MODEL_MAP[m]!;
     // Legacy kp- id → strip prefix and re-lookup
@@ -181,6 +169,9 @@ export class KiroProvider extends BaseProvider {
     { id: "minimax-m2.5", object: "model", created: Date.now(), owned_by: "kiro", context_window: 196000, max_output: 64000, thinking: false, vision: false, creditUnit: "credit", creditRate: 0.002 / 1000, creditSource: "estimated" },
     // Qwen3 Coder Next (0.05x)
     { id: "qwen3-coder-next", object: "model", created: Date.now(), owned_by: "kiro", context_window: 256000, max_output: 64000, thinking: false, vision: false, creditUnit: "credit", creditRate: 0.0004 / 1000, creditSource: "estimated" },
+    // ── Merged kiro-pro catalog (2026-08-29): alias ids resolved upstream
+    // via KIRO_PRO_MODEL_MAP; legacy kp/… ids still accepted.
+    ...KIRO_PRO_MODELS,
   ];
 
   private getTokens(account: Account): KiroTokens | null {
@@ -199,7 +190,7 @@ export class KiroProvider extends BaseProvider {
     account: Account,
     request: ChatCompletionRequest
   ): Promise<ProviderResult> {
-    if (this.variant === "pro") request = { ...request, model: this.resolveModel(request.model) };
+    request = { ...request, model: this.resolveModel(request.model) };
     const tokens = this.getTokens(account);
     if (!tokens?.access_token) {
       return { success: false, error: "No access token available" };
@@ -258,7 +249,7 @@ export class KiroProvider extends BaseProvider {
     account: Account,
     request: ChatCompletionRequest
   ): Promise<ProviderResult> {
-    if (this.variant === "pro") request = { ...request, model: this.resolveModel(request.model) };
+    request = { ...request, model: this.resolveModel(request.model) };
     const tokens = this.getTokens(account);
     if (!tokens?.access_token) {
       return { success: false, error: "No access token available" };

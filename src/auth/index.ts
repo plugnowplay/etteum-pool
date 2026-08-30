@@ -13,8 +13,8 @@ import { broadcast } from "../ws/index";
 export const authRouter = new Hono();
 
 const ALL_LOGIN_PROVIDERS = [
-  "kiro", "kiro-pro", "codebuddy", "canva", "codex", "qoder", "gitlab-duo",
-  "youmind", "grok", "grok-cli",
+  "kiro", "codebuddy", "canva", "codex", "qoder",
+  "grok", "grok-cli",
 ] as const;
 
 function clampNumber(value: string | undefined, fallback: number, min: number, max: number): number {
@@ -181,7 +181,7 @@ authRouter.post("/bulk-add", async (c) => {
     return c.json({ error: "accounts array is required" }, 400);
   }
 
-  const allProviders = ["kiro", "kiro-pro", "codebuddy", "canva", "codex", "qoder", "gitlab-duo", "youmind", "grok", "grok-cli"];
+  const allProviders = ["kiro", "codebuddy", "canva", "codex", "qoder", "grok", "grok-cli"];
   const providers = body.providers || allProviders;
 
   const validProviders = providers.filter((p) => allProviders.includes(p));

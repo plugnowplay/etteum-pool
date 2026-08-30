@@ -118,7 +118,7 @@ export const config = {
   // Every provider registered in src/proxy/providers/registry.ts. Keep in sync
   // when adding a provider — this list drives auto-warmup, /api/stats/providers
   // and the dashboard provider cards.
-  providers: ["kiro", "kiro-pro", "codebuddy", "codebuddy-china", "canva", "codex", "qoder", "gitlab-duo", "youmind", "grok", "grok-cli"] as const,
+  providers: ["kiro", "codebuddy", "codebuddy-china", "canva", "codex", "qoder", "grok", "grok-cli"] as const,
 } as const;
 
 export type Config = typeof config;

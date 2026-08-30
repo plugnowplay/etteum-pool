@@ -24,7 +24,7 @@ import {
   type GrokRealUsageResult,
 } from "@/lib/api";
 
-type Provider = "kiro" | "kiro-pro" | "codebuddy" | "codebuddy-china" | "canva" | "codex" | "qoder" | "gitlab-duo" | "youmind" | "grok" | "grok-cli";
+type Provider = "kiro" | "codebuddy" | "codebuddy-china" | "canva" | "codex" | "qoder" | "grok" | "grok-cli";
 type Status = "active" | "exhausted" | "error" | "pending" | "disabled";
 
 interface CodexQuotaWindow {

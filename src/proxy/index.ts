@@ -16,7 +16,7 @@ import { isBadUpstreamRequest, isInvalidModelError } from "./errors";
 import { prepareLogBody } from "./logging";
 import { resolveModelAlias } from "./model-mapping";
 import { and, eq, sql } from "drizzle-orm";
-import { providerList, refreshByokModels, refreshGitlabDuoModels, refreshCustomModels } from "./providers/registry";
+import { providerList, refreshByokModels, refreshCustomModels } from "./providers/registry";
 
 export const proxyRouter = new Hono();
 
@@ -788,7 +788,7 @@ proxyRouter.get("/v1/models", async (c) => {
   // Rebuild the DB-backed model caches on every listing so newly added or
   // disabled accounts are reflected immediately — both refreshes are cheap
   // DB reads, no upstream traffic.
-  await Promise.all([refreshByokModels(), refreshGitlabDuoModels(), refreshCustomModels()]);
+  await Promise.all([refreshByokModels(), refreshCustomModels()]);
 
   const usable = new Set(
     (

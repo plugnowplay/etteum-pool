@@ -15,7 +15,7 @@ import { sql } from "drizzle-orm";
 import { PUDIDIL_FILTERS } from "./proxy/filters";
 import { loadFilterCache } from "./proxy/filter-cache";
 import { ensureModelMappingTable, seedModelMappings, loadModelMappingCache } from "./proxy/model-mapping";
-import { refreshByokModels, refreshGitlabDuoModels, refreshCustomModels } from "./proxy/providers/registry";
+import { refreshByokModels, refreshCustomModels } from "./proxy/providers/registry";
 
 // Run database migrations on startup
 await runMigrations();
@@ -66,16 +66,6 @@ try {
   console.log("[BYOK] Cache warmed up successfully");
 } catch (e) {
   console.error("[BYOK] Cache warm-up skipped:", e instanceof Error ? e.message : e);
-}
-
-// Pre-warm GitLab Duo provider cache (model list is per-account, queried at
-// onboarding via GraphQL `aiChatAvailableModels` and stored in metadata).
-try {
-  console.log("[GitLab Duo] Warming up cache...");
-  await refreshGitlabDuoModels();
-  console.log("[GitLab Duo] Cache warmed up successfully");
-} catch (e) {
-  console.error("[GitLab Duo] Cache warm-up skipped:", e instanceof Error ? e.message : e);
 }
 
 // Load operator-defined custom models so they appear in /v1/models and routing.

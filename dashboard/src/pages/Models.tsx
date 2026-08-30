@@ -83,7 +83,6 @@ interface CustomModelForm {
 /** Provider chip palette — token-backed only, no raw Tailwind colors. */
 const providerColors: Record<string, string> = {
   kiro: "bg-[var(--chart-2)]/15 text-[var(--chart-2)] border-[var(--chart-2)]/30",
-  "kiro-pro": "bg-[var(--primary)]/15 text-[var(--primary)] border-[var(--primary)]/30",
   codebuddy: "bg-[var(--chart-3)]/15 text-[var(--chart-3)] border-[var(--chart-3)]/30",
   "codebuddy-china": "bg-[var(--error)]/15 text-[var(--error)] border-[var(--error)]/30",
   canva: "bg-[var(--chart-6)]/15 text-[var(--chart-6)] border-[var(--chart-6)]/30",
@@ -507,7 +506,7 @@ export default function Models() {
               className="h-9 rounded-md border border-[var(--border)] bg-[var(--background)] px-2 text-sm"
               aria-label="Provider"
             >
-              {["qoder", "codebuddy-china", "codebuddy", "grok", "grok-cli", "codex", "kiro", "kiro-pro", "canva", "youmind", "gitlab-duo"].map((p) => (
+              {["qoder", "codebuddy-china", "codebuddy", "grok", "grok-cli", "codex", "kiro", "canva"].map((p) => (
                 <option key={p} value={p}>{p}</option>
               ))}
             </select>

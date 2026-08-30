@@ -45,7 +45,7 @@ try {
 }
 
 apiRouter.get("/providers", (c) => {
-  return c.json({ data: ["kiro", "kiro-pro", "codebuddy", "codebuddy-china", "canva", "codex", "qoder"] });
+  return c.json({ data: ["kiro", "codebuddy", "codebuddy-china", "canva", "codex", "qoder"] });
 });
 
 // Health check

@@ -133,7 +133,6 @@ function matchesPattern(model: string, rule: ModelMapping): boolean {
 function isNativeProviderId(model: string): boolean {
   if (model.includes("/")) return true;
   if (/^(claude|gpt|gemini)_/.test(model)) return true;
-  if (model.startsWith("gitlab-duo:")) return true;
   // Legacy internal prefixes (qd-, cb-, ym-) — kept for backwards compat
   if (model.startsWith("qd-") || model.startsWith("cb-") || model.startsWith("ym-")) return true;
   if (model.startsWith("kiro:")) return true;

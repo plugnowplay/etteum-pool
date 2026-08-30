@@ -6,8 +6,6 @@ import { CanvaProvider } from "./canva";
 import { CodexProvider } from "./codex";
 import { QoderProvider } from "./qoder";
 import { ByokProvider } from "./byok";
-import { GitlabDuoProvider } from "./gitlab-duo";
-import { YouMindProvider } from "./youmind";
 import { GrokProvider } from "./grok";
 import { GrokCliProvider } from "./grok-cli";
 
@@ -22,38 +20,33 @@ import { GrokCliProvider } from "./grok-cli";
  * list — there is no per-provider logic anywhere else. Order matters only for
  * disambiguating overlapping patterns: more specific providers come first, and
  * the single isFallback provider (kiro standard) is consulted last.
+ *
+ * kiro-pro merged into kiro: the pro catalog (kp- ids) is served by the single
+ * kiro provider + one shared account pool. Removed providers: youmind,
+ * gitlab-duo (retired 2026-08-29).
  */
-// kiro and kiro-pro are two variants of the SAME provider class — same upstream
-// (AWS CodeWhisperer), different model catalog + account pool. They keep
-// distinct provider names so DB/bot/dashboard treat them separately.
 const kiro = new KiroProvider({ variant: "standard" });
-const kiroPro = new KiroProvider({ variant: "pro" });
 const codebuddy = new CodeBuddyProvider();
 const codebuddyChina = new CodeBuddyChinaProvider();
 const canva = new CanvaProvider();
 const codex = new CodexProvider();
 const qoder = new QoderProvider();
 const byok = new ByokProvider();
-const gitlabDuo = new GitlabDuoProvider();
-const youmind = new YouMindProvider();
 const grok = new GrokProvider();
 const grokCli = new GrokCliProvider();
 
 const PROVIDER_ORDER = [
-  gitlabDuo, canva, qoder, codex, kiroPro, youmind, grok, grokCli, byok, codebuddyChina, codebuddy, kiro,
+  canva, qoder, codex, grok, grokCli, byok, codebuddyChina, codebuddy, kiro,
 ] as const;
 
 export const providers = {
   kiro,
-  "kiro-pro": kiroPro,
   codebuddy,
   "codebuddy-china": codebuddyChina,
   canva,
   codex,
   qoder,
   byok,
-  "gitlab-duo": gitlabDuo,
-  youmind,
   grok,
   "grok-cli": grokCli,
 } as const;
@@ -98,10 +91,11 @@ interface ParsedModelId {
 // Internal model-id prefixes that are redundant once the alias/ prefix is
 // present (e.g. internal "qd-Auto" ↔ exposed "qd/Auto"). formatModelId()
 // strips them on the way out; parseModelId() restores them on the way in.
+// kiro: "kp-" kept so legacy kiro-pro ids (kp/opus-4.8) still resolve via the
+// merged kiro provider.
 const PROVIDER_MODEL_PREFIX: Partial<Record<ProviderName, string>> = {
   qoder: "qd-",
-  "kiro-pro": "kp-",
-  youmind: "ym-",
+  kiro: "kp-",
   codex: "codex-",
 };
 
@@ -233,18 +227,7 @@ export async function refreshByokModels(): Promise<void> {
   await byok.refreshModelsCache();
 }
 
-/** Refresh GitLab Duo models from every active gitlab-duo account's metadata. */
-export async function refreshGitlabDuoModels(): Promise<void> {
-  await gitlabDuo.refreshModelsCache();
-}
-
 /** Get BYOK provider instance. */
 export function getByokProvider(): ByokProvider {
   return byok;
 }
-
-/** Get GitLab Duo provider instance. */
-export function getGitlabDuoProvider(): GitlabDuoProvider {
-  return gitlabDuo;
-}
-

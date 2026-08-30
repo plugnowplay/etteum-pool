@@ -24,7 +24,6 @@ import { useApi } from "@/hooks/useApi";
 
 const PROVIDER_LABELS: Record<string, string> = {
   kiro: "Kiro",
-  "kiro-pro": "Kiro Pro",
   codebuddy: "CodeBuddy",
   "codebuddy-china": "CodeBuddy CN",
   canva: "Canva",

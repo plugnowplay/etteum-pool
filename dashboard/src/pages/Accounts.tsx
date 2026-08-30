@@ -44,7 +44,7 @@ import {
 } from "@/lib/api";
 import { copyText } from "@/lib/clipboard";
 
-type Provider = "kiro" | "kiro-pro" | "codebuddy" | "codebuddy-china" | "canva" | "codex" | "qoder" | "gitlab-duo" | "youmind" | "grok" | "grok-cli";
+type Provider = "kiro" | "codebuddy" | "codebuddy-china" | "canva" | "codex" | "qoder" | "grok" | "grok-cli";
 
 type ByokFormKey = {
   id?: number;
@@ -82,16 +82,13 @@ interface Account {
   metadata?: { serverQuota?: ServerQuota | null } | null;
 }
 
-const providers: Provider[] = ["kiro", "kiro-pro", "codebuddy", "codebuddy-china", "canva", "codex", "qoder", "gitlab-duo", "youmind", "grok", "grok-cli"];
+const providers: Provider[] = ["kiro", "codebuddy", "codebuddy-china", "canva", "codex", "qoder", "grok", "grok-cli"];
 
 function labelProvider(provider: string) {
-  if (provider === "kiro-pro") return "Kiro Pro";
   if (provider === "codebuddy") return "CodeBuddy";
   if (provider === "codebuddy-china") return "CodeBuddy CN";
   if (provider === "codex") return "Codex";
   if (provider === "qoder") return "Qoder";
-  if (provider === "gitlab-duo") return "GitLab Duo";
-  if (provider === "youmind") return "YouMind";
   if (provider === "grok") return "Grok";
   if (provider === "grok-cli") return "Grok CLI";
   return provider.charAt(0).toUpperCase() + provider.slice(1);
@@ -122,12 +119,6 @@ export default function Accounts() {
   const [codexOauthBusy, setCodexOauthBusy] = useState(false);
   const [codexOauthAuthUrl, setCodexOauthAuthUrl] = useState("");
   const [codexOauthCallbackUrl, setCodexOauthCallbackUrl] = useState("");
-  const [gitlabBaseUrl, setGitlabBaseUrl] = useState("https://gitlab.com");
-  const [gitlabPat, setGitlabPat] = useState("");
-  const [gitlabLabel, setGitlabLabel] = useState("");
-  const [gitlabBusy, setGitlabBusy] = useState(false);
-  const [youmindApiKey, setYoumindApiKey] = useState("");
-  const [youmindBusy, setYoumindBusy] = useState(false);
   const [grokApiKey, setGrokApiKey] = useState("");
   const [grokBusy, setGrokBusy] = useState(false);
   const [grokCliDeviceCode, setGrokCliDeviceCode] = useState<{
@@ -416,57 +407,6 @@ export default function Accounts() {
       setAddDialogProvider(null);
       await load();
     } catch (err) { showError(err); }
-  }
-
-  async function handleGitlabPatLogin() {
-    const pat = gitlabPat.trim();
-    if (!pat) { showError(new Error("Paste GitLab Personal Access Token")); return; }
-    const baseUrl = (gitlabBaseUrl || "https://gitlab.com").trim().replace(/\/$/, "");
-    setGitlabBusy(true);
-    try {
-      const res = await fetchApi<any>("/api/accounts/gitlab-duo", {
-        method: "POST",
-        body: JSON.stringify({
-          gitlab_base_url: baseUrl,
-          pat,
-          label: gitlabLabel.trim() || undefined,
-        }),
-      });
-      const labelText = res?.account?.email || res?.email || "account";
-      showSuccess(`GitLab Duo ${labelText} added successfully`);
-      setGitlabPat("");
-      setGitlabLabel("");
-      setAddDialogProvider(null);
-      await load();
-    } catch (err) { showError(err); }
-    finally { setGitlabBusy(false); }
-  }
-
-  async function handleYouMindApiKeyLogin() {
-    const apiKey = youmindApiKey.trim();
-    if (!apiKey) { showError(new Error("Paste YouMind API key")); return; }
-    if (!apiKey.startsWith("sk-ym-")) {
-      showError(new Error("YouMind API key must start with sk-ym-"));
-      return;
-    }
-    setYoumindBusy(true);
-    try {
-      const res = await fetchApi<any>("/api/accounts", {
-        method: "POST",
-        body: JSON.stringify({
-          provider: "youmind",
-          apiKey,
-        }),
-      });
-      const labelText = res?.email || "account";
-      showSuccess(res?.updated
-        ? `YouMind key updated (${labelText})`
-        : `YouMind ${labelText} added successfully`);
-      setYoumindApiKey("");
-      setAddDialogProvider(null);
-      await load();
-    } catch (err) { showError(err); }
-    finally { setCodebuddyChinaBusy(false); }
   }
 
   async function handleGrokApiKeyLogin() {
@@ -1051,10 +991,10 @@ export default function Accounts() {
     if (provider === "codex") {
       setAddMode("pat");
     }
-    if (provider === "gitlab-duo") {
+    if (false) {
       setAddMode("pat");
     }
-    if (provider === "youmind") {
+    if (false) {
       setAddMode("pat");
     }
     if (provider === "grok" || provider === "grok-cli") {
@@ -1938,14 +1878,10 @@ export default function Accounts() {
           <DialogHeader>
             <DTitle>Add {addDialogProvider ? labelProvider(addDialogProvider) : ""} Account</DTitle>
             <DialogDescription>
-              {addDialogProvider === "kiro-pro" || addDialogProvider === "codex"
+              {addDialogProvider === "codex"
                 ? "Add via browser login or instant login with API key/token."
                 : addDialogProvider === "qoder"
                 ? "Add via PAT, bulk Google accounts, or single account."
-                : addDialogProvider === "gitlab-duo"
-                ? "Add via Personal Access Token, single Gmail (bot login), or bulk email|password."
-                : addDialogProvider === "youmind"
-                ? "Paste your YouMind API key (sk-ym-...). Server will validate against the OpenAPI relay and store it encrypted."
                 : addDialogProvider === "grok"
                 ? "Paste your xAI API key (xai-...). Server will validate against the xAI API and store it encrypted."
                 : addDialogProvider === "grok-cli"
@@ -1959,7 +1895,7 @@ export default function Accounts() {
           </DialogHeader>
 
           {/* Mode tabs */}
-          {addDialogProvider === "kiro-pro" || addDialogProvider === "codex" ? (
+          {addDialogProvider === "codex" ? (
             <div className="flex gap-1 rounded-md bg-[var(--secondary)] p-1">
               <button onClick={() => setAddMode("instant")}
                 className={`flex-1 rounded px-3 py-1.5 text-xs font-medium transition-colors ${addMode === "instant" ? "bg-[var(--background)] text-[var(--foreground)] shadow-sm" : "text-[var(--muted-foreground)]"}`}
@@ -1985,24 +1921,6 @@ export default function Accounts() {
               <button onClick={() => setAddMode("single")}
                 className={`flex-1 rounded px-3 py-1.5 text-xs font-medium transition-colors ${addMode === "single" ? "bg-[var(--background)] text-[var(--foreground)] shadow-sm" : "text-[var(--muted-foreground)]"}`}
               >Single</button>
-            </div>
-          ) : addDialogProvider === "gitlab-duo" ? (
-            <div className="flex gap-1 rounded-md bg-[var(--secondary)] p-1">
-              <button onClick={() => setAddMode("pat")}
-                className={`flex-1 rounded px-3 py-1.5 text-xs font-medium transition-colors ${addMode === "pat" ? "bg-[var(--background)] text-[var(--foreground)] shadow-sm" : "text-[var(--muted-foreground)]"}`}
-              >PAT (Token)</button>
-              <button onClick={() => setAddMode("single")}
-                className={`flex-1 rounded px-3 py-1.5 text-xs font-medium transition-colors ${addMode === "single" ? "bg-[var(--background)] text-[var(--foreground)] shadow-sm" : "text-[var(--muted-foreground)]"}`}
-              >Gmail (Single)</button>
-              <button onClick={() => setAddMode("bulk")}
-                className={`flex-1 rounded px-3 py-1.5 text-xs font-medium transition-colors ${addMode === "bulk" ? "bg-[var(--background)] text-[var(--foreground)] shadow-sm" : "text-[var(--muted-foreground)]"}`}
-              >Bulk (Email|Pass)</button>
-            </div>
-          ) : addDialogProvider === "youmind" ? (
-            <div className="flex gap-1 rounded-md bg-[var(--secondary)] p-1">
-              <button onClick={() => setAddMode("pat")}
-                className={`flex-1 rounded px-3 py-1.5 text-xs font-medium transition-colors ${addMode === "pat" ? "bg-[var(--background)] text-[var(--foreground)] shadow-sm" : "text-[var(--muted-foreground)]"}`}
-              >API Key (sk-ym-...)</button>
             </div>
           ) : addDialogProvider === "grok" ? (
             <div className="flex gap-1 rounded-md bg-[var(--secondary)] p-1">
@@ -2214,86 +2132,6 @@ export default function Accounts() {
             </div>
           )}
 
-          {addMode === "pat" && addDialogProvider === "youmind" && (
-            <div className="space-y-4">
-              <div>
-                <label className="text-sm text-[var(--foreground)]">YouMind API Key</label>
-                <textarea
-                  value={youmindApiKey}
-                  onChange={(e) => setYoumindApiKey(e.target.value)}
-                  className="mt-1 w-full h-32 rounded-md border border-[var(--border)] bg-[var(--background)] p-3 text-sm font-mono text-[var(--foreground)] placeholder:text-[var(--muted-foreground)] focus:outline-none focus:ring-1 focus:ring-[var(--ring)] resize-none"
-                  placeholder="sk-ym-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-                  disabled={youmindBusy}
-                />
-                <p className="mt-1 text-xs text-[var(--muted-foreground)]">
-                  Paste your YouMind API key from{" "}
-                  <a href="https://youmind.com" target="_blank" rel="noreferrer" className="underline">youmind.com</a>{" "}
-                  Settings → API Keys. Server validates via <code>POST /openapi/v1/listBoards</code> and stores the key encrypted.
-                  Available models: <code>ym-claude-opus-4.6/4.7/4.8</code>, <code>ym-claude-sonnet-4.6</code>, <code>ym-gpt-5.5</code>, <code>ym-gpt-4o</code>.
-                </p>
-              </div>
-              <div className="flex justify-end gap-2">
-                <Button variant="outline" onClick={() => setAddDialogProvider(null)} disabled={youmindBusy}>Cancel</Button>
-                <Button onClick={handleYouMindApiKeyLogin} disabled={youmindBusy}>
-                  {youmindBusy ? "Validating..." : "Add Account"}
-                </Button>
-              </div>
-            </div>
-          )}
-
-          {addMode === "pat" && addDialogProvider === "gitlab-duo" && (
-            <div className="space-y-4">
-              <div>
-                <label className="text-sm text-[var(--foreground)]">GitLab Base URL</label>
-                <Input
-                  value={gitlabBaseUrl}
-                  onChange={(e) => setGitlabBaseUrl(e.target.value)}
-                  placeholder="https://gitlab.com"
-                  className="mt-1 font-mono text-sm"
-                  disabled={gitlabBusy}
-                />
-                <p className="mt-1 text-xs text-[var(--muted-foreground)]">Default <code>https://gitlab.com</code>. Ganti kalau pakai self-hosted GitLab.</p>
-              </div>
-              <div>
-                <label className="text-sm text-[var(--foreground)]">Personal Access Token (PAT)</label>
-                <textarea
-                  value={gitlabPat}
-                  onChange={(e) => setGitlabPat(e.target.value)}
-                  className="mt-1 w-full h-28 rounded-md border border-[var(--border)] bg-[var(--background)] p-3 text-sm font-mono text-[var(--foreground)] placeholder:text-[var(--muted-foreground)] focus:outline-none focus:ring-1 focus:ring-[var(--ring)] resize-none"
-                  placeholder="glpat-xxxxxxxxxxxxxxxxxxxx"
-                  disabled={gitlabBusy}
-                />
-                <p className="mt-1 text-xs text-[var(--muted-foreground)]">
-                  Butuh scope <code>api</code>. Buat di{" "}
-                  <a
-                    href={`${(gitlabBaseUrl || "https://gitlab.com").replace(/\/$/, "")}/-/user_settings/personal_access_tokens?scopes=api&name=poolprox3-duo`}
-                    target="_blank"
-                    rel="noreferrer noopener"
-                    className="underline text-[var(--foreground)] hover:opacity-80"
-                  >
-                    User Settings → Access Tokens
-                  </a>.
-                </p>
-              </div>
-              <div>
-                <label className="text-sm text-[var(--foreground)]">Label (opsional)</label>
-                <Input
-                  value={gitlabLabel}
-                  onChange={(e) => setGitlabLabel(e.target.value)}
-                  placeholder="default: GitLab username"
-                  className="mt-1"
-                  disabled={gitlabBusy}
-                />
-                <p className="mt-1 text-xs text-[var(--muted-foreground)]">Kosongkan untuk pakai username GitLab. Harus unik per instance.</p>
-              </div>
-              <div className="flex justify-end gap-2">
-                <Button variant="outline" onClick={() => setAddDialogProvider(null)} disabled={gitlabBusy}>Cancel</Button>
-                <Button onClick={handleGitlabPatLogin} disabled={gitlabBusy || !gitlabPat.trim()}>
-                  {gitlabBusy ? (<><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Validating PAT...</>) : "Add Account"}
-                </Button>
-              </div>
-            </div>
-          )}
 
           {addMode === "token" && addDialogProvider === "codebuddy" && (
             <div className="space-y-4">
@@ -2515,7 +2353,7 @@ eyJraWQiOiJhYmMxMjMi...
           )}
 
           {/* Instant Login mode (Kiro Pro only) */}
-          {addMode === "instant" && (addDialogProvider === "kiro-pro" || addDialogProvider === "codex") && (
+          {addMode === "instant" && addDialogProvider === "codex" && (
             <div className="space-y-4">
               <div>
                 <label className="text-sm text-[var(--foreground)]">Refresh Tokens (satu per baris)</label>
@@ -2537,12 +2375,6 @@ eyJraWQiOiJhYmMxMjMi...
           {/* Bulk mode (all providers) */}
           {addMode === "bulk" && (
             <div className="space-y-4">
-              {addDialogProvider === "gitlab-duo" && (
-                <div className="rounded-md border border-[var(--success)]/40 bg-[var(--success)]/10 p-3 text-xs text-[var(--foreground)] space-y-1">
-                  <div><strong>Bot otomasi GitLab Duo aktif.</strong> Alurnya: Google OAuth → konfirmasi OTP via Gmail web → form Welcome → Free Trial Singapore → toggle Duo experiment → generate PAT (<code>poolprox3-duo</code>) → simpan ke akun.</div>
-                  <div className="text-[var(--muted-foreground)]">⏱ Estimasi 4–6 menit per akun. <strong>Concurrency=1 disarankan</strong> agar Gmail tidak rate-limit. Pakai akun Gmail tanpa 2FA.</div>
-                </div>
-              )}
               <div>
                 <label className="text-sm text-[var(--foreground)]">Accounts (email|password per baris)</label>
                 <textarea
@@ -2585,12 +2417,6 @@ eyJraWQiOiJhYmMxMjMi...
           {/* Single mode (all providers) */}
           {addMode === "single" && (
             <div className="space-y-4">
-              {addDialogProvider === "gitlab-duo" && (
-                <div className="rounded-md border border-[var(--success)]/40 bg-[var(--success)]/10 p-3 text-xs text-[var(--foreground)] space-y-1">
-                  <div><strong>Bot otomasi GitLab Duo aktif.</strong> Login Gmail di bawah lalu bot akan: Google OAuth → konfirmasi OTP via Gmail web → form Welcome → Free Trial Singapore → toggle Duo experiment → generate PAT.</div>
-                  <div className="text-[var(--muted-foreground)]">⏱ Estimasi 4–6 menit. Pakai akun Gmail tanpa 2FA. Untuk batch banyak akun, gunakan tab <strong>Bulk</strong>.</div>
-                </div>
-              )}
               <div>
                 <label className="text-sm text-[var(--foreground)]">Email</label>
                 <Input value={addForm.email} onChange={(e) => setAddForm({ ...addForm, email: e.target.value })} placeholder="email@example.com" className="mt-1" />

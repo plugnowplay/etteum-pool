@@ -119,7 +119,7 @@ class WarmupQueue {
   async queueAll(options: WarmupAllOptions = {}): Promise<number> {
     const providers = options.providers?.length
       ? options.providers
-      : ["kiro", "kiro-pro", "codebuddy", "canva", "codex", "qoder", "gitlab-duo", "youmind", "grok", "grok-cli"];
+      : ["kiro", "codebuddy", "canva", "codex", "qoder", "grok", "grok-cli"];
     const statuses = options.statuses?.length
       ? options.statuses
       : options.includePending
