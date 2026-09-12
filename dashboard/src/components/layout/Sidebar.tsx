@@ -9,7 +9,6 @@ import {
   BarChart3,
   Sliders,
   Bot,
-  CreditCard,
   Globe,
   Sparkles,
   Filter,
@@ -23,8 +22,6 @@ import {
   KeyRound,
   Layers,
   Share2,
-  GitBranch,
-  Server,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTheme } from "@/hooks/useTheme";
@@ -55,8 +52,6 @@ const navSections: NavSection[] = [
     title: "Tools",
     items: [
       { label: "Image Studio", path: "/image-studio", icon: Sparkles },
-      { label: "GitHub Creator", path: "/github-creator", icon: GitBranch },
-      { label: "Grok Creator", path: "/grok-creator", icon: Bot },
       { label: "Integration", path: "/integration", icon: Plug },
     ],
   },
@@ -66,8 +61,6 @@ const navSections: NavSection[] = [
       { label: "API Key", path: "/api-key", icon: Key },
       { label: "Share", path: "/share", icon: Share2 },
       { label: "Proxy Pool", path: "/proxy-pool", icon: Globe },
-      { label: "Microwarp", path: "/microwarp", icon: Server },
-      { label: "VCC Pool", path: "/vcc-pool", icon: CreditCard },
       { label: "Filter Rules", path: "/filter-rules", icon: Filter },
       { label: "Proxy Settings", path: "/settings", icon: Sliders },
     ],

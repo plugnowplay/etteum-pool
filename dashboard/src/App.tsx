@@ -17,17 +17,14 @@ const Requests = lazy(() => import("./pages/Requests"));
 const Usage = lazy(() => import("./pages/Usage"));
 const Settings = lazy(() => import("./pages/Settings"));
 const BotLogs = lazy(() => import("./pages/BotLogs"));
-const VccPool = lazy(() => import("./pages/VccPool"));
 const ProxyPool = lazy(() => import("./pages/ProxyPool"));
-const Microwarp = lazy(() => import("./pages/Microwarp"));
 const ImageStudio = lazy(() => import("./pages/ImageStudio"));
 const FilterRules = lazy(() => import("./pages/FilterRules"));
 const Integration = lazy(() => import("./pages/Integration"));
 const CodexOAuthCallback = lazy(() => import("./pages/CodexOAuthCallback"));
 const ChangePassword = lazy(() => import("./pages/ChangePassword"));
 const PublicShare = lazy(() => import("./pages/PublicShare"));
-const GitHubCreator = lazy(() => import("./pages/GitHubCreator"));
-const GrokCreator = lazy(() => import("./pages/GrokCreator"));
+const ComingSoon = lazy(() => import("./pages/ComingSoon"));
 
 function RouteFallback() {
   return (
@@ -116,14 +113,10 @@ export default function App() {
           <Route path="/bot-logs" element={<BotLogs />} />
           <Route path="/usage" element={<Usage />} />
           <Route path="/settings" element={<Settings />} />
-          <Route path="/vcc-pool" element={<VccPool />} />
           <Route path="/proxy-pool" element={<ProxyPool />} />
-          <Route path="/microwarp" element={<Microwarp />} />
           <Route path="/filter-rules" element={<FilterRules />} />
           <Route path="/integration" element={<Integration />} />
           <Route path="/image-studio" element={<ImageStudio />} />
-          <Route path="/github-creator" element={<GitHubCreator />} />
-          <Route path="/grok-creator" element={<GrokCreator />} />
           <Route path="/oauth/codex/callback" element={<CodexOAuthCallback />} />
           <Route path="/change-password" element={<ChangePassword />} />
         </Route>
