@@ -193,7 +193,7 @@ export default function Models() {
   const [testingModel, setTestingModel] = useState<string | null>(null);
   const [testResult, setTestResult] = useState<Record<string, { ok: boolean; latencyMs?: number; error?: string }>>({});
   const [customModels, setCustomModels] = useState<CustomModelRow[]>([]);
-  const [customForm, setCustomForm] = useState<CustomModelForm>({ provider: "qoder", model: "", contextWindow: 200000, maxOutput: 8192, thinking: false, vision: false });
+  const [customForm, setCustomForm] = useState<CustomModelForm>({ provider: "", model: "", contextWindow: 1000000, maxOutput: 128000, thinking: false, vision: false });
   const [customBusy, setCustomBusy] = useState(false);
   const [customEditing, setCustomEditing] = useState<string | null>(null);
   const { message: copiedModel, setMessage: setCopiedModel } = useTimedMessage<string>(null, 1500);
@@ -248,13 +248,14 @@ export default function Models() {
     setCustomBusy(true);
     try {
       await saveCustomModel(customForm.provider, model, {
-        contextWindow: Number(customForm.contextWindow) || 200000,
-        maxOutput: Number(customForm.maxOutput) || 8192,
+        contextWindow: Number(customForm.contextWindow) || 1000000,
+        maxOutput: Number(customForm.maxOutput) || 128000,
         thinking: customForm.thinking,
         vision: customForm.vision,
       });
       toast.success(`Model ${customForm.provider}/${model} tersimpan`);
-      setCustomForm({ provider: "qoder", model: "", contextWindow: 200000, maxOutput: 8192, thinking: false, vision: false });
+      setCustomEditing(null);
+      setCustomForm({ provider: customForm.provider, model: "", contextWindow: 1000000, maxOutput: 128000, thinking: false, vision: false });
       await loadCustom();
       await load();
     } catch (err) {
@@ -282,8 +283,8 @@ export default function Models() {
     setCustomForm({
       provider: row.provider,
       model: row.model,
-      contextWindow: Number(row.contextWindow ?? 200000),
-      maxOutput: Number(row.maxOutput ?? 8192),
+      contextWindow: Number(row.contextWindow ?? 1000000),
+      maxOutput: Number(row.maxOutput ?? 128000),
       thinking: Boolean(row.thinking),
       vision: Boolean(row.vision),
     });
@@ -305,6 +306,13 @@ export default function Models() {
     load();
   }, [load]);
 
+  // The custom-model list comes from a separate endpoint and was never
+  // fetched on mount, so its chips — which carry the edit/delete buttons —
+  // stayed hidden until an add/delete happened to run in the same session.
+  useEffect(() => {
+    loadCustom();
+  }, []);
+
   // Live refresh whenever the account pool changes — model availability is
   // derived from which accounts are active/enabled.
   useWsEvent(
@@ -312,7 +320,40 @@ export default function Models() {
     load,
   );
 
+  // Custom-model CRUD broadcasts models_updated (see api/accounts.ts).
+  useWsEvent(["models_updated"], () => {
+    loadCustom();
+    load();
+  });
+
   const providers = ["all", ...Array.from(new Set(models.map((m) => m.owned_by)))];
+
+  /**
+   * Provider choices for the custom-model form, derived from providers that
+   * actually serve models right now (plus any provider already used by a saved
+   * custom model). A hardcoded list used to offer providers that don't exist in
+   * this pool, so the model was saved against a phantom provider and never
+   * showed up in /v1/models.
+   *
+   * `owned_by` is reported as "byok:<label>" but custom_models stores the bare
+   * provider key, so the prefix is stripped here. "combo" is excluded — combos
+   * are composed of existing models and can't host a new one.
+   */
+  const providerOptions = Array.from(
+    new Set([
+      ...models.map((m) => m.owned_by.replace(/^byok:/, "")),
+      ...customModels.map((cm) => cm.provider),
+    ])
+  )
+    .filter((p) => Boolean(p) && p !== "combo")
+    .sort();
+
+  // Keep the select valid once the real provider list arrives.
+  useEffect(() => {
+    if (providerOptions.length && !providerOptions.includes(customForm.provider)) {
+      setCustomForm((f) => ({ ...f, provider: providerOptions[0] }));
+    }
+  }, [providerOptions.join(","), customForm.provider]);
 
   const filtered = models
     .filter((m) => filter === "all" || m.owned_by === filter)
@@ -503,10 +544,10 @@ export default function Models() {
             <select
               value={customForm.provider}
               onChange={(e) => setCustomForm({ ...customForm, provider: e.target.value })}
-              className="h-9 rounded-md border border-[var(--border)] bg-[var(--background)] px-2 text-sm"
+              className="h-9 border border-[var(--border)] bg-[var(--surface-inset)] px-2 text-sm"
               aria-label="Provider"
             >
-              {["qoder", "codebuddy-china", "codebuddy", "grok", "grok-cli", "codex", "kiro", "canva"].map((p) => (
+              {providerOptions.map((p) => (
                 <option key={p} value={p}>{p}</option>
               ))}
             </select>
@@ -552,27 +593,33 @@ export default function Models() {
           {customModels.length > 0 && (
             <div className="flex flex-wrap gap-1.5">
               {customModels.map((cm) => (
-                <span key={`${cm.provider}/${cm.model}`} className="inline-flex items-center gap-1 rounded-md border border-[var(--border)] bg-[var(--secondary)] px-2 py-1 text-xs">
+                <span key={`${cm.provider}/${cm.model}`} className="inline-flex items-center gap-1.5 border border-[var(--border)] bg-[var(--secondary)] px-2 py-1 text-xs">
                   <code className="font-mono">{cm.provider}/{cm.model}</code>
                   <span className="text-[10px] text-[var(--muted-foreground)]">{formatNumber(cm.contextWindow ?? undefined)}ctx</span>
                   <button
+                    type="button"
+                    disabled={customBusy}
                     onClick={() => {
                       setCustomEditing(`${cm.provider}/${cm.model}`);
                       setCustomForm({
                         provider: cm.provider,
                         model: cm.model,
-                        contextWindow: cm.contextWindow ?? 200000,
-                        maxOutput: cm.maxOutput ?? 8192,
+                        contextWindow: cm.contextWindow ?? 1000000,
+                        maxOutput: cm.maxOutput ?? 128000,
                         thinking: Boolean(cm.thinking),
                         vision: Boolean(cm.vision),
                       });
                     }}
-                    className="text-[var(--info)] hover:underline"
+                    className="focus-ring cursor-pointer px-1 leading-none text-[var(--info)] transition-colors hover:text-[var(--foreground)] disabled:opacity-40"
+                    aria-label={`Edit ${cm.provider}/${cm.model}`}
                     title="Edit"
                   >✎</button>
                   <button
+                    type="button"
+                    disabled={customBusy}
                     onClick={() => handleDeleteCustom(cm.provider, cm.model)}
-                    className="text-[var(--error)] hover:underline"
+                    className="focus-ring cursor-pointer px-1 leading-none text-[var(--error)] transition-colors hover:text-[var(--foreground)] disabled:opacity-40"
+                    aria-label={`Delete ${cm.provider}/${cm.model}`}
                     title="Delete"
                   >✕</button>
                 </span>

@@ -3,6 +3,7 @@ import { Outlet } from "react-router-dom";
 import Sidebar from "./Sidebar";
 import { Menu } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { CommandPalette } from "@/components/CommandPalette";
 
 interface LayoutProps {
   onLogout?: () => void;
@@ -36,6 +37,9 @@ export default function Layout({ onLogout }: LayoutProps) {
 
   return (
     <div className="min-h-screen bg-[var(--background)]">
+      {/* Global ⌘K palette — lives inside the router so it can navigate. */}
+      <CommandPalette onLogout={onLogout} />
+
       {sidebarOpen && (
         <div
           className="animate-fade-in fixed inset-0 z-40 bg-black/50 backdrop-blur-[2px] md:hidden"
@@ -76,7 +80,7 @@ export default function Layout({ onLogout }: LayoutProps) {
 
       <main
         className={cn(
-          "h-screen overflow-y-auto p-4 pt-18 transition-[margin] duration-[var(--dur-base)] ease-[var(--ease-out)] md:p-6 md:pt-6",
+          "h-screen overflow-y-auto p-3 pt-18 transition-[margin] duration-[var(--dur-base)] ease-[var(--ease-out)] md:p-4",
           collapsed ? "md:ml-[64px]" : "md:ml-[240px]"
         )}
       >

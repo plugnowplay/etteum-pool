@@ -231,7 +231,14 @@ authRouter.post("/import", async (c) => {
     (ALL_LOGIN_PROVIDERS as readonly string[]).includes(p)
   );
 
-  const lines = body.text.trim().split("\n");
+  // Normalize: strip UTF-8 BOM, unify line endings, drop zero-width/hidden chars
+  const rawText = body.text
+    .replace(/^\uFEFF/, "")
+    .replace(/\r\n?|\u2028|\u2029/g, "\n")
+    // Zero-width space / joiner / non-joiner / BOM inside text
+    .replace(/[\u200B-\u200D\uFEFF]/g, "");
+
+  const lines = rawText.split("\n");
   const parsed: Array<{ email: string; password: string }> = [];
   const errors: string[] = [];
 
@@ -239,23 +246,33 @@ authRouter.post("/import", async (c) => {
     const trimmed = line.trim();
     if (!trimmed || trimmed.startsWith("#")) continue;
 
-    // Try different separators: | : space/tab
+    // Try different separators: | : space/tab.
+    // IMPORTANT: preserve the password verbatim — do NOT trim inside
+    // (users legitimately paste passwords containing the same separator, e.g.
+    //  `foo@bar.com|P@ss|word` where `|` also appears in the password).
+    // Rule: split on FIRST occurrence of the separator, everything after is the password.
     let email = "";
     let password = "";
 
+    const splitOnFirst = (sep: string): [string, string] => {
+      const idx = trimmed.indexOf(sep);
+      if (idx < 0) return ["", ""];
+      return [trimmed.slice(0, idx), trimmed.slice(idx + sep.length)];
+    };
+
     if (trimmed.includes("|")) {
-      const parts = trimmed.split("|");
-      email = parts[0]?.trim() || "";
-      password = parts[1]?.trim() || "";
+      [email, password] = splitOnFirst("|");
     } else if (trimmed.includes(":")) {
-      const parts = trimmed.split(":");
-      email = parts[0]?.trim() || "";
-      password = parts.slice(1).join(":").trim(); // password might contain ':'
+      [email, password] = splitOnFirst(":");
     } else {
-      const parts = trimmed.split(/\s+/);
-      email = parts[0]?.trim() || "";
-      password = parts[1]?.trim() || "";
+      const m = trimmed.match(/^(\S+)\s+(.+)$/);
+      email = m?.[1] ?? "";
+      password = m?.[2] ?? "";
     }
+
+    email = email.trim();
+    // Only trim outer whitespace on password — keep internal chars (|, :, spaces) intact
+    password = password.replace(/^\s+|\s+$/g, "");
 
     if (!email || !password) {
       errors.push(`Invalid line: ${trimmed.slice(0, 50)}`);

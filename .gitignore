@@ -96,3 +96,7 @@ test-compat.out
 /test-*.mjs
 /test-*.js
 .omo/
+
+# Assistant skill artifacts (installed by the `uipro` CLI, not project code)
+.claude/skills/
+.github/prompts/

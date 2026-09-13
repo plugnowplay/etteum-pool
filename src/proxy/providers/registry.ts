@@ -146,8 +146,15 @@ export function getProviderForModel(model: string): ProviderName | null {
   for (const p of PROVIDER_ORDER) {
     if (p.ownsModel(bare)) return p.name as ProviderName;
   }
-  const custom = customModelCache.find((m) => m.id === model || m.id.endsWith(`/${model}`));
-  if (custom) return custom.owned_by as ProviderName;
+  const custom = customModelCache.find(
+    (e) => e.info.id === model || e.info.id.endsWith(`/${model}`),
+  );
+  if (custom) {
+    // The DB key is either a real provider or a BYOK label; only the former
+    // is a routable ProviderName.
+    if (custom.provider in providers) return custom.provider as ProviderName;
+    if (byok.ownsModel(custom.info.id)) return "byok";
+  }
 
   // Unknown "prefix/model" ids are BYOK-shaped: formatByokModelId emits
   // "<label>/<model>" and BYOK labels are dynamic DB rows, so they can never
@@ -169,17 +176,40 @@ export function getProviderForModel(model: string): ProviderName | null {
 // as-is (custom qoder models fall back to MODEL_CONFIGS[0] behaviour unless
 // the id matches a known def).
 
-let customModelCache: ModelInfo[] = [];
+/**
+ * A custom row keeps its raw DB `provider` key (used for routing) separate
+ * from the `info.owned_by` label reported to clients, because the two differ
+ * when the key is a BYOK label.
+ */
+type CustomModelEntry = { provider: string; model: string; info: ModelInfo };
+
+let customModelCache: CustomModelEntry[] = [];
 
 /** All models across every registered provider, exposed as `provider/model`. */
 export function getAllModels(): ModelInfo[] {
-  const builtin = PROVIDER_ORDER.flatMap((provider) =>
-    provider.getModels().map((m) => ({
-      ...m,
-      id: formatModelId(provider.name as ProviderName, m.id),
-    })),
-  );
-  return [...builtin, ...customModelCache];
+  const seen = new Set<string>();
+  const out: ModelInfo[] = [];
+
+  for (const provider of PROVIDER_ORDER) {
+    for (const m of provider.getModels()) {
+      const id = formatModelId(provider.name as ProviderName, m.id);
+      if (seen.has(id)) continue;
+      seen.add(id);
+      out.push({ ...m, id });
+    }
+  }
+
+  // Custom rows only *extend* the catalogue: a builtin/BYOK model with the
+  // same id always wins. Without this, a row like (enxx, gpt-6-astra) that a
+  // BYOK account already serves was listed twice under two different owners
+  // ("byok:enxx" and "enxx").
+  for (const entry of customModelCache) {
+    if (seen.has(entry.info.id)) continue;
+    seen.add(entry.info.id);
+    out.push(entry.info);
+  }
+
+  return out;
 }
 
 export async function refreshCustomModels(): Promise<void> {
@@ -187,6 +217,7 @@ export async function refreshCustomModels(): Promise<void> {
     const { db } = await import("../../db/index");
     const { customModels } = await import("../../db/schema");
     const rows = await db.select().from(customModels);
+    const byokPrefixes = new Set(byok.getPrefixes());
     const seen = new Set<string>();
     customModelCache = rows
       .filter((r) => {
@@ -196,14 +227,20 @@ export async function refreshCustomModels(): Promise<void> {
         return true;
       })
       .map((r) => ({
-        id: formatModelId(r.provider as ProviderName, r.model),
-        object: "model" as const,
-        created: Math.floor((r.createdAt?.getTime?.() ?? Date.now()) / 1000),
-        owned_by: r.provider,
-        context_window: r.contextWindow ?? 200000,
-        max_output: r.maxOutput ?? 8192,
-        thinking: Boolean(r.thinking),
-        vision: Boolean(r.vision),
+        provider: r.provider,
+        model: r.model,
+        info: {
+          id: formatModelId(r.provider as ProviderName, r.model),
+          object: "model" as const,
+          created: Math.floor((r.createdAt?.getTime?.() ?? Date.now()) / 1000),
+          // A row keyed by a BYOK label belongs to that BYOK endpoint, so it
+          // must report the same owner the BYOK provider does.
+          owned_by: byokPrefixes.has(r.provider) ? `byok:${r.provider}` : r.provider,
+          context_window: r.contextWindow ?? 1000000,
+          max_output: r.maxOutput ?? 128000,
+          thinking: Boolean(r.thinking),
+          vision: Boolean(r.vision),
+        },
       }));
   } catch {
     customModelCache = [];
@@ -211,12 +248,7 @@ export async function refreshCustomModels(): Promise<void> {
 }
 
 export function getCustomModelEntries(): Array<{ provider: string; model: string }> {
-  return customModelCache
-    .map((m) => {
-      const idx = m.id.indexOf("/");
-      return idx > 0 ? { provider: m.owned_by, model: m.id.slice(idx + 1) } : null;
-    })
-    .filter((x): x is { provider: string; model: string } => x !== null);
+  return customModelCache.map(({ provider, model }) => ({ provider, model }));
 }
 
 /** Iterable list of provider instances (priority order). */

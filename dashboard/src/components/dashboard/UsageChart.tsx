@@ -11,6 +11,7 @@ import {
 import { BarChart3 } from "lucide-react";
 import { modelColor } from "@/lib/utils";
 import { EmptyState } from "@/components/ui/empty-state";
+import { useMeasuredSize } from "@/hooks/useMeasuredSize";
 
 interface UsageChartProps {
   data?: any[];
@@ -53,8 +54,14 @@ export default function UsageChart({ data = defaultData, colorsByModel = {} }: U
   const axisColor = "var(--muted-foreground)";
   const gridColor = "var(--border)";
 
+  // Wait until the container actually has a size before mounting recharts.
+  // Otherwise ResponsiveContainer boots with width=-1/height=-1 and logs the
+  // "greater than 0" warning we were seeing in dev.
+  const { ref, ready } = useMeasuredSize<HTMLDivElement>();
+
   return (
-    <div className="h-[300px] w-full">
+    <div ref={ref} className="h-[300px] w-full">
+      {ready && (
       <ResponsiveContainer width="100%" height="100%">
         <AreaChart data={data} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
           <defs>
@@ -131,6 +138,7 @@ export default function UsageChart({ data = defaultData, colorsByModel = {} }: U
           ))}
         </AreaChart>
       </ResponsiveContainer>
+      )}
     </div>
   );
 }

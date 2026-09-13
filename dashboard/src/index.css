@@ -10,77 +10,85 @@
  */
 
 :root {
-  /* Surfaces — neutral dark (no color tint) */
-  --background: #1e1e1e;
-  --foreground: #cccccc;
-  --card: #252526;
-  --card-foreground: #cccccc;
-  --popover: #252526;
-  --popover-foreground: #cccccc;
+  /* ── Retro CRT terminal theme (dark) ─────────────────────────────────
+   * Green-phosphor terminal, matched 1:1 to the public Share page
+   * (src/pages/PublicShare.tsx) so the whole product reads as one machine.
+   *
+   * Rules of the style: SHARP corners (no radius), hairline 1px borders,
+   * phosphor GLOW instead of drop shadows, monospace everywhere, scanlines. */
 
-  /* Brand / primary — electric neon green */
-  --primary: #00ff88;
-  --primary-foreground: #1e1e1e;
-  --accent: #00ff88;
-  --accent-foreground: #1e1e1e;
+  /* Surfaces — near-black CRT glass, panels are translucent black */
+  --background: #050a03;
+  --foreground: #9dff70;         /* phosphor green body text */
+  --card: #0a1206;
+  --card-foreground: #9dff70;
+  --popover: #0a1206;
+  --popover-foreground: #9dff70;
 
-  /* Neutrals */
-  --secondary: #2d2d2d;
-  --secondary-foreground: #9e9e9e;
-  --muted: #3c3c3c;
-  --muted-foreground: #858585;
+  /* Brand / primary — phosphor green. Accent = bright green for headings. */
+  --primary: #9dff70;
+  --primary-foreground: #050a03;
+  --accent: #baff9e;
+  --accent-foreground: #050a03;
 
-  /* Semantic status */
-  --success: #00ff88;
-  --success-foreground: #1e1e1e;
-  --warning: #ffb224;
-  --warning-foreground: #1a1200;
-  --error: #ff5c5c;
-  --error-foreground: #1a0606;
-  --info: #38bdf8;
-  --info-foreground: #04141d;
-  --destructive: #ff5c5c;
-  --destructive-foreground: #ffffff;
+  /* Neutrals — dim phosphor, never grey (grey breaks the CRT illusion) */
+  --secondary: #101c09;
+  --secondary-foreground: #baff9e;
+  --muted: #14240d;
+  --muted-foreground: #6cbf4f;
 
-  /* Lines & focus */
-  --border: #3c3c3c;
-  --input: #3c3c3c;
-  --ring: #00ff88;
+  /* Semantic status — the amber/red already used by the Share page */
+  --success: #9dff70;
+  --success-foreground: #050a03;
+  --warning: #ffd75f;
+  --warning-foreground: #050a03;
+  --error: #ff5f56;
+  --error-foreground: #050a03;
+  --info: #5fd7ff;
+  --info-foreground: #050a03;
+  --destructive: #ff5f56;
+  --destructive-foreground: #050a03;
 
-  /* Sidebar chrome */
-  --sidebar-bg: #181818;
-  --sidebar-border: #2d2d2d;
+  /* Lines & focus — hairline phosphor at partial opacity */
+  --border: #1f3d14;
+  --input: #1f3d14;
+  --ring: #9dff70;
 
-  /* Chart palette (neon-leaning, well separated) */
-  --chart-1: #00ff88;
-  --chart-2: #38bdf8;
-  --chart-3: #a78bfa;
-  --chart-4: #fbbf24;
-  --chart-5: #fb7185;
-  --chart-6: #2dd4bf;
+  /* Sidebar chrome — deepest panel */
+  --sidebar-bg: #030601;
+  --sidebar-border: #1f3d14;
 
-  /* Effects */
+  /* Chart palette — phosphor + the terminal's amber/red/cyan */
+  --chart-1: #9dff70;
+  --chart-2: #ffd75f;
+  --chart-3: #5fd7ff;
+  --chart-4: #ff5f56;
+  --chart-5: #baff9e;
+  --chart-6: #af87ff;
+
+  /* Effects — phosphor bloom replaces every drop shadow */
   --glow: 0 0 0 1px color-mix(in srgb, var(--primary) 40%, transparent),
-          0 0 24px -2px color-mix(in srgb, var(--primary) 60%, transparent);
-  --shadow-card: 0 2px 4px rgba(0, 0, 0, 0.3), 0 4px 8px rgba(0, 0, 0, 0.2);
+          0 0 14px -2px color-mix(in srgb, var(--primary) 45%, transparent);
+  --shadow-card: 0 0 12px -4px rgba(157, 255, 112, 0.25);
 
-  --radius: 0.625rem;
+  /* Terminals have square corners. Everything is 0. */
+  --radius: 0px;
 
-  /* ── Elevation scale ─────────────────────────────────────────────────
-   * Layered shadows. es-1 rests, es-2 hovers, es-3 floats (dropdown/popover),
-   * es-4 overlays (drawer/modal). Dark mode leans on darker, wider shadows. */
-  --es-1: 0 1px 2px rgba(0, 0, 0, 0.24);
-  --es-2: 0 2px 4px rgba(0, 0, 0, 0.28), 0 1px 2px rgba(0, 0, 0, 0.2);
-  --es-3: 0 8px 16px -4px rgba(0, 0, 0, 0.36), 0 4px 8px -2px rgba(0, 0, 0, 0.24);
-  --es-4: 0 24px 48px -12px rgba(0, 0, 0, 0.5), 0 12px 24px -8px rgba(0, 0, 0, 0.32);
+  /* Text glow used by headings/metrics (matches .retro-glow on Share page) */
+  --text-glow: 0 0 6px rgba(120, 255, 80, 0.55), 0 0 2px rgba(120, 255, 80, 0.9);
 
-  /* Surface tiers — subtle layering above --card without new hex values */
+  /* "Elevation" = increasing phosphor bloom, not distance from a light source */
+  --es-1: 0 0 0 1px rgba(157, 255, 112, 0.10);
+  --es-2: 0 0 10px -3px rgba(157, 255, 112, 0.22);
+  --es-3: 0 0 18px -3px rgba(157, 255, 112, 0.32);
+  --es-4: 0 0 32px -4px rgba(157, 255, 112, 0.42), 0 0 0 1px rgba(157, 255, 112, 0.2);
+
+  /* Surface tiers */
   --surface-1: color-mix(in srgb, var(--card) 100%, transparent);
-  --surface-2: color-mix(in srgb, var(--card) 92%, var(--foreground) 8%);
-  --surface-inset: color-mix(in srgb, var(--background) 60%, #000 40%);
+  --surface-2: color-mix(in srgb, var(--card) 88%, var(--foreground) 12%);
+  --surface-inset: color-mix(in srgb, var(--background) 70%, #000 30%);
 
-  /* ── Motion ──────────────────────────────────────────────────────────
-   * Durations stay short; easings are the expressive part. */
+  /* ── Motion ────────────────────────────────────────────────────────── */
   --dur-fast: 120ms;
   --dur-base: 180ms;
   --dur-slow: 280ms;
@@ -90,60 +98,66 @@
 }
 
 .light {
-  --background: #f3f7f4;
-  --foreground: #0a1610;
-  --card: #ffffff;
-  --card-foreground: #0a1610;
-  --popover: #ffffff;
-  --popover-foreground: #0a1610;
+  /* ── Retro terminal theme (light) — amber paper / dot-matrix printout ──
+   * A light green-on-white terminal is unreadable, so light mode becomes the
+   * other authentic retro surface: warm cream paper with dark ink and amber
+   * accents. Same era, same square hairline geometry, readable contrast. */
+  --background: #f4ecd8;         /* aged paper */
+  --foreground: #2a2113;         /* typewriter ink */
+  --card: #fbf6e9;
+  --card-foreground: #2a2113;
+  --popover: #fbf6e9;
+  --popover-foreground: #2a2113;
 
-  --primary: #00a857;
-  --primary-foreground: #ffffff;
-  --accent: #00a857;
-  --accent-foreground: #ffffff;
+  /* Primary — deep amber/umber, hits 4.5:1 on paper */
+  --primary: #8a5a12;
+  --primary-foreground: #fbf6e9;
+  --accent: #7a3c0a;
+  --accent-foreground: #fbf6e9;
 
-  --secondary: #e8efea;
-  --secondary-foreground: #41524a;
-  --muted: #eef3f0;
-  --muted-foreground: #5e6f66;
+  --secondary: #e8dcc0;
+  --secondary-foreground: #4a3a1e;
+  --muted: #ede2ca;
+  --muted-foreground: #6b5735;
 
-  --success: #15a34a;
-  --success-foreground: #ffffff;
-  --warning: #c2710c;
-  --warning-foreground: #ffffff;
-  --error: #dc2626;
-  --error-foreground: #ffffff;
-  --info: #0284c7;
-  --info-foreground: #ffffff;
-  --destructive: #dc2626;
-  --destructive-foreground: #ffffff;
+  --success: #2f6b25;
+  --success-foreground: #fbf6e9;
+  --warning: #8a5a12;
+  --warning-foreground: #fbf6e9;
+  --error: #a32b20;
+  --error-foreground: #fbf6e9;
+  --info: #1f5673;
+  --info-foreground: #fbf6e9;
+  --destructive: #a32b20;
+  --destructive-foreground: #fbf6e9;
 
-  --border: #dbe4df;
-  --input: #dbe4df;
-  --ring: #00a857;
+  --border: #cbb894;
+  --input: #cbb894;
+  --ring: #8a5a12;
 
-  --sidebar-bg: #ffffff;
-  --sidebar-border: #e4ebe7;
+  --sidebar-bg: #ebe0c6;
+  --sidebar-border: #cbb894;
 
-  --chart-1: #00a857;
-  --chart-2: #0284c7;
-  --chart-3: #7c3aed;
-  --chart-4: #d97706;
-  --chart-5: #e11d48;
-  --chart-6: #0d9488;
+  --chart-1: #8a5a12;
+  --chart-2: #2f6b25;
+  --chart-3: #1f5673;
+  --chart-4: #a32b20;
+  --chart-5: #6b4899;
+  --chart-6: #7a6a1e;
 
-  --glow: 0 0 0 1px color-mix(in srgb, var(--primary) 30%, transparent),
-          0 0 14px -4px color-mix(in srgb, var(--primary) 35%, transparent);
-  --shadow-card: 0 1px 2px rgba(16, 24, 20, 0.06), 0 1px 3px rgba(16, 24, 20, 0.08);
+  --glow: 0 0 0 1px color-mix(in srgb, var(--primary) 30%, transparent);
+  --shadow-card: 0 1px 0 0 rgba(42, 33, 19, 0.10);
 
-  /* Light mode elevation — tighter, cooler, less opacity */
-  --es-1: 0 1px 2px rgba(16, 24, 20, 0.06);
-  --es-2: 0 2px 4px rgba(16, 24, 20, 0.08), 0 1px 2px rgba(16, 24, 20, 0.04);
-  --es-3: 0 8px 16px -4px rgba(16, 24, 20, 0.1), 0 4px 8px -2px rgba(16, 24, 20, 0.06);
-  --es-4: 0 24px 48px -12px rgba(16, 24, 20, 0.18), 0 12px 24px -8px rgba(16, 24, 20, 0.1);
+  --text-glow: none;
 
-  --surface-2: color-mix(in srgb, var(--card) 94%, var(--foreground) 6%);
-  --surface-inset: color-mix(in srgb, var(--background) 70%, var(--foreground) 6%);
+  /* Paper has no glow — "elevation" is a crisp hairline rule instead. */
+  --es-1: 0 0 0 1px rgba(42, 33, 19, 0.08);
+  --es-2: 0 1px 0 0 rgba(42, 33, 19, 0.12);
+  --es-3: 0 2px 0 0 rgba(42, 33, 19, 0.16);
+  --es-4: 0 3px 0 0 rgba(42, 33, 19, 0.22), 0 0 0 1px rgba(42, 33, 19, 0.12);
+
+  --surface-2: color-mix(in srgb, var(--card) 92%, var(--foreground) 8%);
+  --surface-inset: color-mix(in srgb, var(--background) 88%, var(--foreground) 6%);
 }
 
 /*
@@ -203,6 +217,7 @@
   --shadow-es-2: var(--es-2);
   --shadow-es-3: var(--es-3);
   --shadow-es-4: var(--es-4);
+  --shadow-glow: var(--glow);
 
   --color-surface-1: var(--surface-1);
   --color-surface-2: var(--surface-2);
@@ -216,6 +231,8 @@
   --animate-slide-in-right: slide-in-right var(--dur-slow) var(--ease-out) both;
   --animate-scale-in: scale-in var(--dur-fast) var(--ease-spring) both;
   --animate-shimmer: shimmer 1.6s linear infinite;
+  --animate-flicker: flicker 4s steps(1) infinite;
+  --animate-blink: blink 1.1s steps(1) infinite;
 }
 
 /* ── Keyframes ─────────────────────────────────────────────────────────── */
@@ -239,9 +256,95 @@
   from { background-position: -200% 0; }
   to { background-position: 200% 0; }
 }
+/* Terminal cursor blink — matches .retro-blink on the Share page */
+@keyframes blink {
+  50% { opacity: 0; }
+}
+/* Very subtle CRT brightness flicker. Kept faint so it never distracts. */
+@keyframes flicker {
+  0%, 96%, 100% { opacity: 1; }
+  97%           { opacity: 0.94; }
+  98%           { opacity: 0.99; }
+}
+
+/* ── Retro CRT utilities ───────────────────────────────────────────────
+ * Shared with src/pages/PublicShare.tsx so the dashboard and the public
+ * share page are visually the same machine. */
+
+/* Phosphor text bloom. No-op on light (paper) mode via --text-glow: none. */
+.retro-glow {
+  text-shadow: var(--text-glow);
+}
+
+/* Callout / info block. A left rule instead of a full frame, so nested content
+ * never reads as a box inside a box. Replaces the old
+ * `border border-border bg-surface-2 p-4` pattern that was repeated in 7 pages. */
+.panel {
+  border-left: 2px solid var(--border);
+  background: transparent;
+  padding-left: 0.75rem;
+}
+
+/* Blinking block cursor — append after a heading or status string. */
+.retro-blink {
+  animation: blink 1.1s steps(1) infinite;
+}
+
+/* Scanline + vignette overlay. Applied to <body> so it covers every screen —
+ * login, public share, and the authed app shell alike. Fixed + pointer-events
+ * none so it never intercepts clicks. Light mode drops the vignette (paper
+ * doesn't have a curved glass tube) and keeps a faint dot-matrix ruling. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 40;
+  background: repeating-linear-gradient(
+    0deg,
+    rgba(0, 0, 0, 0.22) 0px,
+    rgba(0, 0, 0, 0.22) 1px,
+    transparent 1px,
+    transparent 3px
+  );
+}
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 41;
+  background: radial-gradient(ellipse at center, transparent 55%, rgba(0, 20, 0, 0.5) 100%);
+}
+.light body::before,
+html.light body::before {
+  background: repeating-linear-gradient(
+    0deg,
+    rgba(42, 33, 19, 0.055) 0px,
+    rgba(42, 33, 19, 0.055) 1px,
+    transparent 1px,
+    transparent 3px
+  );
+}
+html.light body::after {
+  background: none;
+}
 
 * {
   border-color: var(--border);
+}
+
+/* A CRT draws in scanlines — nothing is round. Tailwind's rounded-* utilities
+ * use fixed rem values (not our --radius token), so squaring them here is what
+ * actually removes every stray pill/circle across ~30 pages without touching
+ * each call site. Avatars/dots that genuinely need a circle opt back in with
+ * `.is-round`. */
+[class*="rounded"] {
+  border-radius: 0 !important;
+}
+.is-round,
+.is-round[class*="rounded"] {
+  border-radius: 9999px !important;
 }
 
 html {
@@ -254,12 +357,34 @@ html.light {
 body {
   background-color: var(--background);
   color: var(--foreground);
-  font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
-    "Helvetica Neue", Arial, sans-serif;
+  /* A terminal is monospace everywhere. JetBrains Mono is already loaded and
+   * has excellent tabular figures, so number columns stay aligned for free. */
+  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo,
+    Consolas, "Liberation Mono", monospace;
   margin: 0;
   padding: 0;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
+}
+
+/* Headings are uppercase, wide-tracked, and glowing — terminal panel labels. */
+h1, h2, h3, .font-display {
+  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  text-shadow: var(--text-glow);
+}
+
+/* Mono stack used by code blocks, KeyValue mono values, and .tabular runs
+ * that want a fixed-pitch look (JetBrains Mono has excellent tabular figures). */
+code,
+kbd,
+pre,
+samp,
+.font-mono {
+  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo,
+    Consolas, "Liberation Mono", monospace;
 }
 
 /* Smooth, scoped transition when toggling themes (not on every paint) */
@@ -307,6 +432,17 @@ body {
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
+  }
+
+  /* The blinking cursor and hover/press transforms are decorative — colour and
+   * border feedback still comes through, so no affordance is lost. */
+  .retro-blink {
+    animation: none !important;
+  }
+  [class*="hover:-translate-y"]:hover,
+  [class*="active:scale"]:active,
+  [class*="active:translate-y"]:active {
+    transform: none !important;
   }
 }
 

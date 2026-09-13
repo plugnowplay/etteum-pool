@@ -295,9 +295,23 @@ export abstract class BaseProvider {
       const timer = setTimeout(() => controller.abort(), timeoutMs);
       const proxy = await getNextProxy("model");
       this.lastProxy = proxy;
+      // No proxy available → fall back to direct/local fetch (previously
+      // threw [NO-PROXY]). User explicitly requested: "kalau ga ada proxy
+      // arahkan ke lokal".
       if (!proxy) {
-        clearTimeout(timer);
-        throw new Error(`[NO-PROXY] ${this.name}: no active proxy in pool for ${url} — refusing direct VPS IP`);
+        console.log(`[DIRECT] ${this.name}: ${url} (no proxy in pool — using direct connection)`);
+        try {
+          const response = await fetch(url, {
+            ...init,
+            signal: controller.signal,
+          } as any);
+          return response;
+        } catch (err) {
+          clearTimeout(timer);
+          throw err;
+        } finally {
+          clearTimeout(timer);
+        }
       }
       const proxyLabel = `via proxy ${proxy.id} (${proxy.url.match(/@([^:\\/]+)/)?.[1] || proxy.url})`;
       console.log(`[PROXY] ${this.name}: ${url} ${proxyLabel}${attempt > 1 ? ` (retry ${attempt}/${maxAttempts})` : ""}`);

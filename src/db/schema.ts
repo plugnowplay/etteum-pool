@@ -65,8 +65,8 @@ export const customModels = sqliteTable("custom_models", {
   provider: text("provider").notNull(),
   /** Bare model id WITHOUT the provider prefix (e.g. "Qwen3.8-Max", "grok-5"). */
   model: text("model").notNull(),
-  contextWindow: integer("context_window").default(200000),
-  maxOutput: integer("max_output").default(8192),
+  contextWindow: integer("context_window").default(1000000),
+  maxOutput: integer("max_output").default(128000),
   thinking: integer("thinking", { mode: "boolean" }).default(false),
   vision: integer("vision", { mode: "boolean" }).default(false),
   createdAt: integer("created_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),

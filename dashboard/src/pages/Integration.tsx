@@ -396,7 +396,7 @@ export default function Integration() {
                   {CLAUDE_CODE_SLOTS.map((slot) => (
                     <div
                       key={slot.source}
-                      className="flex flex-col gap-2 rounded-md border border-[var(--border)] bg-[var(--surface-2)] px-4 py-3 sm:flex-row sm:items-center"
+                      className="panel flex flex-col gap-2 py-1.5 sm:flex-row sm:items-center"
                     >
                       <div className="shrink-0 space-y-1.5 sm:w-48">
                         <Skeleton className="h-3.5 w-20" />
@@ -411,7 +411,7 @@ export default function Integration() {
                   {CLAUDE_CODE_SLOTS.map((slot) => (
                     <div
                       key={slot.source}
-                      className="flex flex-col gap-2 rounded-md border border-[var(--border)] bg-[var(--surface-2)] px-4 py-3 sm:flex-row sm:items-center"
+                      className="panel flex flex-col gap-2 py-1.5 sm:flex-row sm:items-center"
                     >
                       <div className="shrink-0 sm:w-48">
                         <div className="text-sm font-medium text-[var(--foreground)]">

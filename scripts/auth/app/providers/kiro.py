@@ -28,8 +28,13 @@ _EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 KIRO_AUTH_BASE = os.getenv(
     "BATCHER_KIRO_AUTH_BASE", "https://prod.us-east-1.auth.desktop.kiro.dev"
 )
+# Kiro IDE (2026+) started routing sign-in through https://app.kiro.dev/signin
+# with a plain http://localhost:<port> callback (loopback), instead of the
+# legacy kiro:// custom-scheme redirect.  BATCHER_KIRO_LOGIN_ENDPOINT and
+# BATCHER_KIRO_REDIRECT_URI can still be overridden via env vars to force the
+# old flow if needed.
 KIRO_LOGIN_ENDPOINT = os.getenv(
-    "BATCHER_KIRO_LOGIN_ENDPOINT", f"{KIRO_AUTH_BASE}/login"
+    "BATCHER_KIRO_LOGIN_ENDPOINT", "https://app.kiro.dev/signin"
 )
 KIRO_TOKEN_ENDPOINT = os.getenv(
     "BATCHER_KIRO_TOKEN_ENDPOINT", f"{KIRO_AUTH_BASE}/oauth/token"
@@ -37,8 +42,9 @@ KIRO_TOKEN_ENDPOINT = os.getenv(
 KIRO_REGION = os.getenv("BATCHER_KIRO_REGION", "us-east-1")
 KIRO_REDIRECT_URI = os.getenv(
     "BATCHER_KIRO_REDIRECT_URI",
-    "kiro://kiro.kiroAgent/authenticate-success",
+    "http://localhost:3128",
 )
+KIRO_REDIRECT_FROM = os.getenv("BATCHER_KIRO_REDIRECT_FROM", "KiroIDE")
 KIRO_USAGE_ENDPOINT = os.getenv(
     "BATCHER_KIRO_USAGE_ENDPOINT",
     "https://q.us-east-1.amazonaws.com/getUsageLimits",
@@ -57,10 +63,30 @@ def _generate_pkce_pair() -> tuple[str, str]:
 
 
 def _extract_code_from_kiro_url(url: str) -> str | None:
-    if not url.startswith("kiro://"):
+    """Extract an OAuth ``code`` from either the legacy Kiro custom-scheme
+    callback (``kiro://.../authenticate-success?code=...``) or the new
+    loopback callback (``http://localhost:<port>/?code=...&state=...``)
+    used by Kiro IDE 2026+.
+
+    Returns ``None`` when the URL is not a recognised callback so callers can
+    keep the request going normally.
+    """
+
+    if not url:
         return None
-    params = parse_qs(urlparse(url).query)
-    values = params.get("code")
+
+    parsed = urlparse(url)
+
+    is_kiro_scheme = url.startswith("kiro://")
+    is_loopback_callback = (
+        parsed.scheme in ("http", "https")
+        and parsed.hostname in {"localhost", "127.0.0.1"}
+    )
+
+    if not (is_kiro_scheme or is_loopback_callback):
+        return None
+
+    values = parse_qs(parsed.query).get("code")
     if not values:
         return None
     return values[0]
@@ -711,15 +737,36 @@ class KiroProviderAdapter(ProviderAdapter):
 
             await page.route("**/*", route_handler)
 
-            auth_url = f"{KIRO_LOGIN_ENDPOINT}?" + urlencode(
-                {
+            # New IDE flow: https://app.kiro.dev/signin
+            #   ?state=<uuid>
+            #   &code_challenge=<challenge>
+            #   &code_challenge_method=S256
+            #   &redirect_uri=<loopback>
+            #   &redirect_from=KiroIDE
+            # Legacy /login flow still works with idp=Google / kiro:// scheme,
+            # gated on BATCHER_KIRO_LOGIN_ENDPOINT override.
+            login_endpoint_lower = KIRO_LOGIN_ENDPOINT.lower()
+            legacy_flow = (
+                "/login" in login_endpoint_lower
+                and "app.kiro.dev" not in login_endpoint_lower
+            )
+            if legacy_flow:
+                auth_query = {
                     "idp": "Google",
                     "redirect_uri": KIRO_REDIRECT_URI,
                     "code_challenge": code_challenge,
                     "code_challenge_method": "S256",
                     "state": str(uuid.uuid4()),
                 }
-            )
+            else:
+                auth_query = {
+                    "state": str(uuid.uuid4()),
+                    "code_challenge": code_challenge,
+                    "code_challenge_method": "S256",
+                    "redirect_uri": KIRO_REDIRECT_URI,
+                    "redirect_from": KIRO_REDIRECT_FROM,
+                }
+            auth_url = f"{KIRO_LOGIN_ENDPOINT}?" + urlencode(auth_query)
             await page.goto(auth_url, wait_until="domcontentloaded", timeout=20000)
 
             state.update(

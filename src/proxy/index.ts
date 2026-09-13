@@ -787,8 +787,10 @@ async function handleChatCompletionRoute(body: ChatCompletionRequest, isStream: 
 proxyRouter.get("/v1/models", async (c) => {
   // Rebuild the DB-backed model caches on every listing so newly added or
   // disabled accounts are reflected immediately — both refreshes are cheap
-  // DB reads, no upstream traffic.
-  await Promise.all([refreshByokModels(), refreshCustomModels()]);
+  // DB reads, no upstream traffic. Order matters: refreshCustomModels() reads
+  // the BYOK label set to decide each custom row's owner, so BYOK goes first.
+  await refreshByokModels();
+  await refreshCustomModels();
 
   const usable = new Set(
     (

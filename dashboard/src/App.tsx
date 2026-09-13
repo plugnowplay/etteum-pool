@@ -24,7 +24,7 @@ const Integration = lazy(() => import("./pages/Integration"));
 const CodexOAuthCallback = lazy(() => import("./pages/CodexOAuthCallback"));
 const ChangePassword = lazy(() => import("./pages/ChangePassword"));
 const PublicShare = lazy(() => import("./pages/PublicShare"));
-const ComingSoon = lazy(() => import("./pages/ComingSoon"));
+
 
 function RouteFallback() {
   return (

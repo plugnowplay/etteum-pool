@@ -361,7 +361,7 @@ ${curlSnippet}`;
           </div>
 
           {/* Public share page */}
-          <div className="rounded-lg border border-[var(--border)] bg-[var(--surface-2)] p-4">
+          <div className="panel py-1">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="min-w-0">
                 <h4 className="text-sm font-medium text-[var(--foreground)]">Public share page</h4>
@@ -388,7 +388,7 @@ ${curlSnippet}`;
             )}
           </div>
 
-          <div className="rounded-lg border border-[var(--border)] bg-[var(--surface-2)] p-4">
+          <div className="panel py-1">
             <div className="mb-2 flex items-center justify-between gap-2">
               <h4 className="text-sm font-medium text-[var(--foreground)]">Quick start</h4>
               <Button

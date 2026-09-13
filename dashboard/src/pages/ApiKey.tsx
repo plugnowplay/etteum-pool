@@ -9,6 +9,7 @@ import {
   Copy, Eye, EyeOff, RefreshCw, Check, Save, ShieldCheck, Plus, Trash2, KeyRound, RotateCcw, Pencil,
 } from "lucide-react";
 import {
+  API_BASE,
   fetchApiKey, regenerateApiKey, setApiKey, testApiKey,
   fetchManagedKeys, createManagedKey, updateManagedKey, deleteManagedKey, resetManagedKeyUsage,
   type ManagedKeyDTO,
@@ -232,11 +233,11 @@ export default function ApiKey() {
             </Button>
           </div>
 
-          <div className="mt-4 rounded-lg border border-[var(--border)] bg-[var(--surface-2)] p-4">
+          <div className="panel mt-4 py-1">
             <h4 className="mb-2 text-sm font-medium text-[var(--foreground)]">Usage Example</h4>
-            <pre className="overflow-x-auto rounded-md bg-[var(--surface-inset)] p-3 text-xs leading-relaxed text-[var(--muted-foreground)]">
-{`curl https://etteum.miotcore.com/v1/chat/completions \\
-  -H "Authorization: Bearer YOUR_KEY" \\
+            <pre className="overflow-x-auto bg-[var(--surface-inset)] p-3 text-xs leading-relaxed text-[var(--muted-foreground)]">
+{`curl ${API_BASE}/v1/chat/completions \\
+  -H "Authorization: Bearer ${apiKey || "YOUR_KEY"}" \\
   -H "Content-Type: application/json" \\
   -d '{
     "model": "glm-5.3",
@@ -273,15 +274,15 @@ export default function ApiKey() {
             <div className="overflow-x-auto">
               <table className="w-full text-left text-sm">
                 <thead>
-                  <tr className="border-b border-[var(--border)] text-xs uppercase tracking-wide text-[var(--muted-foreground)]">
-                    <th className="px-2 py-2">Name</th>
-                    <th className="px-2 py-2">Key</th>
-                    <th className="px-2 py-2">Models</th>
-                    <th className="px-2 py-2">RPM</th>
-                    <th className="px-2 py-2">Tokens</th>
-                    <th className="px-2 py-2">Share</th>
-                    <th className="px-2 py-2">Status</th>
-                    <th className="px-2 py-2 text-right">Actions</th>
+                  <tr className="border-b border-[var(--border)] bg-[var(--surface-2)] text-[10px] font-semibold uppercase tracking-wider text-[var(--muted-foreground)]">
+                    <th className="whitespace-nowrap px-3 py-3">Name</th>
+                    <th className="whitespace-nowrap px-3 py-3">Key</th>
+                    <th className="whitespace-nowrap px-3 py-3">Models</th>
+                    <th className="whitespace-nowrap px-3 py-3">RPM</th>
+                    <th className="whitespace-nowrap px-3 py-3">Tokens</th>
+                    <th className="whitespace-nowrap px-3 py-3">Share</th>
+                    <th className="whitespace-nowrap px-3 py-3">Status</th>
+                    <th className="whitespace-nowrap px-3 py-3 text-right">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -319,7 +320,7 @@ export default function ApiKey() {
                         <td className="px-2 py-2 text-xs">{k.rpmLimit > 0 ? k.rpmLimit : "∞"}</td>
                         <td className="px-2 py-2">
                           <div className="text-xs">
-                            <span className={exhausted ? "text-[var(--danger)]" : ""}>
+                            <span className={exhausted ? "text-[var(--error)]" : ""}>
                               {formatTokens(k.tokensUsed)}
                             </span>
                             {k.tokenLimit > 0 && (
@@ -329,7 +330,7 @@ export default function ApiKey() {
                           {k.tokenLimit > 0 && (
                             <div className="mt-1 h-1 w-24 overflow-hidden rounded bg-[var(--surface-2)]">
                               <div
-                                className={`h-full ${exhausted ? "bg-[var(--danger)]" : "bg-[var(--primary)]"}`}
+                                className={`h-full ${exhausted ? "bg-[var(--error)]" : "bg-[var(--primary)]"}`}
                                 style={{ width: `${pct}%` }}
                               />
                             </div>
@@ -364,7 +365,7 @@ export default function ApiKey() {
                             </Button>
                             <Button
                               variant="outline" size="icon" title="Delete" aria-label="Delete"
-                              className="text-[var(--danger)] hover:text-[var(--danger)]"
+                              className="text-[var(--error)] hover:text-[var(--error)]"
                               onClick={() => handleDeleteKey(k)}
                             >
                               <Trash2 className="h-3.5 w-3.5" />
@@ -385,7 +386,7 @@ export default function ApiKey() {
       {showAdd && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setShowAdd(false)}>
           <div
-            className="w-full max-w-lg rounded-xl border border-[var(--border)] bg-[var(--surface)] p-5 shadow-xl"
+            className="w-full max-w-lg border border-[var(--border)] bg-[var(--card)] p-5 shadow-[var(--es-4)]"
             onClick={(e) => e.stopPropagation()}
           >
             <h3 className="mb-1 text-base font-semibold">{editing ? "Edit Key" : "Add Key"}</h3>

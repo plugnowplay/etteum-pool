@@ -1340,20 +1340,23 @@ export class GrokCliProvider extends BaseProvider {
 
     try {
       const proxyUrl = await plengerProxyUrl();
+      // User setting: fall back to direct/local connection when no proxy is
+      // available (previously refused). Log so it's still auditable.
       if (!proxyUrl) {
-        return { status: "error", error: "No active proxy in pool — probe would leak VPS IP, refusing" };
+        console.log("[DIRECT] grok-cli plenger probe: no proxy in pool — using direct connection");
       }
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), PLENGER_PROBE_TIMEOUT_MS);
       let resp: Response;
       try {
-        resp = await fetch(GROK_CLI_RESPONSES_URL, {
+        const fetchInit: RequestInit & { proxy?: string } = {
           method: "POST",
           headers,
           body: JSON.stringify(body),
           signal: controller.signal,
-          proxy: proxyUrl, // dedicated rotating mobile proxy
-        } as any);
+        };
+        if (proxyUrl) fetchInit.proxy = proxyUrl; // dedicated rotating mobile proxy
+        resp = await fetch(GROK_CLI_RESPONSES_URL, fetchInit as any);
       } finally {
         clearTimeout(timer);
       }

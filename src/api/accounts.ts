@@ -254,12 +254,13 @@ accountsRouter.post("/byok", async (c) => {
   const baseUrl = String(body.base_url || "").trim().replace(/\/$/, "");
   const models = normalizeModels(body.models);
 
-  if (!label || !baseUrl || models.length === 0) {
-    return c.json({ error: "label, base_url, and models[] are required" }, 400);
+  if (!label || !baseUrl) {
+    return c.json({ error: "label and base_url are required" }, 400);
   }
   if (!BYOK_PREFIX_RE.test(label)) {
     return c.json({ error: "label must be lowercase alphanumeric with hyphens only" }, 400);
   }
+  // models[] is optional — leave empty and add models via /models page later.
 
   let keyInputs: Array<{ label: string; key: string; weight?: number; priority?: number }>;
   try {
@@ -476,9 +477,10 @@ accountsRouter.patch("/byok/:id", async (c) => {
   const nextModels = body.models ? normalizeModels(body.models) : normalizeModels(currentTokens.models || []);
   const nextHeaders = body.headers ?? currentTokens.headers ?? {};
 
-  if (!nextBaseUrl || nextModels.length === 0) {
-    return c.json({ error: "base_url and at least one model are required" }, 400);
+  if (!nextBaseUrl) {
+    return c.json({ error: "base_url is required" }, 400);
   }
+  // models[] may be empty — managed via /models page.
 
   try {
     const keyPayloadProvided = Array.isArray(body.api_keys);
@@ -2639,6 +2641,244 @@ export async function exchangeCodexRefreshTokens(tokens: string[]) {
   }
 
   return { success, failed, errors: errors.length > 0 ? errors : undefined };
+}
+
+// ── Kiro OAuth (IDE 2026+ /signin + http://localhost:<port> callback) ──────
+
+const KIRO_AUTH_BASE = "https://prod.us-east-1.auth.desktop.kiro.dev";
+const KIRO_TOKEN_URL = `${KIRO_AUTH_BASE}/oauth/token`;
+
+async function upsertKiroAccount(email: string, tokens: Record<string, unknown>) {
+  const existing = await db.select().from(accounts)
+    .where(eq(accounts.email, email))
+    .then((rows) => rows.find((r) => r.provider === "kiro"));
+
+  if (existing) {
+    await db.update(accounts).set({
+      status: "active",
+      tokens: tokens as unknown,
+      errorMessage: null,
+      lastLoginAt: new Date(),
+      updatedAt: new Date(),
+    }).where(eq(accounts.id, existing.id));
+    return existing.id;
+  }
+
+  const inserted = await db.insert(accounts).values({
+    provider: "kiro",
+    email,
+    password: encrypt("oauth-login"),
+    status: "active",
+    tokens: tokens as unknown,
+    lastLoginAt: new Date(),
+  }).returning();
+
+  return inserted[0]!.id;
+}
+
+/**
+ * Exchange a Kiro authorization code for tokens and upsert the account.
+ * Kiro's OAuth token endpoint takes JSON (`code`, `code_verifier`,
+ * `redirect_uri`) and responds with `accessToken` / `refreshToken`
+ * (camelCase, not snake_case) plus optional `profileArn`, `expiresAt`,
+ * `expiresIn`. See `scripts/auth/app/providers/kiro.py::fetch_tokens`.
+ */
+export async function exchangeKiroAuthorizationCode(input: {
+  code: string;
+  codeVerifier: string;
+  redirectUri: string;
+}) {
+  const payload = {
+    code: input.code,
+    code_verifier: input.codeVerifier,
+    redirect_uri: input.redirectUri,
+  };
+  console.log("[kiro/exchange] POST", KIRO_TOKEN_URL, {
+    code_prefix: input.code.slice(0, 12) + "…",
+    code_len: input.code.length,
+    verifier_len: input.codeVerifier.length,
+    redirect_uri: input.redirectUri,
+  });
+  const response = await fetch(KIRO_TOKEN_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const text = await response.text().catch(() => "");
+    console.error("[kiro/exchange] failed", response.status, text.slice(0, 500));
+    // Kiro server frequently returns 500 with a generic message when the
+    // authorization code has been consumed, expired, or when redirect_uri
+    // doesn't match the one used at /authorize.  Give the user actionable
+    // guidance instead of leaking the opaque upstream body.
+    if (response.status >= 500) {
+      throw new Error(
+        `Kiro rejected the authorization code (${response.status}). Common causes:\n` +
+        `  • The code was already used (each code can only be exchanged once — start the login again).\n` +
+        `  • The code expired (Kiro codes are short-lived, typically < 60s).\n` +
+        `  • redirect_uri mismatch (must be identical to the URI used at /authorize: "${input.redirectUri}").\n` +
+        `Upstream: ${text.slice(0, 200) || "<empty>"}`
+      );
+    }
+    throw new Error(`Kiro token exchange failed (${response.status}): ${text.slice(0, 200)}`);
+  }
+
+  const data = await response.json() as {
+    accessToken?: string;
+    refreshToken?: string;
+    profileArn?: string;
+    profile_arn?: string;
+    expiresAt?: string | number;
+    expiresIn?: string | number;
+    authMethod?: string;
+    provider?: string;
+  };
+
+  const accessToken = String(data.accessToken || "").trim();
+  const refreshToken = String(data.refreshToken || "").trim();
+  const profileArn = String(data.profileArn || data.profile_arn || "").trim();
+
+  if (!accessToken) {
+    throw new Error("Kiro token exchange returned no accessToken");
+  }
+
+  const newTokens: Record<string, unknown> = {
+    access_token: accessToken,
+    refresh_token: refreshToken,
+    method: "authorization_code",
+  };
+  if (profileArn) newTokens.profile_arn = profileArn;
+  if (data.expiresAt !== undefined) newTokens.expires_at = String(data.expiresAt);
+  if (data.expiresIn !== undefined) newTokens.expires_in = String(data.expiresIn);
+  if (data.authMethod) newTokens.auth_method = String(data.authMethod);
+  if (data.provider) newTokens.identity_provider = String(data.provider);
+
+  // Kiro tokens don't carry an email. Derive one from the profile ARN (which
+  // typically contains the account id) so the row is stable across re-auths.
+  let email = "";
+  if (profileArn) {
+    const arnMatch = profileArn.match(/(?:account|user|profile)[/:]([\w.-]+)/i);
+    email = arnMatch?.[1] ? `kiro-${arnMatch[1]}@oauth.local` : `kiro-${profileArn.slice(-12)}@oauth.local`;
+  } else {
+    email = `kiro-${accessToken.slice(-10)}@oauth.local`;
+  }
+
+  const id = await upsertKiroAccount(email, newTokens);
+  pool.invalidate("kiro" as ProviderName);
+  broadcast({ type: "accounts_updated", data: { provider: "kiro", count: 1 } });
+
+  return {
+    id,
+    provider: "kiro",
+    email,
+    name: email,
+    workspace: profileArn || null,
+    plan: null as string | null,
+  };
+}
+
+/**
+ * Import a Kiro account using ONLY a refresh token.
+ *
+ * The refresh token endpoint (`/refreshToken`) accepts `{ refreshToken }` and
+ * returns a fresh `accessToken` + rotated `refreshToken` + `expiresAt`. This
+ * lets users paste an existing Kiro refresh token (e.g. exported from another
+ * machine) and skip the interactive OAuth flow entirely.
+ */
+export async function importKiroFromRefreshToken(refreshToken: string) {
+  const trimmed = (refreshToken || "").trim();
+  if (!trimmed) throw new Error("refreshToken is required");
+
+  const refreshUrl = `${KIRO_AUTH_BASE}/refreshToken`;
+  const response = await fetch(refreshUrl, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    },
+    body: JSON.stringify({ refreshToken: trimmed }),
+  });
+
+  if (!response.ok) {
+    const text = await response.text().catch(() => "");
+    throw new Error(`Kiro refresh failed (${response.status}): ${text.slice(0, 200)}`);
+  }
+
+  const data = await response.json() as {
+    accessToken?: string;
+    refreshToken?: string;
+    profileArn?: string;
+    profile_arn?: string;
+    expiresAt?: string | number;
+    expiresIn?: string | number;
+    authMethod?: string;
+    provider?: string;
+  };
+
+  const accessToken = String(data.accessToken || "").trim();
+  const rotatedRefresh = String(data.refreshToken || trimmed).trim();
+  const profileArn = String(data.profileArn || data.profile_arn || "").trim();
+
+  if (!accessToken) {
+    throw new Error("Kiro refresh returned no accessToken (token may be invalid or expired)");
+  }
+
+  const newTokens: Record<string, unknown> = {
+    access_token: accessToken,
+    refresh_token: rotatedRefresh,
+    method: "refresh_token_import",
+  };
+  if (profileArn) newTokens.profile_arn = profileArn;
+  if (data.expiresAt !== undefined) newTokens.expires_at = String(data.expiresAt);
+  if (data.expiresIn !== undefined) newTokens.expires_in = String(data.expiresIn);
+  if (data.authMethod) newTokens.auth_method = String(data.authMethod);
+  if (data.provider) newTokens.identity_provider = String(data.provider);
+
+  let email = "";
+  if (profileArn) {
+    const arnMatch = profileArn.match(/(?:account|user|profile)[/:]([\w.-]+)/i);
+    email = arnMatch?.[1] ? `kiro-${arnMatch[1]}@oauth.local` : `kiro-${profileArn.slice(-12)}@oauth.local`;
+  } else {
+    email = `kiro-${accessToken.slice(-10)}@oauth.local`;
+  }
+
+  const id = await upsertKiroAccount(email, newTokens);
+  pool.invalidate("kiro" as ProviderName);
+  broadcast({ type: "accounts_updated", data: { provider: "kiro", count: 1 } });
+
+  return {
+    id,
+    provider: "kiro",
+    email,
+    name: email,
+    workspace: profileArn || null,
+    plan: null as string | null,
+  };
+}
+
+/**
+ * Bulk-import Kiro accounts from a list of refresh tokens (one per line).
+ * Returns per-token status so the UI can surface partial failures.
+ */
+export async function importKiroFromRefreshTokens(tokens: string[]) {
+  const results: Array<{ token: string; success: boolean; id?: number; email?: string; error?: string }> = [];
+  for (const raw of tokens) {
+    const token = raw.trim();
+    if (!token) continue;
+    try {
+      const acc = await importKiroFromRefreshToken(token);
+      results.push({ token: token.slice(0, 12) + "…", success: true, id: acc.id, email: acc.email });
+    } catch (err) {
+      results.push({ token: token.slice(0, 12) + "…", success: false, error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+  const success = results.filter((r) => r.success).length;
+  const failed = results.length - success;
+  return { success, failed, results };
 }
 
 async function handleCodexInstantLogin(c: any, tokens: string[]) {

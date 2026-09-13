@@ -134,8 +134,8 @@ export class ByokProvider extends BaseProvider {
           object: "model",
           created: Math.floor(Date.now() / 1000),
           owned_by: `byok:${prefix}`,
-          context_window: 200_000,
-          max_output: 8192,
+          context_window: 1_000_000,
+          max_output: 128_000,
         });
       }
     }
@@ -230,6 +230,18 @@ export class ByokProvider extends BaseProvider {
       this.refreshCache().catch(() => {/* swallow — next call will retry */});
     }
     return this.findPrefix(model);
+  }
+
+  /**
+   * Labels currently claimed by enabled BYOK accounts. Callers use this to
+   * report a consistent owner for models that share a BYOK label (a custom
+   * model row on label "enxx" is owned by "byok:enxx", not a provider "enxx").
+   */
+  getPrefixes(): readonly string[] {
+    if (Date.now() >= this.cacheExpiry) {
+      this.refreshCache().catch(() => {/* swallow — next call will retry */});
+    }
+    return this.prefixes;
   }
 
   // ── Routing (synchronous — required by registry) ──────────────────

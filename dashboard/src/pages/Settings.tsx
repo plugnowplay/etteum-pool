@@ -264,7 +264,7 @@ export default function Settings() {
               />
             </Field>
 
-            <div className="rounded-lg border border-[var(--border)] bg-[var(--surface-2)] p-4">
+            <div className="panel py-1">
               <p className="text-[11px] font-medium uppercase tracking-wide text-[var(--muted-foreground)]">
                 Status
               </p>

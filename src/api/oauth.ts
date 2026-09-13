@@ -1,6 +1,12 @@
 import { Hono } from "hono";
 import { createHash, randomBytes } from "crypto";
-import { exchangeCodexAuthorizationCode, exchangeCodexRefreshTokens, importCodexAccessToken } from "./accounts";
+import {
+  exchangeCodexAuthorizationCode,
+  exchangeCodexRefreshTokens,
+  exchangeKiroAuthorizationCode,
+  importCodexAccessToken,
+  importKiroFromRefreshTokens,
+} from "./accounts";
 import {
   consumeCodexOAuthSession,
   createCodexOAuthSession,
@@ -8,6 +14,13 @@ import {
   getCodexOAuthSession,
   updateCodexOAuthSession,
 } from "./oauth-codex-session";
+import {
+  consumeKiroOAuthSession,
+  createKiroOAuthSession,
+  deleteKiroOAuthSession,
+  getKiroOAuthSession,
+  updateKiroOAuthSession,
+} from "./oauth-kiro-session";
 
 const CODEX_ISSUER = "https://auth.openai.com";
 const CODEX_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
@@ -399,6 +412,329 @@ oauthRouter.get("/codex/stop-proxy", (c) => {
 // 9router supports device-code on other providers; Codex does not use it here.
 oauthRouter.get("/codex/device-code", (c) => {
   return c.json({ error: "Provider does not support device code flow" }, 400);
+});
+
+// ── Kiro OAuth (IDE 2026+: app.kiro.dev/signin + loopback callback) ────────
+//
+// Flow:
+//   1. GET  /oauth/kiro/authorize?redirect_uri=http://localhost:3128
+//        → returns { authUrl, state, codeVerifier, redirectUri, fixedPort, callbackPath }
+//   2. User opens authUrl in a browser, signs in on app.kiro.dev
+//   3. Kiro redirects to http://localhost:3128/?code=...&state=...
+//   4. Our loopback server (Bun.serve on 3128) captures it and exchanges
+//      the code for tokens via prod.us-east-1.auth.desktop.kiro.dev/oauth/token
+//   5. Dashboard polls /oauth/kiro/poll-status?state=<state> until done.
+//
+// Manual fallback: dashboard can also POST /oauth/kiro/complete with
+// { code, state } if the loopback port is blocked (e.g. remote deployment).
+
+const KIRO_LOGIN_ENDPOINT = "https://app.kiro.dev/signin";
+const KIRO_FIXED_PORT = 3128;
+const KIRO_CALLBACK_PATH = "/";
+const KIRO_REDIRECT_FROM = "KiroIDE";
+const KIRO_PROXY_TIMEOUT_MS = 300_000;
+
+let kiroLoopbackServer: Bun.Server<unknown> | null = null;
+let kiroLoopbackTimeout: ReturnType<typeof setTimeout> | null = null;
+
+function buildKiroAuthorizeUrl(redirectUri: string, codeChallenge: string, state: string) {
+  const params = new URLSearchParams({
+    state,
+    code_challenge: codeChallenge,
+    code_challenge_method: "S256",
+    redirect_uri: redirectUri,
+    redirect_from: KIRO_REDIRECT_FROM,
+  });
+  return `${KIRO_LOGIN_ENDPOINT}?${params.toString()}`;
+}
+
+async function completeKiroOAuth(code: string, state: string) {
+  const session = getKiroOAuthSession(state);
+  if (!session) {
+    throw new Error("OAuth session expired or not found. Start the login again.");
+  }
+
+  // Idempotent: if the loopback callback already exchanged this code, return the
+  // cached connection instead of hitting the Kiro token endpoint again (which
+  // would reject the now-consumed authorization code).
+  if (session.status === "done" && session.connection) {
+    return {
+      success: true,
+      connection: session.connection,
+    };
+  }
+
+  // If a previous exchange already consumed this exact code, do NOT retry —
+  // Kiro codes are single-use, so a retry would just get another opaque 500.
+  // Surface the prior error and force the user to start a fresh login.
+  if (session.consumedCode && session.consumedCode === code && session.status === "error") {
+    throw new Error(
+      session.error ||
+        "This authorization code was already consumed. Start the Kiro login again to get a fresh code."
+    );
+  }
+
+  updateKiroOAuthSession(state, { status: "exchanging", error: undefined, consumedCode: code });
+
+  try {
+    const connection = await exchangeKiroAuthorizationCode({
+      code,
+      codeVerifier: session.codeVerifier,
+      redirectUri: session.redirectUri,
+    });
+
+    updateKiroOAuthSession(state, {
+      status: "done",
+      connection: {
+        id: connection.id,
+        provider: connection.provider,
+        email: connection.email,
+        displayName: connection.name,
+        workspace: connection.workspace,
+        plan: connection.plan,
+      },
+    });
+
+    return {
+      success: true,
+      connection: {
+        id: connection.id,
+        provider: connection.provider,
+        email: connection.email,
+        displayName: connection.name,
+        workspace: connection.workspace,
+        plan: connection.plan,
+      },
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    updateKiroOAuthSession(state, { status: "error", error: message });
+    throw error;
+  }
+}
+
+function scheduleKiroLoopbackStop() {
+  setTimeout(() => stopKiroLoopbackServer(), 0);
+}
+
+async function handleKiroLoopbackCallback(url: URL) {
+  const code = url.searchParams.get("code") || "";
+  const state = url.searchParams.get("state") || "";
+  const error = url.searchParams.get("error") || "";
+  const errorDescription = url.searchParams.get("error_description") || error;
+
+  if (!state) {
+    scheduleKiroLoopbackStop();
+    return new Response(callbackHtml("Kiro login failed", "Missing OAuth state."), {
+      status: 400,
+      headers: { "Content-Type": "text/html; charset=utf-8" },
+    });
+  }
+
+  if (error) {
+    updateKiroOAuthSession(state, { status: "error", error: errorDescription || error });
+    scheduleKiroLoopbackStop();
+    return new Response(callbackHtml("Kiro login failed", errorDescription || error, true), {
+      status: 400,
+      headers: { "Content-Type": "text/html; charset=utf-8" },
+    });
+  }
+
+  if (!code) {
+    updateKiroOAuthSession(state, { status: "error", error: "Missing authorization code" });
+    scheduleKiroLoopbackStop();
+    return new Response(callbackHtml("Kiro login failed", "Missing authorization code.", true), {
+      status: 400,
+      headers: { "Content-Type": "text/html; charset=utf-8" },
+    });
+  }
+
+  try {
+    await completeKiroOAuth(code, state);
+    scheduleKiroLoopbackStop();
+    return new Response(
+      callbackHtml("Kiro connected", "You can close this window and return to the dashboard.", true),
+      { headers: { "Content-Type": "text/html; charset=utf-8" } },
+    );
+  } catch (oauthError) {
+    const message = oauthError instanceof Error ? oauthError.message : String(oauthError);
+    scheduleKiroLoopbackStop();
+    return new Response(callbackHtml("Kiro login failed", message, true), {
+      status: 500,
+      headers: { "Content-Type": "text/html; charset=utf-8" },
+    });
+  }
+}
+
+function ensureKiroLoopbackServer() {
+  if (kiroLoopbackServer) return kiroLoopbackServer;
+
+  kiroLoopbackServer = Bun.serve({
+    hostname: "127.0.0.1",
+    port: KIRO_FIXED_PORT,
+    async fetch(req) {
+      const url = new URL(req.url);
+      // Kiro's /signin flow can redirect to any of several loopback paths
+      // ("/", "/callback", "/auth/callback", "/oauth/callback", ...).
+      // Accept any request that carries OAuth params so we don't 404 on
+      // legitimate callbacks with unexpected paths.
+      if (
+        url.searchParams.get("code") ||
+        url.searchParams.get("state") ||
+        url.searchParams.get("error")
+      ) {
+        return handleKiroLoopbackCallback(url);
+      }
+      if (
+        url.pathname === KIRO_CALLBACK_PATH ||
+        url.pathname === "/callback" ||
+        url.pathname === "/auth/callback" ||
+        url.pathname === "/oauth/callback"
+      ) {
+        return handleKiroLoopbackCallback(url);
+      }
+      return new Response("Not Found", { status: 404 });
+    },
+    error(err) {
+      return new Response(
+        callbackHtml("Kiro login failed", err instanceof Error ? err.message : String(err), true),
+        { status: 500, headers: { "Content-Type": "text/html; charset=utf-8" } },
+      );
+    },
+  });
+
+  kiroLoopbackTimeout = setTimeout(() => stopKiroLoopbackServer(), KIRO_PROXY_TIMEOUT_MS);
+
+  return kiroLoopbackServer;
+}
+
+function stopKiroLoopbackServer() {
+  if (kiroLoopbackTimeout) {
+    clearTimeout(kiroLoopbackTimeout);
+    kiroLoopbackTimeout = null;
+  }
+  if (kiroLoopbackServer) {
+    kiroLoopbackServer.stop(true);
+    kiroLoopbackServer = null;
+  }
+}
+
+oauthRouter.get("/kiro/authorize", async (c) => {
+  const redirectUri = c.req.query("redirect_uri") || `http://localhost:${KIRO_FIXED_PORT}`;
+  const codeVerifier = generateCodeVerifier();
+  const codeChallenge = generateCodeChallenge(codeVerifier);
+  const state = generateState();
+  const authUrl = buildKiroAuthorizeUrl(redirectUri, codeChallenge, state);
+  return c.json({
+    authUrl,
+    state,
+    codeVerifier,
+    redirectUri,
+    fixedPort: KIRO_FIXED_PORT,
+    callbackPath: KIRO_CALLBACK_PATH,
+  });
+});
+
+oauthRouter.get("/kiro/start-proxy", (c) => {
+  const appPort = c.req.query("app_port") || "";
+  const state = c.req.query("state") || "";
+  const codeVerifier = c.req.query("code_verifier") || "";
+  const redirectUri = c.req.query("redirect_uri") || `http://localhost:${KIRO_FIXED_PORT}`;
+
+  if (!state || !codeVerifier) return c.json({ error: "Missing state or code_verifier" }, 400);
+
+  try {
+    ensureKiroLoopbackServer();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const reason = message.includes("EADDRINUSE") || message.includes("Address already in use")
+      ? "port_busy"
+      : message;
+    return c.json({ success: false, reason, serverSide: false });
+  }
+
+  createKiroOAuthSession({ state, codeVerifier, redirectUri, appPort });
+  updateKiroOAuthSession(state, { status: "waiting_callback" });
+
+  return c.json({ success: true, serverSide: true });
+});
+
+oauthRouter.get("/kiro/callback", async (c) => {
+  const response = await handleKiroLoopbackCallback(new URL(c.req.url));
+  return new Response(response.body, response);
+});
+
+oauthRouter.post("/kiro/complete", async (c) => {
+  try {
+    const body = await c.req.json<{ code?: string; state?: string }>();
+    if (!body.code || !body.state) {
+      return c.json({ error: "Missing code or state" }, 400);
+    }
+    const result = await completeKiroOAuth(body.code, body.state);
+    return c.json(result);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error("[kiro/complete] failed:", message, error instanceof Error ? error.stack : "");
+    return c.json({ error: message }, 500);
+  }
+});
+
+oauthRouter.get("/kiro/poll-status", (c) => {
+  const state = c.req.query("state") || "";
+  if (!state) return c.json({ error: "Missing state" }, 400);
+
+  const session = getKiroOAuthSession(state);
+  if (!session) {
+    return c.json({ status: "unknown" });
+  }
+
+  if (session.status === "done" || session.status === "error" || session.status === "cancelled") {
+    const consumed = consumeKiroOAuthSession(state);
+    return c.json({
+      status: consumed?.status,
+      connection: consumed?.connection,
+      error: consumed?.error,
+    });
+  }
+
+  return c.json({ status: session.status });
+});
+
+oauthRouter.get("/kiro/stop-proxy", (c) => {
+  const state = c.req.query("state") || "";
+  if (state) {
+    updateKiroOAuthSession(state, { status: "cancelled", error: "Cancelled by user" });
+    deleteKiroOAuthSession(state);
+  }
+  stopKiroLoopbackServer();
+  return c.json({ success: true });
+});
+
+// POST /oauth/kiro/import-refresh-token
+// Body: { refreshTokens: string[] }  OR  { refreshToken: string }
+// Bulk-import Kiro accounts from raw refresh tokens (skips interactive flow).
+oauthRouter.post("/kiro/import-refresh-token", async (c) => {
+  try {
+    const body = await c.req.json<{ refreshToken?: string; refreshTokens?: string[] | string }>();
+    let tokens: string[] = [];
+    if (Array.isArray(body.refreshTokens)) {
+      tokens = body.refreshTokens;
+    } else if (typeof body.refreshTokens === "string") {
+      tokens = body.refreshTokens.split(/\r?\n/);
+    } else if (typeof body.refreshToken === "string") {
+      tokens = [body.refreshToken];
+    }
+    tokens = tokens.map((t) => t.trim()).filter(Boolean);
+    if (tokens.length === 0) {
+      return c.json({ error: "refreshToken(s) is required" }, 400);
+    }
+    const result = await importKiroFromRefreshTokens(tokens);
+    return c.json(result);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error("[kiro/import-refresh-token] error:", message);
+    return c.json({ error: message }, 500);
+  }
 });
 
 // ── Grok CLI (Grok Build): Device Code OAuth Flow ──────────────────

@@ -133,6 +133,22 @@ const STATUS_OPTIONS = [
   { value: "error", label: "Errors only" },
 ];
 
+/**
+ * The stats endpoint can return the same log twice (pagination overlap while
+ * new rows are being inserted). Keep the first occurrence so React always gets
+ * unique row keys.
+ */
+function dedupeById(rows: RequestLog[]): RequestLog[] {
+  const seen = new Set<number>();
+  const out: RequestLog[] = [];
+  for (const row of rows) {
+    if (seen.has(row.id)) continue;
+    seen.add(row.id);
+    out.push(row);
+  }
+  return out;
+}
+
 export default function Requests() {
   const [logs, setLogs] = useState<RequestLog[]>([]);
   const [search, setSearch] = useState("");
@@ -170,7 +186,7 @@ export default function Requests() {
     setLoading(true);
     try {
       const res = (await fetchRequests(1, 100, provider)) as { data: RequestLog[] };
-      setLogs(res.data || []);
+      setLogs(dedupeById(res.data || []));
     } catch {
       setLogs([]);
     } finally {
@@ -184,7 +200,20 @@ export default function Requests() {
 
   useWsEvent(["request_log"], (msg) => {
     if (msg.type === "request_log") {
-      setLogs((current) => [msg.data as RequestLog, ...current].slice(0, 100));
+      const incoming = msg.data as RequestLog;
+      setLogs((current) => {
+        // A log can arrive over WS while it is also present in the last REST
+        // snapshot (or be re-emitted on update). Replace in place instead of
+        // prepending a duplicate — otherwise React sees two rows with the
+        // same key and warns.
+        const existing = current.findIndex((r) => r.id === incoming.id);
+        if (existing !== -1) {
+          const next = current.slice();
+          next[existing] = { ...next[existing], ...incoming };
+          return next;
+        }
+        return [incoming, ...current].slice(0, 100);
+      });
     }
   });
 
@@ -375,7 +404,7 @@ export default function Requests() {
         }
       />
 
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
         {loading && logs.length === 0 ? (
           Array.from({ length: 5 }).map((_, i) => <SkeletonCard key={i} />)
         ) : (
@@ -417,7 +446,6 @@ export default function Requests() {
               value={stats.credits.toFixed(2)}
               icon={Coins}
               tone="warning"
-              className="col-span-2 lg:col-span-1"
             />
           </>
         )}
@@ -687,7 +715,7 @@ function CompressionPanel({
   if (saved <= 0) {
     return (
       <DrawerSection title="Compression">
-        <div className="rounded-md border border-[var(--border)] bg-[var(--surface-2)] p-3 text-xs text-[var(--muted-foreground)]">
+        <div className="panel py-1 text-xs text-[var(--muted-foreground)]">
           Pipeline ran in {durationMs}ms — no compressible content this turn.
         </div>
       </DrawerSection>

@@ -27,20 +27,22 @@ export function PageHeader({
   return (
     <div
       className={cn(
-        "flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between",
+        "flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between",
         className
       )}
       {...props}
     >
       <div className="min-w-0">
         <div className="flex items-center gap-2.5">
-          <h1 className="truncate text-xl font-semibold tracking-tight text-[var(--foreground)] sm:text-2xl">
-            {title}
-          </h1>
+          {/* Terminal prompt marker — grounds the title as a command line. */}
+          <span className="select-none text-[var(--primary)] opacity-60" aria-hidden>
+            &gt;
+          </span>
+          <h1 className="truncate text-base text-[var(--foreground)] sm:text-lg">{title}</h1>
           {badge}
         </div>
         {description && (
-          <p className="mt-1 text-sm leading-relaxed text-[var(--muted-foreground)]">
+          <p className="mt-0.5 truncate text-xs text-[var(--muted-foreground)]">
             {description}
           </p>
         )}
@@ -59,7 +61,7 @@ export function PageShell({
   ...props
 }: React.HTMLAttributes<HTMLDivElement>) {
   return (
-    <div className={cn("animate-fade-in space-y-6", className)} {...props}>
+    <div className={cn("animate-fade-in space-y-3", className)} {...props}>
       {children}
     </div>
   );

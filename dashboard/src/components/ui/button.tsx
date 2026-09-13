@@ -5,37 +5,42 @@ import { Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const buttonVariants = cva(
-  // Inline-flex + gap so icon+label align; focus-ring keeps the keyboard halo
-  // consistent with every other custom control in the design system.
-  "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium " +
-    "transition-all duration-[var(--dur-fast)] ease-[var(--ease-out)] " +
+  // Retro terminal buttons: square, hairline border, uppercase wide-tracked
+  // mono label, and invert-on-hover (fill floods with phosphor) — the same
+  // interaction the public Share page uses for [CP] / [OK!].
+  "inline-flex items-center justify-center gap-2 whitespace-nowrap text-xs font-medium " +
+    "font-mono uppercase tracking-[0.14em] border " +
+    "transition-colors duration-[var(--dur-fast)] ease-[var(--ease-out)] " +
     "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--ring)] " +
-    "disabled:pointer-events-none disabled:opacity-50 cursor-pointer select-none " +
-    "active:scale-[0.98]",
+    "focus-visible:ring-offset-1 focus-visible:ring-offset-[var(--background)] " +
+    "disabled:pointer-events-none disabled:opacity-40 cursor-pointer select-none",
   {
     variants: {
       variant: {
         default:
-          "bg-[var(--primary)] text-[var(--primary-foreground)] shadow-[var(--es-1)] hover:bg-[var(--primary)]/90 hover:shadow-[var(--es-2)]",
+          "border-[var(--primary)] bg-[var(--primary)] text-[var(--primary-foreground)] hover:bg-transparent hover:text-[var(--primary)]",
+        // Loudest action — outlined at rest, floods solid on hover.
+        cta:
+          "border-[var(--accent)] bg-transparent text-[var(--accent)] hover:bg-[var(--accent)] hover:text-[var(--accent-foreground)]",
         destructive:
-          "bg-[var(--destructive)] text-[var(--destructive-foreground)] shadow-[var(--es-1)] hover:bg-[var(--destructive)]/90 hover:shadow-[var(--es-2)]",
+          "border-[var(--destructive)] bg-[var(--destructive)] text-[var(--destructive-foreground)] hover:bg-transparent hover:text-[var(--destructive)]",
         outline:
-          "border border-[var(--border)] bg-transparent text-[var(--foreground)] hover:bg-[var(--secondary)] hover:border-[var(--muted-foreground)]/40",
+          "border-[var(--border)] bg-transparent text-[var(--foreground)] hover:border-[var(--primary)] hover:bg-[var(--primary)] hover:text-[var(--primary-foreground)]",
         secondary:
-          "bg-[var(--secondary)] text-[var(--secondary-foreground)] hover:bg-[var(--secondary)]/80",
+          "border-[var(--border)] bg-[var(--secondary)] text-[var(--secondary-foreground)] hover:border-[var(--primary)] hover:text-[var(--primary)]",
         ghost:
-          "text-[var(--foreground)] hover:bg-[var(--secondary)] hover:text-[var(--foreground)]",
+          "border-transparent text-[var(--muted-foreground)] hover:border-[var(--border)] hover:text-[var(--foreground)]",
         link:
-          "text-[var(--primary)] underline-offset-4 hover:underline active:scale-100",
+          "border-transparent text-[var(--primary)] underline-offset-4 hover:underline",
         // Subtle filled-danger for delete-inside-row actions.
         danger:
-          "bg-[var(--destructive)]/10 text-[var(--destructive)] hover:bg-[var(--destructive)]/20 border border-[var(--destructive)]/25",
+          "border-[var(--destructive)]/50 bg-transparent text-[var(--destructive)] hover:bg-[var(--destructive)] hover:text-[var(--destructive-foreground)]",
       },
       size: {
         // 44px touch targets on mobile, compact on desktop.
         default: "h-9 px-4 py-2 min-h-[44px] md:min-h-0",
-        sm: "h-8 rounded-md px-3 text-xs min-h-[44px] md:min-h-0",
-        lg: "h-10 rounded-md px-8 min-h-[44px] md:min-h-0",
+        sm: "h-8 px-3 text-[11px] min-h-[44px] md:min-h-0",
+        lg: "h-10 px-6 text-sm min-h-[44px] md:min-h-0",
         icon: "h-9 w-9 min-h-[44px] md:min-h-0 min-w-[44px] md:min-w-0",
       },
     },

@@ -10,12 +10,18 @@ const Progress = React.forwardRef<
 >(({ className, value, indicatorClassName, ...props }, ref) => (
   <ProgressPrimitive.Root
     ref={ref}
-    className={cn("relative h-2 w-full overflow-hidden rounded-full bg-[var(--secondary)]", className)}
+    className={cn(
+      // Retro terminal gauge: square, hairline-framed well. Reads like the
+      // █████░░░ block bar on the public Share page.
+      "relative h-2.5 w-full overflow-hidden border border-[var(--border)] bg-[var(--surface-inset)]",
+      className
+    )}
     {...props}
   >
     <ProgressPrimitive.Indicator
       className={cn(
-        "h-full w-full flex-1 rounded-full",
+        "h-full w-full flex-1",
+        // Stepped transition — terminals redraw, they don't glide.
         "transition-transform duration-[var(--dur-slow)] ease-[var(--ease-out)]",
         indicatorClassName || "bg-[var(--primary)]"
       )}

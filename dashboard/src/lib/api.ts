@@ -892,6 +892,107 @@ export async function completeCodexOAuthCallbackUrl(callbackUrl: string) {
   return completeCodexOAuth({ code, state });
 }
 
+// ── Kiro OAuth (IDE 2026+) ──────────────────────────────────────────────
+
+export interface KiroAuthorizeResponse {
+  authUrl: string;
+  state: string;
+  codeVerifier: string;
+  redirectUri: string;
+  fixedPort: number;
+  callbackPath: string;
+}
+
+export interface KiroOAuthStatusResponse {
+  status: string;
+  error?: string;
+  connection?: {
+    id: number;
+    provider: string;
+    email: string;
+    displayName: string;
+    workspace?: string | null;
+    plan?: string | null;
+  };
+}
+
+export async function getKiroAuthorize(redirectUri: string): Promise<KiroAuthorizeResponse> {
+  return fetchApi(`/api/oauth/kiro/authorize?redirect_uri=${encodeURIComponent(redirectUri)}`);
+}
+
+export async function startKiroOAuthProxy(input: {
+  appPort: string;
+  state: string;
+  codeVerifier: string;
+  redirectUri: string;
+}) {
+  const params = new URLSearchParams({
+    app_port: input.appPort,
+    state: input.state,
+    code_verifier: input.codeVerifier,
+    redirect_uri: input.redirectUri,
+  });
+  return fetchApi(`/api/oauth/kiro/start-proxy?${params.toString()}`);
+}
+
+export async function pollKiroOAuthStatus(state: string): Promise<KiroOAuthStatusResponse> {
+  return fetchApi(`/api/oauth/kiro/poll-status?state=${encodeURIComponent(state)}`);
+}
+
+export async function stopKiroOAuth(state?: string) {
+  const suffix = state ? `?state=${encodeURIComponent(state)}` : "";
+  return fetchApi(`/api/oauth/kiro/stop-proxy${suffix}`);
+}
+
+export async function completeKiroOAuth(input: { code: string; state: string }) {
+  return fetchApi<{ success: boolean; connection?: KiroOAuthStatusResponse["connection"] }>(
+    "/api/oauth/kiro/complete",
+    {
+      method: "POST",
+      body: JSON.stringify(input),
+    },
+  );
+}
+
+export async function completeKiroOAuthCallbackUrl(
+  callbackUrl: string,
+  fallbackState?: string,
+) {
+  const url = new URL(callbackUrl.trim());
+  const code = url.searchParams.get("code") || "";
+  const state = url.searchParams.get("state") || fallbackState || "";
+  const error = url.searchParams.get("error") || "";
+  const errorDescription = url.searchParams.get("error_description") || error;
+
+  if (error) {
+    throw new Error(errorDescription || error);
+  }
+
+  if (!code) {
+    throw new Error("Callback URL must include ?code=…");
+  }
+  if (!state) {
+    throw new Error("OAuth session not found — start the login again");
+  }
+
+  return completeKiroOAuth({ code, state });
+}
+
+/**
+ * Bulk-import Kiro accounts from raw refresh tokens (one per line).
+ * Returns per-token status so the UI can show partial failures.
+ */
+export async function importKiroRefreshTokens(tokens: string[]): Promise<{
+  success: number;
+  failed: number;
+  results: Array<{ token: string; success: boolean; id?: number; email?: string; error?: string }>;
+}> {
+  return fetchApi(`/api/oauth/kiro/import-refresh-token`, {
+    method: "POST",
+    body: JSON.stringify({ refreshTokens: tokens }),
+  });
+}
+
 // BYOK (Bring Your Own Key) API functions
 export interface ByokKeyInfo {
   id?: number;

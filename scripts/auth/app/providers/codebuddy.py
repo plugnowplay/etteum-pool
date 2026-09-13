@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import json
 import os
+import random
 import re
 import time
 from datetime import datetime, timedelta
@@ -240,10 +241,24 @@ async def _fill_google_email_step(target: Any, email: str) -> bool:
             )
 
             if email.lower() == str(val).lower().strip():
-                await asyncio.sleep(0.3)
-                clicked = await _click_google_next(target)
-                if not clicked:
+                # Human-ish think time before pressing Enter on email step.
+                # Shorter than password (users don't second-guess their own
+                # email) but still enough to look natural.
+                _email_delay = random.uniform(1.5, 3.0)
+                _codebuddy_auth_debug(
+                    f"human-idle pause {_email_delay:.1f}s before submitting email"
+                )
+                await asyncio.sleep(_email_delay)
+                # Prefer Enter on the email field — more human-like than
+                # clicking Next, and it avoids Google's bot heuristics that
+                # flag rapid button clicks. The email transition waiter
+                # will click Next ONCE more if Enter doesn't advance.
+                try:
                     await locator.press("Enter")
+                    _codebuddy_auth_debug("email submitted via Enter key")
+                except Exception as _exc:
+                    _codebuddy_auth_debug(f"Enter on email failed: {_exc}; falling back to Next click")
+                    await _click_google_next(target)
                 await _wait_for_google_email_transition(target)
                 _codebuddy_auth_debug(f"email accepted target={target_url or 'n/a'}")
                 return True
@@ -325,9 +340,28 @@ async def _fill_google_password_step(target: Any, password: str) -> bool:
                 f"typed password length target={target_url or 'n/a'} length={typed_len}"
             )
             if typed_len >= len(password):
-                clicked = await _click_google_next(target)
-                if not clicked:
+                # Human-ish idle pause: real users glance at the password
+                # they just typed / their password manager confirmation
+                # before pressing Enter. 4-8 seconds of think time is
+                # believable and significantly reduces Google's "new device
+                # first-login" defensive block on fresh accounts.
+                _think_delay = random.uniform(4.0, 8.0)
+                _codebuddy_auth_debug(
+                    f"human-idle pause {_think_delay:.1f}s before submitting password"
+                )
+                await asyncio.sleep(_think_delay)
+
+                # Prefer Enter on the password field itself — it's more
+                # human-like than a button click and avoids Google's
+                # "bot clicked Next too fast" heuristics. The password
+                # transition waiter will click Next ONCE more if Enter
+                # doesn't advance the flow.
+                try:
                     await locator.press("Enter")
+                    _codebuddy_auth_debug("password submitted via Enter key")
+                except Exception as _exc:
+                    _codebuddy_auth_debug(f"Enter on password failed: {_exc}; falling back to Next click")
+                    await _click_google_next(target)
                 await _wait_for_google_password_transition(target)
                 _codebuddy_auth_debug(f"password accepted target={target_url or 'n/a'}")
                 return True
@@ -339,14 +373,15 @@ async def _fill_google_password_step(target: Any, password: str) -> bool:
 
 
 async def _wait_for_google_email_transition(target: Any) -> bool:
-    """Spam-click Next until the email step is no longer visible (max ~15s)."""
-    deadline = time.monotonic() + 15.0
-    click_interval = 0.8  # seconds between clicks
-    last_click = 0.0
-    while time.monotonic() < deadline:
-        # Check if we've left the email step
+    """Wait for the email step to disappear WITHOUT spam-clicking.
+
+    Mirrors _wait_for_google_password_transition: passive wait first, then
+    at most ONE additional Next click. Prevents Google's bot detection from
+    flagging our session on the login flow.
+    """
+    async def _still_on_email() -> bool:
         try:
-            still_email = await target.evaluate(
+            return bool(await target.evaluate(
                 """() => {
                     const host = window.location.host || '';
                     const path = window.location.pathname || '';
@@ -361,35 +396,50 @@ async def _wait_for_google_email_transition(target: Any) -> bool:
                     if (path.includes('/signin/challenge/pwd')) return false;
                     return hasEmail || path.includes('/signin/identifier');
                 }"""
-            )
+            ))
         except Exception:
-            # If evaluate fails (page navigated), transition happened
+            return False
+
+    # Phase 1: passive wait — Enter was pressed by caller
+    phase1_deadline = time.monotonic() + 6.0
+    while time.monotonic() < phase1_deadline:
+        if not await _still_on_email():
             return True
+        await asyncio.sleep(0.4)
 
-        if not still_email:
+    _codebuddy_auth_debug("email transition: phase-1 wait exhausted, clicking Next once")
+    try:
+        await _click_google_next(target)
+    except Exception as exc:
+        _codebuddy_auth_debug(f"email transition: single retry-click failed: {exc}")
+
+    phase2_deadline = time.monotonic() + 6.0
+    while time.monotonic() < phase2_deadline:
+        if not await _still_on_email():
             return True
+        await asyncio.sleep(0.4)
 
-        # Still on email step — spam click Next
-        now = time.monotonic()
-        if now - last_click >= click_interval:
-            await _click_google_next(target)
-            last_click = now
-            _codebuddy_auth_debug("email transition: spam-clicked Next")
-
-        await asyncio.sleep(0.3)
-    _codebuddy_auth_debug("email transition: deadline exceeded (15s)")
+    _codebuddy_auth_debug("email transition: deadline exceeded (12s, 1 retry-click)")
     return False
 
 
 async def _wait_for_google_password_transition(target: Any) -> bool:
-    """Spam-click Next until the password step is no longer visible (max ~18s)."""
-    deadline = time.monotonic() + 18.0
-    click_interval = 0.8  # seconds between clicks
-    last_click = 0.0
-    while time.monotonic() < deadline:
-        # Check if we've left the password step
+    """Wait for the password step to disappear WITHOUT spam-clicking.
+
+    Google detects rapid multi-clicks as bot behavior and can trigger
+    "wrong password" false-negatives, CAPTCHA, or device challenges.
+
+    Strategy (mirrors budy-pc `_submit_near_field`):
+      - Passive wait 8s first (Enter/Next was pressed before this call).
+      - If still on password step, click Next ONCE more (some SPA re-mounts).
+      - Passive wait 6s.
+      - Give up (return False) — caller retries the whole password step.
+
+    Max total: ~14s, at most 1 extra click.
+    """
+    async def _still_on_password() -> bool:
         try:
-            still_password = await target.evaluate(
+            return bool(await target.evaluate(
                 """() => {
                     const host = window.location.host || '';
                     const path = window.location.pathname || '';
@@ -400,23 +450,32 @@ async def _wait_for_google_password_transition(target: Any) -> bool:
                     if (!path.includes('/challenge/pwd')) return false;
                     return hasPassword;
                 }"""
-            )
+            ))
         except Exception:
             # If evaluate fails (page navigated), transition happened
+            return False
+
+    # Phase 1: passive wait — Enter was already pressed by the caller
+    phase1_deadline = time.monotonic() + 8.0
+    while time.monotonic() < phase1_deadline:
+        if not await _still_on_password():
             return True
+        await asyncio.sleep(0.4)
 
-        if not still_password:
+    # Phase 2: still stuck — click Next ONCE more (form may have re-mounted)
+    _codebuddy_auth_debug("password transition: phase-1 wait exhausted, clicking Next once")
+    try:
+        await _click_google_next(target)
+    except Exception as exc:
+        _codebuddy_auth_debug(f"password transition: single retry-click failed: {exc}")
+
+    phase2_deadline = time.monotonic() + 6.0
+    while time.monotonic() < phase2_deadline:
+        if not await _still_on_password():
             return True
+        await asyncio.sleep(0.4)
 
-        # Still on password step — spam click Next
-        now = time.monotonic()
-        if now - last_click >= click_interval:
-            await _click_google_next(target)
-            last_click = now
-            _codebuddy_auth_debug("password transition: spam-clicked Next")
-
-        await asyncio.sleep(0.3)
-    _codebuddy_auth_debug("password transition: deadline exceeded (18s)")
+    _codebuddy_auth_debug("password transition: deadline exceeded (14s, 1 retry-click)")
     return False
 
 
@@ -573,6 +632,17 @@ async def _click_continue_button(target: Any) -> None:
 
 
 async def _get_codebuddy_login_iframe(page: Any) -> Any | None:
+    """Return the Frame for CodeBuddy's login-iframe (Keycloak), or None."""
+    handle_frame = await _get_codebuddy_login_iframe_with_handle(page)
+    return handle_frame[1] if handle_frame else None
+
+
+async def _get_codebuddy_login_iframe_with_handle(page: Any) -> tuple[Any, Any] | None:
+    """Return (iframe_element_handle, frame) for CodeBuddy's login-iframe.
+
+    We need the ElementHandle to compute absolute coordinates in the parent
+    document for real mouse events.
+    """
     selectors = [
         'iframe[title="login-iframe"]',
         'iframe[src*="/auth/realms/copilot/protocol/openid-connect/auth"]',
@@ -584,92 +654,928 @@ async def _get_codebuddy_login_iframe(page: Any) -> Any | None:
                 continue
             frame = await iframe_el.content_frame()
             if frame is not None:
-                return frame
+                return iframe_el, frame
         except Exception:
             continue
     return None
 
 
-async def _handle_codebuddy_landing(page: Any) -> bool:
-    frame = await _get_codebuddy_login_iframe(page)
-    target = frame if frame is not None else page
+# JS snippet: scroll target into view inside a frame and return its rect
+# relative to the frame's document. Selector-based version.
+_RECT_IN_FRAME_JS = r"""(selector) => {
+    const el = document.querySelector(selector);
+    if (!el) return null;
+    try { el.scrollIntoView({block: 'center', inline: 'center'}); } catch (e) {}
+    const rect = el.getBoundingClientRect();
+    const cs = window.getComputedStyle(el);
+    const visible = rect.width > 0 && rect.height > 0
+        && cs.visibility !== 'hidden' && cs.display !== 'none'
+        && parseFloat(cs.opacity || '1') > 0.05;
+    return {
+        x: rect.x, y: rect.y, w: rect.width, h: rect.height,
+        visible, tag: el.tagName, id: el.id || null,
+    };
+}"""
 
-    clicked_checkbox = False
-    clicked_google = False
+
+async def _real_mouse_click_in_frame(
+    page: Any,
+    iframe_el: Any,
+    frame: Any,
+    selector: str,
+    *,
+    settle_ms: int = 150,
+    hold_ms: int = 60,
+    steps: int = 18,
+) -> dict[str, Any] | None:
+    """Physically move the mouse and click a selector inside an iframe.
+
+    Uses page.mouse.move (with intermediate steps) + mouse.down/up to generate
+    native input events. This is required for Camoufox/anti-detect environments
+    where synthetic DOM .click() may not trigger navigation on OAuth links.
+    Returns dict with click info on success, None on failure.
+    """
     try:
-        clicked_checkbox = bool(
-            await target.evaluate(
-                """() => {
-                    const el = document.querySelector('div.checkmark');
-                    if (!el) return false;
-                    if (el.offsetParent === null) return false;
-                    el.click();
-                    return true;
-                }"""
-            )
-        )
-    except Exception:
-        pass
+        # Rect of the element inside the frame document
+        rect = await frame.evaluate(_RECT_IN_FRAME_JS, selector)
+    except Exception as exc:
+        _codebuddy_auth_debug(f"real-click: rect eval failed selector={selector!r}: {exc}")
+        return None
+    if not rect or not rect.get("visible"):
+        return None
 
     try:
-        clicked_google = bool(
-            await target.evaluate(
-                """() => {
-                    const byId = document.querySelector('#social-google');
-                    if (byId && byId.offsetParent !== null) {
-                        byId.click();
-                        return true;
-                    }
-                    for (const a of document.querySelectorAll('a[href*="/broker/google/login"]')) {
-                        const txt = (a.textContent || '').toLowerCase();
-                        if (txt.includes('google') && a.offsetParent !== null) {
-                            a.click();
-                            return true;
-                        }
-                    }
-                    return false;
-                }"""
-            )
-        )
-    except Exception:
-        pass
+        # Bounding box of the iframe element in parent document
+        iframe_box = await iframe_el.bounding_box()
+    except Exception as exc:
+        _codebuddy_auth_debug(f"real-click: iframe bounding_box failed: {exc}")
+        return None
+    if not iframe_box:
+        return None
 
-    # If still not clicked (e.g. on home page with a top-nav Login button),
-    # try to find and click a "Login" / "Sign in with Google" button visible on the page.
-    if not clicked_google and not clicked_checkbox:
+    # Absolute coords in the page viewport
+    target_x = iframe_box["x"] + rect["x"] + rect["w"] / 2
+    target_y = iframe_box["y"] + rect["y"] + rect["h"] / 2
+
+    # Origin: start from a reasonable neutral point (top-right of viewport
+    # or last known mouse pos — Playwright doesn't expose last pos, so use
+    # a small random-ish offset from target as a starting point).
+    try:
+        vp = await page.evaluate("() => ({w: window.innerWidth, h: window.innerHeight})")
+        origin_x = min(vp.get("w", 1200) - 20, max(20, target_x - 200))
+        origin_y = min(vp.get("h", 800) - 20, max(20, target_y - 150))
+    except Exception:
+        origin_x, origin_y = max(20.0, target_x - 200), max(20.0, target_y - 150)
+
+    try:
+        # Move to origin instantly (avoid a "flash" from previous position),
+        # then move to target with human-like intermediate steps.
+        await page.mouse.move(origin_x, origin_y, steps=1)
+        await asyncio.sleep(0.04)
+        await page.mouse.move(target_x, target_y, steps=max(4, steps))
+        await asyncio.sleep(settle_ms / 1000.0)
+        await page.mouse.down()
+        await asyncio.sleep(hold_ms / 1000.0)
+        await page.mouse.up()
+    except Exception as exc:
+        _codebuddy_auth_debug(f"real-click: mouse events failed selector={selector!r}: {exc}")
+        return None
+
+    _codebuddy_auth_debug(
+        f"real-click OK selector={selector!r} at=({target_x:.0f},{target_y:.0f}) "
+        f"iframe=({iframe_box['x']:.0f},{iframe_box['y']:.0f}) rect=({rect['x']:.0f},{rect['y']:.0f},"
+        f"{rect['w']:.0f}x{rect['h']:.0f}) tag={rect.get('tag')} id={rect.get('id')}"
+    )
+    return {"x": target_x, "y": target_y, "selector": selector, "rect": rect}
+
+
+_LANDING_TICK_JS = r"""() => {
+    const out = { checkbox: null, google: null, hasSocialContainer: false, url: location.href };
+
+    function isVisible(el) {
+        if (!el) return false;
+        const rect = el.getBoundingClientRect();
+        if (rect.width <= 0 || rect.height <= 0) return false;
+        const cs = window.getComputedStyle(el);
+        if (cs.visibility === 'hidden' || cs.display === 'none' || parseFloat(cs.opacity || '1') < 0.05) return false;
+        return true;
+    }
+    function clickLike(el) {
+        try { el.scrollIntoView({block: 'center'}); } catch (e) {}
+        const opts = { bubbles: true, cancelable: true, view: window };
+        try { el.dispatchEvent(new MouseEvent('pointerover', opts)); } catch (e) {}
+        try { el.dispatchEvent(new MouseEvent('mouseover', opts)); } catch (e) {}
+        try { el.dispatchEvent(new MouseEvent('mousedown', opts)); } catch (e) {}
+        try { el.dispatchEvent(new MouseEvent('mouseup', opts)); } catch (e) {}
+        try { el.click(); } catch (e) {}
+        try { el.dispatchEvent(new MouseEvent('click', opts)); } catch (e) {}
+    }
+
+    // -- Checkbox: tick agreement checkbox (both Keycloak native + CodeBuddy custom UI) --
+    const cbSelectors = [
+        'input[type="checkbox"]#login-agree',
+        'input[type="checkbox"][name*="agree" i]',
+        'input[type="checkbox"][id*="agree" i]',
+        'input[type="checkbox"]',
+        'div.checkmark',
+        'span.checkmark',
+        '[class*="checkbox" i]:not(input)',
+    ];
+    for (const sel of cbSelectors) {
+        for (const el of document.querySelectorAll(sel)) {
+            if (!isVisible(el)) continue;
+            // Skip if already checked
+            if (el.tagName === 'INPUT' && el.checked) { out.checkbox = 'already-checked'; break; }
+            // Try to check
+            try {
+                if (el.tagName === 'INPUT') {
+                    el.checked = true;
+                    el.dispatchEvent(new Event('input', { bubbles: true }));
+                    el.dispatchEvent(new Event('change', { bubbles: true }));
+                }
+            } catch (e) {}
+            clickLike(el);
+            out.checkbox = sel;
+            break;
+        }
+        if (out.checkbox) break;
+    }
+
+    // -- Detect Google button presence (visible OR container present) --
+    const googleSelectors = [
+        'a#social-google',
+        '#social-google',
+        'a[href*="/broker/google/"]',
+        'a[href*="google"][id^="social"]',
+        'button[data-provider="google" i]',
+        '[data-social="google" i]',
+    ];
+    for (const sel of googleSelectors) {
+        const el = document.querySelector(sel);
+        if (!el) continue;
+        out.hasSocialContainer = true;
+        if (!isVisible(el)) continue;
+        clickLike(el);
+        out.google = sel;
+        break;
+    }
+
+    // -- Fallback: search by visible text (Google/腾讯) --
+    if (!out.google) {
+        const googlePhrases = ['google', '谷歌'];
+        for (const btn of document.querySelectorAll('a, button, div[role="button"], [role="button"]')) {
+            if (!isVisible(btn)) continue;
+            const txt = (btn.textContent || '').toLowerCase().trim();
+            const aria = (btn.getAttribute('aria-label') || '').toLowerCase();
+            const title = (btn.getAttribute('title') || '').toLowerCase();
+            if (googlePhrases.some(p => txt.includes(p) || aria.includes(p) || title.includes(p))) {
+                // Heuristic: prefer buttons whose text is short (icon button)
+                if (txt.length < 40) {
+                    clickLike(btn);
+                    out.google = 'text-fallback';
+                    break;
+                }
+            }
+        }
+    }
+
+    return out;
+}"""
+
+
+_LANDING_TICK_HREF_JS = r"""() => {
+    // Variant of _LANDING_TICK_JS that ticks the checkbox but returns the
+    // Google button's href instead of clicking it. Caller does a TOP-LEVEL
+    // page.goto(href) to avoid the iframe-only navigation problem.
+    const out = { checkbox: null, googleHref: null, googleSel: null, url: location.href };
+
+    function isVisible(el) {
+        if (!el) return false;
+        const rect = el.getBoundingClientRect();
+        if (rect.width <= 0 || rect.height <= 0) return false;
+        const cs = window.getComputedStyle(el);
+        if (cs.visibility === 'hidden' || cs.display === 'none' || parseFloat(cs.opacity || '1') < 0.05) return false;
+        return true;
+    }
+    function clickLike(el) {
+        try { el.scrollIntoView({block: 'center'}); } catch (e) {}
+        const opts = { bubbles: true, cancelable: true, view: window };
+        try { el.dispatchEvent(new MouseEvent('pointerover', opts)); } catch (e) {}
+        try { el.dispatchEvent(new MouseEvent('mouseover', opts)); } catch (e) {}
+        try { el.dispatchEvent(new MouseEvent('mousedown', opts)); } catch (e) {}
+        try { el.dispatchEvent(new MouseEvent('mouseup', opts)); } catch (e) {}
+        try { el.click(); } catch (e) {}
+        try { el.dispatchEvent(new MouseEvent('click', opts)); } catch (e) {}
+    }
+
+    // -- Tick agreement checkbox --
+    const cbSelectors = [
+        'input[type="checkbox"]#login-agree',
+        'input[type="checkbox"][name*="agree" i]',
+        'input[type="checkbox"][id*="agree" i]',
+        'input[type="checkbox"]',
+        'div.checkmark',
+        'span.checkmark',
+        '[class*="checkbox" i]:not(input)',
+    ];
+    for (const sel of cbSelectors) {
+        for (const el of document.querySelectorAll(sel)) {
+            if (!isVisible(el)) continue;
+            if (el.tagName === 'INPUT' && el.checked) { out.checkbox = 'already-checked'; break; }
+            try {
+                if (el.tagName === 'INPUT') {
+                    el.checked = true;
+                    el.dispatchEvent(new Event('input', { bubbles: true }));
+                    el.dispatchEvent(new Event('change', { bubbles: true }));
+                }
+            } catch (e) {}
+            clickLike(el);
+            out.checkbox = sel;
+            break;
+        }
+        if (out.checkbox) break;
+    }
+
+    // -- Extract Google button href (do NOT click) --
+    const googleSelectors = [
+        'a#social-google',
+        '#social-google',
+        'a[href*="/broker/google/"]',
+        'a[href*="google"][id^="social"]',
+    ];
+    for (const sel of googleSelectors) {
+        const el = document.querySelector(sel);
+        if (!el) continue;
+        if (!isVisible(el)) continue;
+        const href = el.getAttribute('href');
+        if (href) {
+            out.googleHref = href;
+            out.googleSel = sel;
+            break;
+        }
+    }
+    return out;
+}"""
+
+
+# ─── ACCOUNT ACCESS RESTRICTED DETECTION ─────────────────────────────────────
+# Adopted from budy-pc/src/core/failure.py + browser.py.
+#
+# CodeBuddy/Keycloak show "Account Access Restricted" in TWO very different
+# situations, and we MUST distinguish them:
+#
+#   1. REAL refusal — CodeBuddy actually blocks the account/exit IP. This is
+#      permanent for THIS identity and should short-circuit with a non-retryable
+#      error so the caller marks the account as blocked.
+#
+#   2. Keycloak generic error page — cookie dropped mid-flow, OAuth state
+#      expired, invalid callback, session lost. The Keycloak template ALWAYS
+#      renders "Account Access Restricted" here regardless of the real cause.
+#      Treating this as a block would misclassify every dropped callback as a
+#      permanent ban. This must be retried (fresh state).
+#
+# Detection order:
+#   - Explicit session-lost markers → RETRYABLE (fresh callback fixes it)
+#   - "login attempt timed out" → RETRYABLE (state expired, retry gets fresh)
+#   - Strong block markers on ANY page → NON-RETRYABLE ban
+#   - Weak block markers only on codebuddy.ai host AND not first-broker-login
+#     → NON-RETRYABLE ban
+
+_CODEBUDDY_BLOCK_STRONG_MARKERS = (
+    "temporarily unavailable due to security policy",
+    "security policy restrictions",
+    "account access restricted",
+    "request illegal",
+)
+
+_CODEBUDDY_BLOCK_WEAK_MARKERS = (
+    "access restricted",
+    "service is not available in your region",
+    "not available in your country",
+)
+
+# When any of these appear alongside "account access restricted", the page is a
+# generic Keycloak error, NOT a real ban. Retry with a fresh state.
+_KEYCLOAK_SESSION_LOST_MARKERS = (
+    "cookie not found",
+    "please make sure cookies are enabled",
+    "you took too long to login",
+    "you are already logged in",
+    "unknown login requester",
+    "expired code",
+    "invalid parameter",
+    "login attempt timed out",
+)
+
+
+def _codebuddy_looks_blocked(text: str, *, strong_only: bool) -> bool:
+    """Return True if page text signals a real security-policy refusal.
+
+    ``strong_only=True`` is required on pages that legitimately contain
+    restriction-like copy (Google interstitials, keycloak first-broker-login).
+    """
+    if not text:
+        return False
+    lowered = text.casefold()
+    # Session-lost error pages are NEVER real refusals, even though Keycloak
+    # pins "Account Access Restricted" into the info slot.
+    if any(m in lowered for m in _KEYCLOAK_SESSION_LOST_MARKERS):
+        return False
+    if any(m in lowered for m in _CODEBUDDY_BLOCK_STRONG_MARKERS):
+        return True
+    if strong_only:
+        return False
+    return any(m in lowered for m in _CODEBUDDY_BLOCK_WEAK_MARKERS)
+
+
+async def _check_codebuddy_access_restricted(page: Any) -> tuple[bool, str, str]:
+    """Sniff the current page for "Account Access Restricted" & related copy.
+
+    Returns ``(is_blocked, kind, snippet)``:
+      * ``is_blocked=True, kind='blocked'`` — real refusal (non-retryable)
+      * ``is_blocked=False, kind='session-lost'`` — Keycloak session-lost page
+        (retryable, caller should restart auth with fresh state)
+      * ``is_blocked=False, kind='timed-out'`` — "login attempt timed out"
+        (retryable, state expired)
+      * ``is_blocked=False, kind=''`` — nothing detected
+      * ``snippet`` — first ~200 chars of matched text for debug/logging
+    """
+    try:
+        url = page.url or ""
+    except Exception:
+        url = ""
+    try:
+        text = await page.text_content("body")
+    except Exception:
+        text = ""
+    text = str(text or "")
+    if not text:
+        return (False, "", "")
+
+    lowered = text.casefold()
+    host = urlparse(url).netloc.casefold() if url else ""
+    on_codebuddy = host.endswith("codebuddy.ai") or "codebuddy.ai" in host
+    on_first_broker = "first-broker-login" in url.casefold()
+
+    # Timed-out: retryable
+    if "login attempt timed out" in lowered:
+        return (False, "timed-out", "login attempt timed out")
+
+    # Session-lost: retryable
+    for m in _KEYCLOAK_SESSION_LOST_MARKERS:
+        if m in lowered:
+            return (False, "session-lost", m)
+
+    # Real block detection
+    # Strong markers on any page + weak markers only on codebuddy.ai host
+    # and not first-broker-login (which legitimately contains restriction copy).
+    strong_only = on_first_broker or not on_codebuddy
+    if _codebuddy_looks_blocked(text, strong_only=strong_only):
+        # Extract a short snippet around the marker for logging
+        snippet = ""
+        for m in (*_CODEBUDDY_BLOCK_STRONG_MARKERS, *_CODEBUDDY_BLOCK_WEAK_MARKERS):
+            idx = lowered.find(m)
+            if idx >= 0:
+                start = max(0, idx - 40)
+                end = min(len(text), idx + len(m) + 120)
+                snippet = text[start:end].strip().replace("\n", " ")[:200]
+                break
+        return (True, "blocked", snippet or "account access restricted")
+
+    return (False, "", "")
+
+
+# ---------------------------------------------------------------------------
+# Google "Something went wrong" detection
+# ---------------------------------------------------------------------------
+# Google shows this transient error on fresh accounts logging in for the first
+# time from an untrusted device / new IP. It looks like:
+#     "Sorry, something went wrong there. Try again."
+# It is NOT a real refusal - the account is fine. The remedy is either a
+# retry with back-nav, or (better) warming up the account by logging in to
+# accounts.google.com directly first so Google marks the device as trusted.
+
+_GOOGLE_SOMETHING_WRONG_MARKERS = (
+    "sorry, something went wrong there",
+    "something went wrong there. try again",
+)
+
+
+async def _check_google_something_went_wrong(page: Any) -> tuple[bool, str]:
+    """Detect Google's transient "Something went wrong" error page.
+
+    Only reports True when we are on a Google host (accounts.google.com or
+    similar) - otherwise the "try again" copy might come from Keycloak or
+    CodeBuddy itself.
+
+    Returns ``(is_error, snippet)``.
+    """
+    try:
+        url = page.url or ""
+    except Exception:
+        url = ""
+    host = urlparse(url).netloc.casefold() if url else ""
+    if "google" not in host:
+        return (False, "")
+
+    try:
+        text = await page.text_content("body")
+    except Exception:
+        text = ""
+    text = str(text or "")
+    if not text:
+        return (False, "")
+
+    lowered = text.casefold()
+    for m in _GOOGLE_SOMETHING_WRONG_MARKERS:
+        idx = lowered.find(m)
+        if idx >= 0:
+            start = max(0, idx - 40)
+            end = min(len(text), idx + len(m) + 120)
+            snippet = text[start:end].strip().replace("\n", " ")[:200]
+            return (True, snippet or m)
+    return (False, "")
+
+
+# ---------------------------------------------------------------------------
+# Google account warm-up
+# ---------------------------------------------------------------------------
+# Fresh accounts fail their first OAuth login from a new device with the
+# "Something went wrong" screen. If we log in to accounts.google.com directly
+# FIRST, Google trusts the device/IP, then the follow-up OAuth broker flow
+# proceeds normally. This mirrors what a human user would naturally do.
+
+
+async def _warmup_google_session(
+    page: Any,
+    email: str,
+    password: str,
+    *,
+    debug: bool = False,
+) -> bool:
+    """Log in to accounts.google.com directly to establish a trusted session.
+
+    Returns True if warm-up succeeded (or was skipped as unnecessary), False if
+    warm-up hit a hard error (caller should still attempt the OAuth flow).
+
+    This function is intentionally forgiving - a failed warm-up should not
+    abort the main OAuth attempt.
+    """
+    def _log(msg: str) -> None:
+        if debug:
+            try:
+                print(f"[codebuddy][warmup] {msg}", flush=True)
+            except Exception:
+                pass
+
+    try:
+        _log("navigating to accounts.google.com/signin")
         try:
-            clicked_google = bool(
-                await page.evaluate(
-                    """() => {
-                        // Look for a Google sign-in button anywhere on the page
-                        // Covers: "Sign in with Google", "Login with Google", etc.
-                        const googlePhrases = ['sign in with google', 'login with google', 'continue with google'];
-                        for (const btn of document.querySelectorAll('button, a, div[role="button"]')) {
-                            if (btn.offsetParent === null) continue;
-                            const txt = (btn.textContent || '').toLowerCase().trim();
-                            if (googlePhrases.some(p => txt.includes(p))) {
-                                btn.click();
-                                return true;
+            await page.goto(
+                "https://accounts.google.com/signin",
+                wait_until="domcontentloaded",
+                timeout=45000,
+            )
+        except Exception as exc:
+            _log(f"initial goto failed: {exc}")
+            return False
+
+        # Small settle so any redirect (to /v3/signin/identifier) finishes.
+        await asyncio.sleep(random.uniform(1.5, 2.5))
+
+        # If we are already signed in, Google redirects to myaccount.google.com
+        # (or accounts.google.com/ManageAccount). Bail out early - warm-up done.
+        try:
+            cur = page.url or ""
+        except Exception:
+            cur = ""
+        low = cur.casefold()
+        if "myaccount.google.com" in low or "manageaccount" in low:
+            _log(f"already signed in ({cur}) - warm-up done")
+            return True
+
+        # Fill email step
+        try:
+            await _fill_google_email_step(page, email)
+        except Exception as exc:
+            _log(f"email step failed: {exc}")
+            return False
+
+        # Wait for password field to appear (Google transition can be slow)
+        try:
+            await _wait_for_google_password_transition(page)
+        except Exception as exc:
+            _log(f"transition to password step failed: {exc}")
+            return False
+
+        # Human-ish pause before password
+        await asyncio.sleep(random.uniform(2.5, 4.0))
+
+        try:
+            await _fill_google_password_step(page, password)
+        except Exception as exc:
+            _log(f"password step failed: {exc}")
+            return False
+
+        # After password: Google either lands on myaccount, or asks for
+        # phone confirmation / recovery / "protect your account" prompts.
+        # We wait up to ~25s for something recognizable.
+        deadline = time.time() + 25.0
+        while time.time() < deadline:
+            try:
+                cur = page.url or ""
+            except Exception:
+                cur = ""
+            low = cur.casefold()
+            if "myaccount.google.com" in low or "manageaccount" in low:
+                _log(f"warm-up landed on {cur}")
+                return True
+            # "Something went wrong" during warm-up = fresh-account block.
+            # Nothing we can do here - report failure so caller can decide.
+            is_err, snippet = await _check_google_something_went_wrong(page)
+            if is_err:
+                _log(f"'Something went wrong' during warm-up: {snippet}")
+                return False
+            # Skip common post-login prompts by clicking "Not now" / "Skip"
+            try:
+                for label in (
+                    "Not now",
+                    "Skip",
+                    "Cancel",
+                    "Nanti saja",
+                    "Lewati",
+                ):
+                    btn = page.get_by_role("button", name=label)
+                    try:
+                        if await btn.count() > 0 and await btn.first.is_visible():
+                            _log(f"clicking post-login prompt: {label}")
+                            await btn.first.click(timeout=3000)
+                            await asyncio.sleep(1.0)
+                            break
+                    except Exception:
+                        continue
+            except Exception:
+                pass
+            await asyncio.sleep(1.2)
+
+        # Timed out waiting for a recognizable post-login state, but no
+        # explicit error - assume we are signed in enough to proceed.
+        _log("warm-up deadline reached without myaccount redirect - proceeding anyway")
+        return True
+    except Exception as exc:
+        _log(f"unexpected warmup exception: {exc}")
+        return False
+
+
+async def _handle_codebuddy_landing(page: Any) -> bool:
+    """Tick agreement checkbox and TRIGGER top-level nav to Google broker URL.
+
+    CodeBuddy embeds the Keycloak login form in an <iframe title="login-iframe">.
+    Clicking the Google button INSIDE the iframe often only navigates the iframe
+    (leaves the top page stuck), so instead we:
+      1. Search top document + every frame for the checkbox and Google anchor
+      2. Tick the checkbox in the frame that contains it
+      3. Read the Google anchor's `href` (usually `/auth/realms/.../broker/google/login?...`)
+      4. Resolve to absolute URL + do TOP-LEVEL `page.goto(href)` so the parent
+         page navigates to Google's OAuth screen.
+
+    Returns True if we successfully triggered nav (or clicked when href missing).
+    """
+
+    # Enumerate frames: main + login-iframe + any subframe on codebuddy.ai
+    targets: list[tuple[str, Any]] = [("page", page)]
+    try:
+        iframe_frame = await _get_codebuddy_login_iframe(page)
+        if iframe_frame is not None:
+            targets.append(("login-iframe", iframe_frame))
+    except Exception as exc:
+        _codebuddy_auth_debug(f"landing: get login-iframe failed: {exc}")
+    try:
+        for fr in list(getattr(page, "frames", []) or []):
+            if fr is page.main_frame:
+                continue
+            if any(fr is t[1] for t in targets):
+                continue
+            try:
+                url = fr.url or ""
+            except Exception:
+                url = ""
+            if "codebuddy.ai" in url or "/auth/realms/" in url:
+                targets.append((f"frame:{url[:60]}", fr))
+    except Exception:
+        pass
+
+    checkbox_hit: str | None = None
+    google_href: str | None = None
+    google_sel: str | None = None
+    frame_url: str = ""
+    for label, target in targets:
+        try:
+            res = await target.evaluate(_LANDING_TICK_HREF_JS)
+        except Exception as exc:
+            _codebuddy_auth_debug(f"landing[{label}] evaluate failed: {exc}")
+            continue
+        if not isinstance(res, dict):
+            continue
+        cb = res.get("checkbox")
+        gh = res.get("googleHref")
+        gs = res.get("googleSel")
+        furl = str(res.get("url") or "")
+        _codebuddy_auth_debug(
+            f"landing[{label}] url={furl[:80]} checkbox={cb!r} googleSel={gs!r} "
+            f"hasHref={bool(gh)}"
+        )
+        if cb and not checkbox_hit:
+            checkbox_hit = cb
+        if gh and not google_href:
+            google_href = str(gh)
+            google_sel = str(gs or "")
+            frame_url = furl
+
+    if not google_href:
+        # Fallback: neither frame surfaced an anchor href. Fall back to legacy
+        # click-based flow (dispatchEvent inside the frame). Better than
+        # returning False and killing the run entirely.
+        for label, target in targets:
+            try:
+                res = await target.evaluate(_LANDING_TICK_JS)
+            except Exception:
+                continue
+            if isinstance(res, dict) and res.get("google"):
+                _codebuddy_auth_debug(f"landing[{label}] fallback-click google={res.get('google')!r}")
+                return True
+        return False
+
+    # Resolve relative href against the frame it lives on so /broker/google/login
+    # from Keycloak realm URL becomes the full https://... URL.
+    abs_url = google_href
+    if not abs_url.startswith("http"):
+        try:
+            from urllib.parse import urljoin
+            base = frame_url or (page.url if hasattr(page, "url") else "")
+            abs_url = urljoin(base or CODEBUDDY_BASE_URL, google_href)
+        except Exception:
+            abs_url = CODEBUDDY_BASE_URL.rstrip("/") + "/" + google_href.lstrip("/")
+
+    _codebuddy_auth_debug(
+        f"landing: top-level goto Google broker sel={google_sel!r} url={abs_url[:120]}"
+    )
+    try:
+        # wait_until='commit' returns as soon as the navigation is committed —
+        # Google's SPA doesn't need to fully load for the OAuth handshake to
+        # begin. This mirrors budy-pc's proven pattern.
+        await page.goto(abs_url, wait_until="commit", timeout=60_000)
+    except Exception as exc:
+        # If the redirect already reached Google before timeout, it's harmless.
+        try:
+            cur = page.url or ""
+        except Exception:
+            cur = ""
+        if "google.com" in cur or "accounts.google" in cur:
+            _codebuddy_auth_debug(f"landing: goto raised but already on Google ({cur[:60]}) — OK")
+        else:
+            _codebuddy_auth_debug(f"landing: goto failed ({exc!r}), url={cur[:60]}")
+            # Last resort — click via legacy JS click
+            for label, target in targets:
+                try:
+                    res = await target.evaluate(_LANDING_TICK_JS)
+                except Exception:
+                    continue
+                if isinstance(res, dict) and res.get("google"):
+                    return True
+            return False
+    # Small settle after navigation commit
+    try:
+        await asyncio.sleep(1.2)
+    except Exception:
+        pass
+    return True
+
+
+async def _handle_codebuddy_agreement_modal(page: Any) -> bool:
+    """Detect & confirm CodeBuddy 'Service Agreement / User Agreement' popup.
+
+    After Google OAuth completes, CodeBuddy sometimes shows a modal:
+        "Service Agreement" / "User Agreement" / "服务协议"
+        [ ] I have read and agree to the Service Agreement and Privacy Policy
+        [Cancel]  [Confirm]
+
+    This handler ONLY acts on elements inside a real modal container (role=dialog
+    or common modal classes) so it can't accidentally click generic buttons on
+    the page. Uses REAL page.mouse for the confirm click (Camoufox blocks
+    synthetic .click() in some contexts). Returns True if it clicked Confirm.
+    """
+    dump_enabled = os.getenv("BATCHER_CODEBUDDY_MODAL_DUMP", "").strip() in {"1", "true", "yes"}
+
+    async def _dump(label: str) -> None:
+        if not dump_enabled:
+            return
+        try:
+            ts = int(time.time() * 1000)
+            base = f"/tmp/codebuddy-modal-{ts}-{label}"
+            try:
+                await page.screenshot(path=f"{base}.png", full_page=True)
+            except Exception as exc:
+                _codebuddy_auth_debug(f"modal dump screenshot failed: {exc}")
+            try:
+                html = await page.evaluate(
+                    r"""() => {
+                        const sels = ['.ant-modal-wrap:not(.ant-modal-hidden)', '.ant-modal:not(.ant-modal-hidden)',
+                                      '[role="dialog"]', '[aria-modal="true"]', '.el-dialog', '.arco-modal',
+                                      '.arco-dialog', '.n-modal', '.van-dialog', '.modal.show', '.MuiDialog-root',
+                                      '[class*="Modal_" i]', '[class*="Dialog_" i]'];
+                        const parts = [];
+                        for (const s of sels) {
+                            for (const el of document.querySelectorAll(s)) {
+                                const rect = el.getBoundingClientRect();
+                                if (rect.width <= 0 || rect.height <= 0) continue;
+                                parts.push(`<!-- selector=${s} -->\n` + el.outerHTML);
                             }
                         }
-                        // Also try: any Login / Sign in link that is visible in top nav
-                        const loginPhrases = ['login', 'sign in', 'log in'];
-                        for (const a of document.querySelectorAll('a, button')) {
-                            if (a.offsetParent === null) continue;
-                            const txt = (a.textContent || '').toLowerCase().trim();
-                            if (loginPhrases.some(p => txt === p) || loginPhrases.some(p => txt.startsWith(p + ' '))) {
-                                a.click();
-                                return true;
+                        if (parts.length === 0) return '<!-- no modal found on page -->\n' + document.title + '\n' + location.href;
+                        return parts.join('\n\n');
+                    }"""
+                )
+                with open(f"{base}.html", "w", encoding="utf-8") as fh:
+                    fh.write(html or "")
+                _codebuddy_auth_debug(f"modal dump saved: {base}.png + {base}.html")
+            except Exception as exc:
+                _codebuddy_auth_debug(f"modal dump html failed: {exc}")
+        except Exception:
+            pass
+
+    # JS: detect the agreement modal and click its Confirm button directly
+    # via DOM .click() + dispatched mouse events. We DO NOT tick any checkbox
+    # here — the user has already ticked the agreement on the landing page
+    # before pressing the Google button, so the Confirm button should be
+    # enabled by default.
+    click_js = r"""() => {
+        const isVisible = (el) => {
+            if (!el) return false;
+            const rect = el.getBoundingClientRect();
+            if (rect.width <= 0 || rect.height <= 0) return false;
+            const cs = window.getComputedStyle(el);
+            if (cs.visibility === 'hidden' || cs.display === 'none') return false;
+            if (parseFloat(cs.opacity || '1') === 0) return false;
+            return true;
+        };
+        const clickLike = (el) => {
+            try { el.scrollIntoView({block: 'center'}); } catch (_) {}
+            const opts = { bubbles: true, cancelable: true, view: window };
+            try { el.dispatchEvent(new MouseEvent('pointerover', opts)); } catch (_) {}
+            try { el.dispatchEvent(new MouseEvent('mouseover', opts)); } catch (_) {}
+            try { el.dispatchEvent(new MouseEvent('mousedown', opts)); } catch (_) {}
+            try { el.dispatchEvent(new MouseEvent('mouseup',   opts)); } catch (_) {}
+            try { el.click(); } catch (_) {}
+            try { el.dispatchEvent(new MouseEvent('click', opts)); } catch (_) {}
+        };
+
+        const confirmRx = /^(\s*)(confirm|agree|accept|ok|okay|continue|proceed|yes|setuju|konfirmasi|lanjut(kan)?|同意|确认|确定)(\s*)$/i;
+        const cancelRx  = /(cancel|close|batal|tutup|取消|关闭|dismiss|later|nanti)/i;
+
+        // -- PATH A: direct hunt — CodeBuddy popup uses <button class="ui-button" data-type="success">Confirm</button> --
+        const directSelectors = [
+            'button.ui-button[data-type="success"]',
+            'button.ui-button[data-type="primary"]',
+            'button.ui-button',
+            '.ui-button[data-type="success"]',
+            '.ui-button[data-type="primary"]',
+        ];
+        for (const sel of directSelectors) {
+            for (const btn of document.querySelectorAll(sel)) {
+                if (!isVisible(btn)) continue;
+                if (btn.disabled) continue;
+                const txt = (btn.textContent || btn.value || '').trim();
+                if (!txt) continue;
+                if (cancelRx.test(txt)) continue;
+                if (confirmRx.test(txt)) {
+                    clickLike(btn);
+                    return { ok: true, text: txt.slice(0, 60), why: 'direct:' + sel };
+                }
+            }
+        }
+
+        // -- PATH B: text-only hunt over ALL buttons/role=button in document --
+        const allBtns = [
+            ...document.querySelectorAll('button'),
+            ...document.querySelectorAll('[role="button"]'),
+            ...document.querySelectorAll('a.ui-button'),
+        ];
+        for (const btn of allBtns) {
+            if (!isVisible(btn)) continue;
+            if (btn.disabled) continue;
+            const txt = (btn.textContent || btn.value || '').trim();
+            if (!txt) continue;
+            if (cancelRx.test(txt)) continue;
+            if (confirmRx.test(txt)) {
+                clickLike(btn);
+                return { ok: true, text: txt.slice(0, 60), why: 'text-hunt' };
+            }
+        }
+
+        // -- PATH C: fallback via modal container (legacy Ant/Element/etc.) --
+        const modalSelectors = [
+            '.ant-modal:not(.ant-modal-hidden)',
+            '.ant-modal-wrap',
+            '[role="dialog"]',
+            '[aria-modal="true"]',
+            '.el-dialog',
+            '.arco-modal',
+            '.arco-dialog',
+            '.n-modal',
+            '.van-dialog',
+            '.modal.show',
+            '.MuiDialog-root',
+            '[class*="Modal_" i]',
+            '[class*="Dialog_" i]',
+        ];
+        const modals = [];
+        for (const sel of modalSelectors) {
+            for (const m of document.querySelectorAll(sel)) {
+                if (isVisible(m)) modals.push(m);
+            }
+        }
+        for (const modal of modals) {
+            const cands = [
+                ...modal.querySelectorAll('button.ant-btn-primary'),
+                ...modal.querySelectorAll('button[type="submit"]'),
+                ...modal.querySelectorAll('.ant-modal-footer button'),
+                ...modal.querySelectorAll('button'),
+                ...modal.querySelectorAll('[role="button"]'),
+            ];
+            for (const btn of cands) {
+                if (!isVisible(btn)) continue;
+                if (btn.disabled) continue;
+                const txt = (btn.textContent || btn.value || '').trim();
+                if (!txt) continue;
+                if (cancelRx.test(txt)) continue;
+                if (confirmRx.test(txt)) {
+                    clickLike(btn);
+                    return { ok: true, text: txt.slice(0, 60), why: 'modal-fallback' };
+                }
+            }
+        }
+
+        return { ok: false, reason: 'no-confirm-button', modals: modals.length };
+    }"""
+
+    # Enumerate targets: top page + all frames on codebuddy.ai
+    click_targets: list[tuple[str, Any]] = [("page", page)]
+    try:
+        for fr in list(getattr(page, "frames", []) or []):
+            if fr is page.main_frame:
+                continue
+            try:
+                url = fr.url or ""
+            except Exception:
+                url = ""
+            if "codebuddy.ai" in url or "/auth/realms/" in url:
+                click_targets.append((f"frame:{url[:60]}", fr))
+    except Exception:
+        pass
+
+    try:
+        for label, tgt in click_targets:
+            try:
+                res = await tgt.evaluate(click_js)
+            except Exception:
+                continue
+            if isinstance(res, dict) and res.get("ok"):
+                _codebuddy_auth_debug(
+                    f"agreement modal confirmed [{label}] text={res.get('text')!r} "
+                    f"why={res.get('why')}"
+                )
+                await _dump("confirmed")
+                return True
+            if isinstance(res, dict) and res.get("reason") not in (None, "no-modal"):
+                _codebuddy_auth_debug(f"agreement modal [{label}] {res}")
+
+        if dump_enabled:
+            # Periodic dump when nothing detected — but only if a modal-like
+            # container is actually present on the page (avoid spamming).
+            try:
+                has_modal = await page.evaluate(
+                    r"""() => {
+                        const sels = ['.ant-modal-wrap:not(.ant-modal-hidden)', '[role="dialog"]', '[aria-modal="true"]',
+                                      '.el-dialog', '.arco-modal', '.n-modal', '.van-dialog', '.modal.show',
+                                      '.MuiDialog-root', '[class*="Modal_" i]', '[class*="Dialog_" i]'];
+                        for (const s of sels) {
+                            for (const el of document.querySelectorAll(s)) {
+                                const rect = el.getBoundingClientRect();
+                                if (rect.width > 0 && rect.height > 0) return true;
                             }
                         }
                         return false;
                     }"""
                 )
-            )
-        except Exception:
-            pass
-
-    return clicked_checkbox or clicked_google
+                if has_modal:
+                    await _dump("visible-no-match")
+            except Exception:
+                pass
+        return False
+    except Exception as exc:
+        _codebuddy_auth_debug(f"agreement modal handler error: {exc}")
+        return False
 
 
 async def _handle_codebuddy_email_verification(page: Any) -> bool:
@@ -1836,6 +2742,41 @@ class CodeBuddyProviderAdapter(ProviderAdapter):
             browser = await manager.__aenter__()
             page = await browser.new_page()
             page.set_default_timeout(timeout_ms)
+
+            # ------------------------------------------------------------------
+            # Google account warm-up (opt-out via env var)
+            # ------------------------------------------------------------------
+            # Fresh Gmail accounts logging into the OAuth broker directly on a
+            # new IP get slammed with Google's "Something went wrong" screen.
+            # Warming up by signing into accounts.google.com FIRST establishes
+            # a trusted session and prevents this. Defaults to enabled.
+            warmup_enabled = (
+                os.getenv("BATCHER_CODEBUDDY_GOOGLE_WARMUP", "true").lower()
+                == "true"
+            )
+            debug_enabled = (
+                os.getenv("BATCHER_CODEBUDDY_AUTH_DEBUG", "false").lower()
+                == "true"
+            )
+            if (
+                warmup_enabled
+                and account.identifier
+                and account.secret
+                and "@" in account.identifier
+            ):
+                try:
+                    ok = await _warmup_google_session(
+                        page,
+                        account.identifier,
+                        account.secret,
+                        debug=debug_enabled,
+                    )
+                    _codebuddy_auth_debug(
+                        f"google warmup {'ok' if ok else 'failed'} for {account.identifier}"
+                    )
+                except Exception as exc:
+                    _codebuddy_auth_debug(f"google warmup crashed: {exc}")
+
             await page.goto(auth_url, wait_until="domcontentloaded", timeout=45000)
 
             return {
@@ -1971,19 +2912,33 @@ class CodeBuddyProviderAdapter(ProviderAdapter):
         self, account: NormalizedAccount, session: Any, page: Any, state: str
     ) -> dict[str, Any]:
         # CodeBuddy login uses an iframe landing (checkbox + Google button) before Google auth form.
+        # Iframe hydration on codebuddy.ai can take 5-10 seconds after page.goto,
+        # so we retry up to ~30s (60 iterations * 0.5s) before giving up.
         _emit_oauth_progress("Initiating Google OAuth login")
-        for _ in range(10):
+        for _landing_iter in range(60):
             try:
                 current_url = page.url
             except Exception:
                 current_url = ""
             if "accounts.google.com" in current_url:
+                _codebuddy_auth_debug("landing loop: already on accounts.google.com, breaking")
                 break
             landing_clicked = await _handle_codebuddy_landing(page)
             if landing_clicked:
-                await asyncio.sleep(0.8)
+                _codebuddy_auth_debug(
+                    f"landing loop: google button clicked at iter={_landing_iter}, waiting for nav"
+                )
+                # Wait for URL to leave the CodeBuddy login page
+                for _nav_wait in range(20):
+                    await asyncio.sleep(0.5)
+                    try:
+                        new_url = page.url
+                    except Exception:
+                        continue
+                    if "accounts.google.com" in new_url or "/broker/google/" in new_url:
+                        break
                 break
-            await asyncio.sleep(0.3)
+            await asyncio.sleep(0.5)
 
         email_transition_deadline = 0.0
         password_transition_deadline = 0.0
@@ -2005,6 +2960,13 @@ class CodeBuddyProviderAdapter(ProviderAdapter):
         # Track consent state — if consent was clicked and browser crashes after,
         # we know OAuth is complete server-side and can return authenticated immediately.
         _consent_was_clicked = False
+
+        # Google "Something went wrong" — fresh accounts sometimes hit this on
+        # first OAuth from a new device/IP. Retry with back-nav up to N times,
+        # then give up and mark account as needing manual warm-up.
+        _google_something_wrong_retries = 0
+        _GOOGLE_SW_MAX_RETRIES = 2
+        _last_google_sw_at = 0.0
 
         _consecutive_page_errors = 0
         for _ in range(600):  # High iteration cap — inactivity timeout is the real guard
@@ -2071,6 +3033,120 @@ class CodeBuddyProviderAdapter(ProviderAdapter):
                 and "/auth/realms/" in current_path
             )
             now = time.monotonic()
+
+            # ─── ACCOUNT ACCESS RESTRICTED / SESSION-LOST DETECTION ────────
+            # Check EARLY, before anything else, so we don't wait for
+            # inactivity timeout on a page that will never make progress.
+            # Only check on codebuddy/keycloak pages (not Google interstitials,
+            # which have their own transient restriction copy in prompts).
+            if current_url and (on_codebuddy_login or on_keycloak_auth or on_codebuddy_home):
+                try:
+                    _blocked, _kind, _snippet = await _check_codebuddy_access_restricted(page)
+                except Exception as _acc_exc:
+                    _codebuddy_auth_debug(f"access-restricted check errored: {_acc_exc}")
+                    _blocked, _kind, _snippet = (False, "", "")
+                if _blocked:
+                    _codebuddy_auth_debug(
+                        f"account access restricted (real ban) url={current_url[:100]} snippet={_snippet!r}"
+                    )
+                    _emit_oauth_progress("Account access restricted by CodeBuddy")
+                    raise NonRetryableBatcherError(
+                        ErrorCode.auth_account_suspended,
+                        f"codebuddy blocked this account or exit IP: {_snippet[:180]}",
+                    )
+                if _kind in ("session-lost", "timed-out"):
+                    # Restart auth with a fresh state — the current OAuth
+                    # callback/session is dead, no amount of extra clicking
+                    # can revive it.
+                    _codebuddy_auth_debug(
+                        f"keycloak {_kind} page detected — restarting with fresh state "
+                        f"url={current_url[:100]} marker={_snippet!r}"
+                    )
+                    _emit_oauth_progress(f"OAuth {_kind.replace('-', ' ')} — restarting")
+                    _fresh_auth_url = session.get("auth_url", "")
+                    if _fresh_auth_url:
+                        try:
+                            await asyncio.sleep(1.5)
+                            await page.goto(
+                                _fresh_auth_url,
+                                wait_until="domcontentloaded",
+                                timeout=45000,
+                            )
+                            _last_progress_at = time.monotonic()
+                            landing_transition_deadline = time.monotonic() + 10.0
+                            await asyncio.sleep(1.0)
+                            continue
+                        except Exception as _restart_exc:
+                            _codebuddy_auth_debug(
+                                f"restart with fresh state failed: {_restart_exc!r}"
+                            )
+                    # No auth_url or restart failed — raise retryable so caller
+                    # can start a completely new attempt.
+                    raise RetryableBatcherError(
+                        ErrorCode.auth_temporary_failure,
+                        f"codebuddy OAuth {_kind} ({_snippet[:120]}); retry gets a fresh state",
+                    )
+
+            # ─── GOOGLE "SOMETHING WENT WRONG" DETECTION ────────────────────
+            # Fresh Gmail accounts often see this transient error on their
+            # first OAuth login from a new device. Strategy:
+            #   1. Detect (only on google host)
+            #   2. Debounce (don't retrigger for same page load)
+            #   3. Retry with page.go_back() twice (Google usually recovers)
+            #   4. After N retries, give up as NonRetryable so the caller
+            #      surfaces it for manual warm-up
+            if current_url and "google" in current_host:
+                try:
+                    _gsw_hit, _gsw_snippet = await _check_google_something_went_wrong(page)
+                except Exception as _gsw_exc:
+                    _codebuddy_auth_debug(f"google-SW check errored: {_gsw_exc}")
+                    _gsw_hit, _gsw_snippet = (False, "")
+                if _gsw_hit and (time.monotonic() - _last_google_sw_at) > 3.0:
+                    _last_google_sw_at = time.monotonic()
+                    _google_something_wrong_retries += 1
+                    _codebuddy_auth_debug(
+                        f"google 'Something went wrong' detected "
+                        f"(retry {_google_something_wrong_retries}/{_GOOGLE_SW_MAX_RETRIES}) "
+                        f"url={current_url[:100]} snippet={_gsw_snippet!r}"
+                    )
+                    if _google_something_wrong_retries > _GOOGLE_SW_MAX_RETRIES:
+                        _emit_oauth_progress(
+                            "Google 'Something went wrong' — fresh account block"
+                        )
+                        raise NonRetryableBatcherError(
+                            ErrorCode.auth_temporary_failure,
+                            "google 'Something went wrong' persisted — fresh account "
+                            "likely needs manual warm-up (login to accounts.google.com "
+                            f"once by hand). snippet={_gsw_snippet[:160]}",
+                        )
+                    _emit_oauth_progress(
+                        f"Google transient error — retrying "
+                        f"({_google_something_wrong_retries}/{_GOOGLE_SW_MAX_RETRIES})"
+                    )
+                    # Retry: go back twice with pauses, let Google recover.
+                    try:
+                        await asyncio.sleep(random.uniform(1.5, 2.5))
+                        await page.go_back(wait_until="domcontentloaded", timeout=15000)
+                        await asyncio.sleep(random.uniform(1.0, 1.8))
+                        await page.go_back(wait_until="domcontentloaded", timeout=15000)
+                        await asyncio.sleep(random.uniform(2.0, 3.5))
+                    except Exception as _back_exc:
+                        _codebuddy_auth_debug(
+                            f"go_back during SW recovery failed: {_back_exc}"
+                        )
+                        # Fallback: restart from auth_url so we get a fresh state.
+                        _fresh_auth_url = session.get("auth_url", "")
+                        if _fresh_auth_url:
+                            try:
+                                await page.goto(
+                                    _fresh_auth_url,
+                                    wait_until="domcontentloaded",
+                                    timeout=45000,
+                                )
+                            except Exception:
+                                pass
+                    _last_progress_at = time.monotonic()
+                    continue
 
             if current_url:
                 if (
@@ -2177,11 +3253,48 @@ class CodeBuddyProviderAdapter(ProviderAdapter):
                 if "consent" not in _progress_emitted:
                     _emit_oauth_progress("Google consent — granting access")
                     _progress_emitted.add("consent")
-                # After consent is clicked, the OAuth callback has already been sent
-                # to CodeBuddy's backend. The redirect to CodeBuddy often crashes
-                # Camoufox (COOP/cross-origin navigation). Don't wait for it —
-                # just return authenticated immediately.
-                await asyncio.sleep(2.0)
+                # After consent is clicked, the OAuth callback fires and Google
+                # redirects the browser back to CodeBuddy (via Keycloak broker).
+                # We MUST wait for the redirect to complete so:
+                #   1. CodeBuddy session cookies are set on www.codebuddy.ai
+                #   2. The backend binds the OAuth state → access_token
+                # Returning early leaves us with only Google cookies, causing
+                # region/token endpoints to return 401 / code=11217.
+                #
+                # We poll page.url for up to ~30s waiting to land on the
+                # codebuddy.ai domain. If the browser crashes on redirect
+                # (COOP/cross-origin), fall back to "authenticated" so the
+                # token fetch step can retry with what session we have.
+                _consent_wait_deadline = time.monotonic() + 30.0
+                while time.monotonic() < _consent_wait_deadline:
+                    await asyncio.sleep(0.5)
+                    try:
+                        _post_consent_url = page.url or ""
+                    except Exception as _pc_exc:
+                        _codebuddy_auth_debug(
+                            f"page unreachable after consent click: {_pc_exc} — "
+                            "assuming crash on redirect, returning authenticated"
+                        )
+                        _emit_oauth_progress(
+                            "OAuth complete — consent granted (browser crashed on redirect)"
+                        )
+                        return {"authenticated": True, "state": state}
+                    _post_consent_host = urlparse(_post_consent_url).netloc
+                    if _post_consent_host == _codebuddy_base_netloc:
+                        _codebuddy_auth_debug(
+                            f"post-consent redirect landed on CodeBuddy: {_post_consent_url}"
+                        )
+                        # Give the SPA a moment to finalize session cookies +
+                        # backend state binding before token fetch.
+                        await asyncio.sleep(2.0)
+                        _emit_oauth_progress("OAuth complete — consent granted")
+                        return {"authenticated": True, "state": state}
+                # Timeout waiting for redirect — still return authenticated so
+                # fetch_tokens can attempt navigation to /started?state=... itself.
+                _codebuddy_auth_debug(
+                    "timed out waiting for post-consent redirect to CodeBuddy — "
+                    "returning authenticated; fetch_tokens will navigate"
+                )
                 _emit_oauth_progress("OAuth complete — consent granted")
                 return {"authenticated": True, "state": state}
 
@@ -2190,6 +3303,17 @@ class CodeBuddyProviderAdapter(ProviderAdapter):
             accounts_payload = None
             cookie_header = None
             if current_host == _codebuddy_base_netloc:
+                # Dismiss any "Service Agreement / User Agreement" modal that
+                # blocks interaction with the home page. Idempotent — safe to
+                # call every iteration; only clicks Confirm when the modal is
+                # actually visible.
+                if await _handle_codebuddy_agreement_modal(page):
+                    _last_progress_at = time.monotonic()
+                    if "agreement" not in _progress_emitted:
+                        _emit_oauth_progress("Accepted CodeBuddy Service Agreement")
+                        _progress_emitted.add("agreement")
+                    await asyncio.sleep(1.0)
+
                 accounts_payload = await _fetch_console_accounts_via_page(page)
                 cookie_header = await _build_cookie_header_from_page(
                     page, CODEBUDDY_BASE_URL
@@ -2454,19 +3578,27 @@ class CodeBuddyProviderAdapter(ProviderAdapter):
         self, page: Any, session: Any, state: str, account: NormalizedAccount
     ) -> dict[str, str]:
         # ─── ENSURE PAGE IS ON CODEBUDDY DOMAIN ──────────────────────────
-        # After consent-click shortcut, the page may still be on Google domain.
-        # We need to navigate to CodeBuddy to establish session cookies before
-        # making API calls via page.evaluate(fetch(..., credentials:'include')).
+        # After consent-click shortcut, the page may still be on Google domain,
+        # or the redirect back to /started may not have completed. Either way,
+        # we MUST land on /started?platform=IDE&state=<state> so the CodeBuddy
+        # backend binds the OAuth callback to our state, otherwise the token
+        # endpoint returns code=11217 ("state not associated with a token") and
+        # region/trial APIs return 401.
         _codebuddy_base_netloc = urlparse(CODEBUDDY_BASE_URL).netloc
         try:
             current_url = page.url
         except Exception:
             current_url = ""
         current_host = urlparse(current_url).netloc if current_url else ""
+        current_path = urlparse(current_url).path if current_url else ""
 
-        if current_host != _codebuddy_base_netloc:
+        needs_state_nav = (
+            current_host != _codebuddy_base_netloc
+            or not current_path.startswith("/started")
+        )
+        if needs_state_nav:
             _codebuddy_auth_debug(
-                f"page not on CodeBuddy domain (on {current_host}), navigating to complete OAuth"
+                f"navigating to /started?state=... to bind OAuth (from host={current_host}, path={current_path})"
             )
             # Navigate to the OAuth state endpoint — this completes the OAuth flow
             # and establishes session cookies on the CodeBuddy domain.
@@ -2474,12 +3606,14 @@ class CodeBuddyProviderAdapter(ProviderAdapter):
             try:
                 await page.goto(_state_url, wait_until="domcontentloaded", timeout=30000)
             except Exception as nav_exc:
-                _codebuddy_auth_debug(f"navigation to CodeBuddy failed: {nav_exc}, trying base URL")
+                _codebuddy_auth_debug(f"navigation to /started failed: {nav_exc}, trying base URL")
                 try:
                     await page.goto(CODEBUDDY_BASE_URL, wait_until="domcontentloaded", timeout=30000)
                 except Exception:
                     pass
-            await asyncio.sleep(1.0)
+            # Give the SPA time to finalize the token binding on backend
+            # (backend needs a moment after receiving the OAuth callback).
+            await asyncio.sleep(3.0)
 
         # ─── ENSURE REGION + TRIAL ACTIVATION ────────────────────────────
         # Region setup and trial activation are required to provision credits.

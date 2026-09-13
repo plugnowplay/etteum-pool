@@ -3,13 +3,15 @@ import { Search, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const baseField =
-  "flex w-full rounded-md border border-[var(--border)] bg-[var(--background)] text-sm text-[var(--foreground)] " +
+  // Retro terminal field: square, hairline border, dark well, phosphor caret.
+  "flex w-full border border-[var(--input)] bg-[var(--surface-inset)] " +
+  "font-mono text-sm text-[var(--foreground)] caret-[var(--primary)] " +
   "transition-[border-color,box-shadow] duration-[var(--dur-fast)] ease-[var(--ease-out)] " +
-  "placeholder:text-[var(--muted-foreground)] " +
-  "hover:border-[var(--muted-foreground)]/40 " +
+  "placeholder:text-[var(--muted-foreground)] placeholder:opacity-70 " +
+  "hover:border-[var(--primary)]/60 " +
   "focus-visible:outline-none focus-visible:border-[var(--ring)] " +
-  "focus-visible:ring-2 focus-visible:ring-[var(--ring)]/25 " +
-  "disabled:cursor-not-allowed disabled:opacity-50";
+  "focus-visible:shadow-[var(--es-2)] " +
+  "disabled:cursor-not-allowed disabled:opacity-40";
 
 export interface InputProps extends React.InputHTMLAttributes<HTMLInputElement> {
   /** Leading icon slot. */

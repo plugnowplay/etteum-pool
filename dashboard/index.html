@@ -5,9 +5,17 @@
     <link rel="icon" type="image/svg+xml" href="/etteum.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="color-scheme" content="dark light" />
-    <meta name="theme-color" content="#1e1e1e" media="(prefers-color-scheme: dark)" />
-    <meta name="theme-color" content="#f3f7f4" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#050a03" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#f4ecd8" media="(prefers-color-scheme: light)" />
     <title>Etteum Dashboard</title>
+    <!-- Retro CRT terminal: monospace everywhere. JetBrains Mono has excellent
+         tabular figures, so number columns align without extra work. -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap"
+    />
     <script>
       // No-flash theme: apply the saved theme before first paint. Dark is default.
       (function () {
@@ -17,7 +25,7 @@
             document.documentElement.classList.add("light");
             // Update theme-color for light mode
             var metas = document.querySelectorAll('meta[name="theme-color"]');
-            if (metas.length > 0) metas[0].setAttribute("content", "#f3f7f4");
+            if (metas.length > 0) metas[0].setAttribute("content", "#f4ecd8");
           }
         } catch (e) {}
       })();

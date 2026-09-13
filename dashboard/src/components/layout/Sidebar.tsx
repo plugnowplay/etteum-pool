@@ -1,18 +1,6 @@
 import { NavLink, useLocation } from "react-router-dom";
 import { useEffect } from "react";
 import {
-  LayoutDashboard,
-  Users,
-  Cpu,
-  Key,
-  Activity,
-  BarChart3,
-  Sliders,
-  Bot,
-  Globe,
-  Sparkles,
-  Filter,
-  Plug,
   LogOut,
   X,
   Sun,
@@ -20,60 +8,12 @@ import {
   ChevronLeft,
   ChevronRight,
   KeyRound,
-  Layers,
-  Share2,
+  Search,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTheme } from "@/hooks/useTheme";
 import { useWsStatus } from "@/hooks/useWebSocket";
-
-interface NavItem {
-  label: string;
-  path: string;
-  icon: React.ComponentType<{ className?: string }>;
-}
-
-interface NavSection {
-  title: string;
-  items: NavItem[];
-}
-
-const navSections: NavSection[] = [
-  {
-    title: "Accounts",
-    items: [
-      { label: "Dashboard", path: "/", icon: LayoutDashboard },
-      { label: "Accounts", path: "/accounts", icon: Users },
-      { label: "Models", path: "/models", icon: Cpu },
-      { label: "Combos", path: "/combos", icon: Layers },
-    ],
-  },
-  {
-    title: "Tools",
-    items: [
-      { label: "Image Studio", path: "/image-studio", icon: Sparkles },
-      { label: "Integration", path: "/integration", icon: Plug },
-    ],
-  },
-  {
-    title: "Proxy",
-    items: [
-      { label: "API Key", path: "/api-key", icon: Key },
-      { label: "Share", path: "/share", icon: Share2 },
-      { label: "Proxy Pool", path: "/proxy-pool", icon: Globe },
-      { label: "Filter Rules", path: "/filter-rules", icon: Filter },
-      { label: "Proxy Settings", path: "/settings", icon: Sliders },
-    ],
-  },
-  {
-    title: "Logs & Analytics",
-    items: [
-      { label: "Requests", path: "/requests", icon: Activity },
-      { label: "Login Logs", path: "/bot-logs", icon: Bot },
-      { label: "Usage", path: "/usage", icon: BarChart3 },
-    ],
-  },
-];
+import { navSections } from "@/lib/nav";
 
 interface SidebarProps {
   onLogout?: () => void;
@@ -86,14 +26,17 @@ interface SidebarProps {
 /** Shared row styling for nav links and the footer action buttons. */
 function rowClass(collapsed: boolean, active = false, danger = false) {
   return cn(
-    "group relative flex items-center gap-3 rounded-md text-sm w-full",
-    "transition-all duration-[var(--dur-fast)] ease-[var(--ease-out)]",
+    // Retro terminal menu rows: square, uppercase mono, left phosphor bar when
+    // active (see the ▍ marker rendered by the caller).
+    "group relative flex items-center gap-3 w-full border-l-2",
+    "font-mono text-xs uppercase tracking-[0.1em]",
+    "transition-colors duration-[var(--dur-fast)] ease-[var(--ease-out)]",
     collapsed ? "px-2 py-2 justify-center" : "px-3 py-2",
     active
-      ? "bg-[var(--primary)]/10 text-[var(--primary)] font-medium"
+      ? "border-l-[var(--primary)] bg-[var(--primary)]/12 text-[var(--primary)] retro-glow"
       : danger
-        ? "text-[var(--muted-foreground)] hover:text-[var(--destructive)] hover:bg-[var(--destructive)]/10"
-        : "text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:bg-[var(--secondary)]"
+        ? "border-l-transparent text-[var(--muted-foreground)] hover:border-l-[var(--destructive)] hover:text-[var(--destructive)] hover:bg-[var(--destructive)]/10"
+        : "border-l-transparent text-[var(--muted-foreground)] hover:border-l-[var(--primary)]/60 hover:text-[var(--foreground)] hover:bg-[var(--secondary)]"
   );
 }
 
@@ -111,6 +54,16 @@ function CollapsedTip({ label }: { label: string }) {
     >
       {label}
     </span>
+  );
+}
+
+/**
+ * Opens the ⌘K palette by replaying the shortcut it already listens for. This
+ * avoids threading extra state through Layout just to toggle a dialog.
+ */
+function openCommandPalette() {
+  document.dispatchEvent(
+    new KeyboardEvent("keydown", { key: "k", metaKey: true, bubbles: true })
   );
 }
 
@@ -194,6 +147,31 @@ export default function Sidebar({
           )}
         >
           {collapsed ? <ChevronRight className="h-3 w-3" /> : <ChevronLeft className="h-3 w-3" />}
+        </button>
+      </div>
+
+      {/* Command palette launcher — mirrors the ⌘K hotkey for discoverability */}
+      <div className={cn("pt-3", collapsed ? "px-2" : "px-3")}>
+        <button
+          onClick={openCommandPalette}
+          aria-label="Open command palette"
+          className={cn(
+            "focus-ring group relative flex w-full items-center gap-2 rounded-lg border border-[var(--border)]",
+            "bg-[var(--card)] text-sm text-[var(--muted-foreground)]",
+            "transition-colors duration-[var(--dur-fast)] hover:border-[var(--primary)]/40 hover:text-[var(--foreground)]",
+            collapsed ? "justify-center px-2 py-2" : "px-2.5 py-2"
+          )}
+        >
+          <Search className="h-4 w-4 shrink-0" />
+          {!collapsed && (
+            <>
+              <span className="flex-1 text-left">Search…</span>
+              <kbd className="rounded border border-[var(--border)] bg-[var(--secondary)] px-1.5 py-0.5 text-[10px] font-medium">
+                ⌘K
+              </kbd>
+            </>
+          )}
+          {collapsed && <CollapsedTip label="Search (⌘K)" />}
         </button>
       </div>
 

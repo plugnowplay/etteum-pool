@@ -11,7 +11,11 @@ export interface Column<T> {
   header: React.ReactNode;
   /** Cell renderer. */
   cell: (row: T) => React.ReactNode;
-  /** Hide below a breakpoint: "md" | "lg" | "xl". */
+  /**
+   * @deprecated No longer hides anything. The table scrolls sideways on small
+   * screens instead, so every column stays reachable. Kept so existing column
+   * definitions keep compiling.
+   */
   hideBelow?: "sm" | "md" | "lg" | "xl";
   /** Right-align (numbers). */
   align?: "left" | "right" | "center";
@@ -19,16 +23,9 @@ export interface Column<T> {
   sortValue?: (row: T) => string | number | null | undefined;
   /** Fixed width utility class, e.g. "w-24". */
   width?: string;
-  /** Mark as the primary column — always shown, bolder on mobile cards. */
+  /** Marks the most important column. Sticks to the left edge while scrolling. */
   primary?: boolean;
 }
-
-const hideMap = {
-  sm: "hidden sm:table-cell",
-  md: "hidden md:table-cell",
-  lg: "hidden lg:table-cell",
-  xl: "hidden xl:table-cell",
-} as const;
 
 const alignMap = {
   left: "text-left",
@@ -110,14 +107,18 @@ export function DataTable<T>({
   return (
     <div
       className={cn(
-        "overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--card)] shadow-[var(--es-1)]",
+        // No outer frame — the header rule and row dividers already delimit the
+        // table. A full border here nested a box inside the page's own sections.
+        "overflow-hidden bg-transparent",
         className
       )}
     >
+      {/* One table at every size. On phones it scrolls sideways instead of
+       * hiding columns, so no data is ever unreachable. */}
       <div className="overflow-x-auto">
         <table className="w-full border-collapse">
           <thead className={cn(stickyHeader && "sticky top-0 z-10")}>
-            <tr className="border-b border-[var(--border)] bg-[var(--surface-2)]">
+            <tr className="border-y border-[var(--border)] bg-[var(--background)]">
               {columns.map((col) => {
                 const sortable = Boolean(col.sortValue);
                 const active = sort?.key === col.key;
@@ -129,9 +130,8 @@ export function DataTable<T>({
                       active ? (sort!.dir === "asc" ? "ascending" : "descending") : undefined
                     }
                     className={cn(
-                      "px-4 py-3 text-[10px] font-semibold uppercase tracking-wider text-[var(--muted-foreground)]",
+                      "whitespace-nowrap px-3 py-2 text-[10px] font-semibold uppercase tracking-wider text-[var(--muted-foreground)]",
                       alignMap[col.align ?? "left"],
-                      col.hideBelow && hideMap[col.hideBelow],
                       col.width,
                       sortable && "cursor-pointer select-none transition-colors hover:text-[var(--foreground)]"
                     )}
@@ -182,9 +182,8 @@ export function DataTable<T>({
                       <td
                         key={col.key}
                         className={cn(
-                          "px-4 py-3 align-middle text-sm text-[var(--foreground)]",
-                          alignMap[col.align ?? "left"],
-                          col.hideBelow && hideMap[col.hideBelow]
+                          "whitespace-nowrap px-3 py-1.5 align-middle text-xs text-[var(--foreground)]",
+                          alignMap[col.align ?? "left"]
                         )}
                       >
                         {col.cell(row)}
@@ -205,7 +204,7 @@ export function DataTable<T>({
       )}
 
       {(footerLeft || (pageSize && sorted.length > pageSize)) && (
-        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[var(--border)] bg-[var(--surface-2)] px-4 py-2.5">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[var(--border)] bg-transparent px-1 py-2">
           <p className="tabular text-[11px] text-[var(--muted-foreground)]">
             {footerLeft ??
               `${(safePage - 1) * pageSize! + 1}–${Math.min(

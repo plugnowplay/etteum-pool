@@ -17,6 +17,8 @@ import { Progress } from "@/components/ui/progress";
 import { useWsEvent } from "@/hooks/useWebSocket";
 import {
   completeCodexOAuthCallbackUrl,
+  completeKiroOAuth,
+  completeKiroOAuthCallbackUrl,
   createAccount,
   createByokProvider,
   deleteByokProvider,
@@ -28,13 +30,18 @@ import {
   fetchSettings,
   fetchWarmupQueue,
   getCodexAuthorize,
+  getKiroAuthorize,
   importAccounts,
+  importKiroRefreshTokens,
   loginAccounts,
   loginAllAccounts,
   pollCodexOAuthStatus,
+  pollKiroOAuthStatus,
   revealByokKey,
   startCodexOAuthProxy,
+  startKiroOAuthProxy,
   stopCodexOAuth,
+  stopKiroOAuth,
   testByokProvider,
   updateByokProvider,
   updateSettings,
@@ -112,13 +119,19 @@ export default function Accounts() {
   const [instantTokens, setInstantTokens] = useState("");
   const [cookieValue, setCookieValue] = useState("");
   const [bulkText, setBulkText] = useState("");
-  const [addMode, setAddMode] = useState<"single" | "bulk" | "instant" | "pat" | "apikey" | "github" | "token">("bulk");
+  const [addMode, setAddMode] = useState<"single" | "bulk" | "instant" | "pat" | "apikey" | "github" | "token" | "refresh">("bulk");
+  const [kiroRefreshTokens, setKiroRefreshTokens] = useState("");
+  const [kiroRefreshBusy, setKiroRefreshBusy] = useState(false);
   const [bulkBrowserEngine, setBulkBrowserEngine] = useState("camoufox");
   const [bulkHeadless, setBulkHeadless] = useState(true);
   const [bulkConcurrency, setBulkConcurrency] = useState(3);
   const [codexOauthBusy, setCodexOauthBusy] = useState(false);
   const [codexOauthAuthUrl, setCodexOauthAuthUrl] = useState("");
   const [codexOauthCallbackUrl, setCodexOauthCallbackUrl] = useState("");
+  const [kiroOauthBusy, setKiroOauthBusy] = useState(false);
+  const [kiroOauthWaiting, setKiroOauthWaiting] = useState(false);
+  const [kiroOauthAuthUrl, setKiroOauthAuthUrl] = useState("");
+  const [kiroOauthCallbackUrl, setKiroOauthCallbackUrl] = useState("");
   const [grokApiKey, setGrokApiKey] = useState("");
   const [grokBusy, setGrokBusy] = useState(false);
   const [grokCliDeviceCode, setGrokCliDeviceCode] = useState<{
@@ -139,7 +152,6 @@ export default function Accounts() {
   const [codebuddyChinaBulkApiKeys, setCodebuddyChinaBulkApiKeys] = useState("");
   const [codebuddyChinaAccessTokens, setCodebuddyChinaAccessTokens] = useState("");
   const [codebuddyChinaBusy, setCodebuddyChinaBusy] = useState(false);
-  const [codebuddyBulkApiKeys, setCodebuddyBulkApiKeys] = useState("");
   const [codebuddyBulkTokens, setCodebuddyBulkTokens] = useState("");
   const [codebuddyBusy, setCodebuddyBusy] = useState(false);
   const [cbIntlDeviceCode, setCbIntlDeviceCode] = useState<{
@@ -172,6 +184,9 @@ export default function Accounts() {
   const codexOauthPopupRef = useRef<Window | null>(null);
   const codexOauthPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const codexOauthStateRef = useRef<string | null>(null);
+  const kiroOauthPopupRef = useRef<Window | null>(null);
+  const kiroOauthPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const kiroOauthStateRef = useRef<string | null>(null);
   const loadingRef = useRef(false);
 
   async function load() {
@@ -275,6 +290,11 @@ export default function Accounts() {
       stopCodexOAuth(codexOauthStateRef.current).catch(() => {});
     }
     codexOauthPopupRef.current?.close();
+    if (kiroOauthPollRef.current) clearInterval(kiroOauthPollRef.current);
+    if (kiroOauthStateRef.current) {
+      stopKiroOAuth(kiroOauthStateRef.current).catch(() => {});
+    }
+    kiroOauthPopupRef.current?.close();
   }, []);
 
   useEffect(() => {
@@ -588,37 +608,6 @@ export default function Accounts() {
     } finally {
       setGrokCliBusy(false);
     }
-  }
-
-  async function handleCodeBuddyBulkApiKey() {
-    const keysText = codebuddyBulkApiKeys.trim();
-    if (!keysText) { showError(new Error("Paste CodeBuddy API keys")); return; }
-
-    const keys = keysText.split("\n").map(k => k.trim()).filter(Boolean);
-    if (keys.length === 0) { showError(new Error("No valid API keys found")); return; }
-
-    for (const key of keys) {
-      if (!key.startsWith("cb-")) {
-        showError(new Error(`Invalid API key format: ${key.slice(0, 20)}... (must start with cb-)`));
-        return;
-      }
-    }
-
-    setCodebuddyBusy(true);
-    try {
-      const res = await fetchApi<any>("/api/accounts", {
-        method: "POST",
-        body: JSON.stringify({
-          provider: "codebuddy",
-          apiKeys: keysText,
-        }),
-      });
-      showSuccess(`Added ${res.count} CodeBuddy account(s) successfully`);
-      setCodebuddyBulkApiKeys("");
-      setAddDialogProvider(null);
-      await load();
-    } catch (err) { showError(err); }
-    finally { setCodebuddyBusy(false); }
   }
 
   // ── CodeBuddy Intl: Bulk Access Token paste ────────────────────────
@@ -988,13 +977,13 @@ export default function Accounts() {
 
   function handleOpenAddDialog(provider: Provider) {
     resetCodexOAuthFlow();
+    resetKiroOAuthFlow();
     if (provider === "codex") {
       setAddMode("pat");
     }
-    if (false) {
-      setAddMode("pat");
-    }
-    if (false) {
+    if (provider === "kiro") {
+      // Default Kiro to OAuth login (reuses the "pat" mode slot for the
+      // OAuth panel — same convention Codex uses).
       setAddMode("pat");
     }
     if (provider === "grok" || provider === "grok-cli") {
@@ -1008,6 +997,11 @@ export default function Accounts() {
     resetCodexOAuthFlow();
     if (state) {
       stopCodexOAuth(state).catch(() => {});
+    }
+    const kiroState = kiroOauthStateRef.current;
+    resetKiroOAuthFlow();
+    if (kiroState) {
+      stopKiroOAuth(kiroState).catch(() => {});
     }
     setCodebuddyChinaBulkApiKeys("");
     setGrokCliAccessToken("");
@@ -1023,6 +1017,231 @@ export default function Accounts() {
       stopCodexOAuth(state).catch(() => {});
     }
     setAddMode(mode);
+  }
+
+  // ── Kiro OAuth (IDE 2026+) ───────────────────────────────────────────
+
+  function clearKiroOAuthPolling() {
+    if (kiroOauthPollRef.current) {
+      clearInterval(kiroOauthPollRef.current);
+      kiroOauthPollRef.current = null;
+    }
+  }
+
+  function resetKiroOAuthFlow() {
+    clearKiroOAuthPolling();
+    kiroOauthPopupRef.current?.close();
+    kiroOauthPopupRef.current = null;
+    kiroOauthStateRef.current = null;
+    setKiroOauthBusy(false);
+    setKiroOauthWaiting(false);
+    setKiroOauthAuthUrl("");
+    setKiroOauthCallbackUrl("");
+  }
+
+  function isKiroCallbackUrlValid(value: string) {
+    const trimmed = value.trim();
+    if (!trimmed) return false;
+    try {
+      // Standard URL: http://localhost:3128/?code=...&state=...
+      const url = new URL(trimmed);
+      if (url.searchParams.get("code")) return true;
+    } catch {
+      // Not a full URL — maybe user pasted just `code=...` or the raw code
+    }
+    // Kiro sometimes returns only ?code=… without state, or the user pastes
+    // just the code value. Accept anything that at least contains a code.
+    if (/[?&]code=[^&\s]+/i.test(trimmed)) return true;
+    if (/^[A-Za-z0-9._~-]{16,}$/.test(trimmed)) return true; // raw code
+    return false;
+  }
+
+  function extractKiroCallbackParts(value: string): { code: string; state: string } {
+    const trimmed = value.trim();
+    // Try full URL first
+    try {
+      const url = new URL(trimmed);
+      return {
+        code: url.searchParams.get("code") || "",
+        state: url.searchParams.get("state") || "",
+      };
+    } catch {
+      // fall through
+    }
+    // Query-string fragment (?code=..&state=..)
+    const qsMatch = trimmed.match(/[?&]code=([^&\s]+)(?:.*?[?&]state=([^&\s]+))?/i);
+    if (qsMatch) {
+      return { code: decodeURIComponent(qsMatch[1] || ""), state: decodeURIComponent(qsMatch[2] || "") };
+    }
+    // Raw code
+    return { code: trimmed, state: "" };
+  }
+
+  const hasPreparedKiroOAuth = !!kiroOauthStateRef.current && !!kiroOauthAuthUrl;
+  const kiroCallbackReady = isKiroCallbackUrlValid(kiroOauthCallbackUrl);
+  const kiroLoopbackUrl = "http://localhost:3128";
+  const kiroCallbackExample = "http://localhost:3128/?code=...&state=...";
+
+  async function startKiroOAuthSession() {
+    const redirectUri = kiroLoopbackUrl;
+    const appPort = window.location.port || (window.location.protocol === "https:" ? "443" : "80");
+    const auth = await getKiroAuthorize(redirectUri);
+    await startKiroOAuthProxy({
+      appPort,
+      state: auth.state,
+      codeVerifier: auth.codeVerifier,
+      redirectUri: auth.redirectUri,
+    });
+    kiroOauthStateRef.current = auth.state;
+    setKiroOauthAuthUrl(auth.authUrl);
+    setKiroOauthCallbackUrl("");
+    return auth;
+  }
+
+  function finishKiroOAuthSuccess(status: Awaited<ReturnType<typeof pollKiroOAuthStatus>>) {
+    resetKiroOAuthFlow();
+    showSuccess(`Kiro connected: ${status.connection?.displayName || status.connection?.email || "account added"}`);
+    setAddDialogProvider(null);
+    load();
+  }
+
+  function beginKiroOAuthPolling() {
+    clearKiroOAuthPolling();
+    kiroOauthPollRef.current = setInterval(async () => {
+      const state = kiroOauthStateRef.current;
+      if (!state) return;
+      try {
+        const status = await pollKiroOAuthStatus(state);
+        if (status.status === "done") {
+          finishKiroOAuthSuccess(status);
+          return;
+        }
+        if (
+          status.status === "error" ||
+          status.status === "cancelled" ||
+          status.status === "not_found" ||
+          status.status === "unknown"
+        ) {
+          resetKiroOAuthFlow();
+          showError(new Error(status.error || "Kiro OAuth failed"));
+        }
+      } catch (pollError) {
+        resetKiroOAuthFlow();
+        showError(pollError);
+      }
+    }, 1500);
+  }
+
+  async function handleKiroOAuthLogin() {
+    if (kiroOauthBusy || kiroOauthWaiting) return;
+    setKiroOauthBusy(true);
+    setError(null);
+    try {
+      const auth = await startKiroOAuthSession();
+      kiroOauthPopupRef.current?.close();
+      kiroOauthPopupRef.current = window.open(auth.authUrl, "_blank", "noopener,noreferrer");
+      setKiroOauthWaiting(true);
+      beginKiroOAuthPolling();
+    } catch (err) {
+      resetKiroOAuthFlow();
+      showError(err);
+    } finally {
+      setKiroOauthBusy(false);
+    }
+  }
+
+  async function handleKiroOAuthPrepareManual() {
+    if (kiroOauthBusy || hasPreparedKiroOAuth) return;
+    setKiroOauthBusy(true);
+    setError(null);
+    try {
+      await startKiroOAuthSession();
+    } catch (err) {
+      showError(err);
+    } finally {
+      setKiroOauthBusy(false);
+    }
+  }
+
+  async function handleKiroOAuthSubmitManual() {
+    if (kiroOauthBusy || !kiroCallbackReady) return;
+    setKiroOauthBusy(true);
+    setError(null);
+    try {
+      const { code, state: pastedState } = extractKiroCallbackParts(kiroOauthCallbackUrl);
+      const state = pastedState || kiroOauthStateRef.current || "";
+      if (!code) throw new Error("Callback URL must include a code");
+      if (!state) throw new Error("OAuth session expired — click \"Prepare OAuth\" again");
+      // Stop polling so background poller doesn't race with our submit.
+      clearKiroOAuthPolling();
+      await completeKiroOAuth({ code, state });
+      const status = await pollKiroOAuthStatus(state);
+      finishKiroOAuthSuccess(status);
+    } catch (err) {
+      showError(err);
+      setKiroOauthBusy(false);
+    }
+  }
+
+  async function handleKiroOAuthCopyAuthUrl() {
+    if (!kiroOauthAuthUrl) return;
+    await safeCopyText(kiroOauthAuthUrl, "Auth URL copied");
+  }
+
+  function handleKiroOAuthOpenManual() {
+    if (!kiroOauthAuthUrl) return;
+    window.open(kiroOauthAuthUrl, "_blank", "noopener,noreferrer");
+  }
+
+  async function handleKiroOAuthPasteCallback() {
+    try {
+      const text = await navigator.clipboard.readText();
+      setKiroOauthCallbackUrl(text);
+    } catch (err) {
+      showError(err);
+    }
+  }
+
+  function handleSetKiroMode(mode: typeof addMode) {
+    if (mode === addMode) return;
+    const state = kiroOauthStateRef.current;
+    resetKiroOAuthFlow();
+    if (state) {
+      stopKiroOAuth(state).catch(() => {});
+    }
+    setAddMode(mode);
+  }
+
+  async function handleKiroImportRefresh() {
+    const tokens = kiroRefreshTokens
+      .split(/\r?\n/)
+      .map((t) => t.trim())
+      .filter(Boolean);
+    if (tokens.length === 0) {
+      showError(new Error("Paste at least one refresh token (one per line)"));
+      return;
+    }
+    setKiroRefreshBusy(true);
+    setError(null);
+    try {
+      const result = await importKiroRefreshTokens(tokens);
+      if (result.success > 0) {
+        showSuccess(`Imported ${result.success} Kiro account${result.success === 1 ? "" : "s"}${result.failed > 0 ? ` (${result.failed} failed)` : ""}`);
+      }
+      if (result.failed > 0) {
+        const firstErr = result.results.find((r) => !r.success);
+        if (firstErr) showError(new Error(`${result.failed} failed. First: ${firstErr.error || "unknown"}`));
+      }
+      if (result.success > 0) {
+        setKiroRefreshTokens("");
+        setAddDialogProvider(null);
+        await load();
+      }
+    } catch (err) {
+      showError(err);
+    } finally {
+      setKiroRefreshBusy(false);
+    }
   }
 
   async function handleLoginAll() {
@@ -1144,17 +1363,16 @@ export default function Accounts() {
   }
 
   async function handleAddByok() {
-    if (!byokForm.label || !byokForm.base_url || !byokForm.models) {
-      showError(new Error("Provider name, base URL, and models are required"));
+    if (!byokForm.label || !byokForm.base_url) {
+      showError(new Error("Provider name and base URL are required"));
       return;
     }
 
-    const models = byokForm.models.split(",").map(m => m.trim()).filter(Boolean);
+    // Models are optional here — user manages them from the /models page.
+    const models = byokForm.models
+      ? byokForm.models.split(",").map((m) => m.trim()).filter(Boolean)
+      : [];
     const apiKeys = buildByokKeyPayload(false);
-    if (models.length === 0) {
-      showError(new Error("At least one model is required"));
-      return;
-    }
     if (apiKeys.length === 0) {
       showError(new Error("Add at least one API key"));
       return;
@@ -1181,17 +1399,16 @@ export default function Accounts() {
 
   async function handleUpdateByok() {
     if (byokEditId === null) return;
-    if (!byokForm.base_url || !byokForm.models) {
-      showError(new Error("Base URL and models are required"));
+    if (!byokForm.base_url) {
+      showError(new Error("Base URL is required"));
       return;
     }
 
-    const models = byokForm.models.split(",").map(m => m.trim()).filter(Boolean);
+    // Models are optional — managed via /models page.
+    const models = byokForm.models
+      ? byokForm.models.split(",").map((m) => m.trim()).filter(Boolean)
+      : [];
     const apiKeys = buildByokKeyPayload(true);
-    if (models.length === 0) {
-      showError(new Error("At least one model is required"));
-      return;
-    }
     if (apiKeys.length === 0) {
       showError(new Error("At least one key row is required"));
       return;
@@ -1526,18 +1743,19 @@ export default function Accounts() {
       </div>
 
       {/* BYOK Providers Section */}
-      <div className="space-y-4">
-        <div className="flex items-center justify-between rounded-lg border border-[var(--border)] bg-[var(--card)] p-4">
-          <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-[var(--primary)]/10 text-[var(--primary)]">
-              <Key className="h-5 w-5" />
-            </div>
-            <div>
-              <h2 className="text-lg font-semibold text-[var(--foreground)]">Custom Providers (BYOK)</h2>
-              <p className="text-sm text-[var(--muted-foreground)]">Bring Your Own Key — use your own API providers</p>
-            </div>
+      <div className="space-y-3">
+        {/* Section rule, not a boxed banner — matches every other page heading. */}
+        <div className="flex items-center justify-between gap-2 border-t border-[var(--border)] pt-3">
+          <div className="min-w-0">
+            <h2 className="font-display flex items-center gap-2 text-[11px] text-[var(--muted-foreground)]">
+              <Key className="h-3.5 w-3.5 text-[var(--primary)]" />
+              Custom Providers (BYOK)
+            </h2>
+            <p className="mt-0.5 truncate text-xs text-[var(--muted-foreground)]">
+              Bring Your Own Key — use your own API providers
+            </p>
           </div>
-          <Button onClick={() => setByokDialogOpen(true)} className="gap-2 shadow-sm">
+          <Button size="sm" onClick={() => setByokDialogOpen(true)} className="gap-2">
             <Plus className="h-4 w-4" /> Add Provider
           </Button>
         </div>
@@ -1816,14 +2034,16 @@ export default function Accounts() {
               </div>
 
               <div className="space-y-1.5">
-                <label className="text-sm font-medium text-[var(--foreground)]">Models</label>
+                <label className="text-sm font-medium text-[var(--foreground)]">Models <span className="text-[10px] font-normal text-[var(--muted-foreground)]">(opsional)</span></label>
                 <textarea
                   value={byokForm.models}
                   onChange={(e) => setByokForm({ ...byokForm, models: e.target.value })}
-                  placeholder="gpt-4, claude-3-opus, llama-3"
+                  placeholder="Kosongkan — tambah model dari halaman /models setelah provider dibuat"
                   className="w-full h-20 rounded-md border border-[var(--border)] bg-[var(--background)] p-3 text-sm font-mono text-[var(--foreground)] placeholder:text-[var(--muted-foreground)] focus:outline-none focus:ring-1 focus:ring-[var(--ring)] resize-none"
                 />
-                <p className="text-xs text-[var(--muted-foreground)]">Comma-separated list of model IDs</p>
+                <p className="text-xs text-[var(--muted-foreground)]">
+                  Boleh dikosongkan. Setelah provider dibuat, buka <a href="/models" className="underline text-[var(--foreground)]">/models</a> untuk menambah model (dengan context window, max output, dll).
+                </p>
               </div>
             </div>
 
@@ -1910,6 +2130,21 @@ export default function Accounts() {
                 className={`flex-1 rounded px-3 py-1.5 text-xs font-medium transition-colors ${addMode === "single" ? "bg-[var(--background)] text-[var(--foreground)] shadow-sm" : "text-[var(--muted-foreground)]"}`}
               >Single</button>
             </div>
+          ) : addDialogProvider === "kiro" ? (
+            <div className="flex gap-1 rounded-md bg-[var(--secondary)] p-1">
+              <button onClick={() => handleSetKiroMode("pat")}
+                className={`flex-1 rounded px-3 py-1.5 text-xs font-medium transition-colors ${addMode === "pat" ? "bg-[var(--background)] text-[var(--foreground)] shadow-sm" : "text-[var(--muted-foreground)]"}`}
+              >OAuth Login</button>
+              <button onClick={() => handleSetKiroMode("refresh")}
+                className={`flex-1 rounded px-3 py-1.5 text-xs font-medium transition-colors ${addMode === "refresh" ? "bg-[var(--background)] text-[var(--foreground)] shadow-sm" : "text-[var(--muted-foreground)]"}`}
+              >Refresh Token</button>
+              <button onClick={() => handleSetKiroMode("bulk")}
+                className={`flex-1 rounded px-3 py-1.5 text-xs font-medium transition-colors ${addMode === "bulk" ? "bg-[var(--background)] text-[var(--foreground)] shadow-sm" : "text-[var(--muted-foreground)]"}`}
+              >Bulk (Email|Pass)</button>
+              <button onClick={() => handleSetKiroMode("single")}
+                className={`flex-1 rounded px-3 py-1.5 text-xs font-medium transition-colors ${addMode === "single" ? "bg-[var(--background)] text-[var(--foreground)] shadow-sm" : "text-[var(--muted-foreground)]"}`}
+              >Single</button>
+            </div>
           ) : addDialogProvider === "qoder" ? (
             <div className="flex gap-1 rounded-md bg-[var(--secondary)] p-1">
               <button onClick={() => setAddMode("pat")}
@@ -1950,7 +2185,7 @@ export default function Accounts() {
               >Access Token</button>
               <button onClick={() => setAddMode("apikey")}
                 className={`flex-1 rounded px-3 py-1.5 text-xs font-medium transition-colors ${addMode === "apikey" ? "bg-[var(--background)] text-[var(--foreground)] shadow-sm" : "text-[var(--muted-foreground)]"}`}
-              >OAuth / API Key</button>
+              >OAuth</button>
             </div>
           ) : addDialogProvider === "codebuddy-china" ? (
             <div className="flex gap-1 rounded-md bg-[var(--secondary)] p-1">
@@ -2065,7 +2300,7 @@ export default function Accounts() {
                 </>
               ) : (
                 <>
-                  <div className="rounded-md border border-[var(--border)] bg-[var(--surface-2)] p-3 space-y-3">
+                  <div className="panel py-1 space-y-3">
                     <div className="space-y-1.5">
                       <p className="text-xs text-[var(--muted-foreground)]">
                         Buka link di bawah — kode <span className="font-mono text-[var(--foreground)]">{grokCliDeviceCode.userCode}</span> sudah terisi otomatis, tinggal konfirmasi di x.ai.
@@ -2135,7 +2370,7 @@ export default function Accounts() {
 
           {addMode === "token" && addDialogProvider === "codebuddy" && (
             <div className="space-y-4">
-              <div className="rounded-md border border-[var(--border)] bg-[var(--surface-2)] p-3 space-y-3">
+              <div className="panel py-1 space-y-3">
                 <p className="text-sm font-medium text-[var(--foreground)]">Paste CodeBuddy Access Tokens (bulk)</p>
                 <p className="text-xs text-[var(--muted-foreground)]">
                   Satu token per baris. Access token CodeBuddy (hasil device flow / browser session) — valid setahun,
@@ -2160,7 +2395,7 @@ export default function Accounts() {
 
           {addMode === "apikey" && addDialogProvider === "codebuddy" && (
             <div className="space-y-4">
-              <div className="rounded-md border border-[var(--border)] bg-[var(--surface-2)] p-3 space-y-3">
+              <div className="panel py-1 space-y-3">
                 <div className="flex items-center justify-between gap-2">
                   <div>
                     <p className="text-sm font-medium text-[var(--foreground)]">Login via OAuth (Device Flow)</p>
@@ -2207,28 +2442,11 @@ export default function Accounts() {
                   </div>
                 )}
               </div>
-              <div className="border-t border-[var(--border)] pt-3">
-                <div>
-                  <label className="text-sm text-[var(--foreground)]">API Keys (satu per baris, prefix cb-)</label>
-                  <textarea
-                    value={codebuddyBulkApiKeys}
-                    onChange={(e) => setCodebuddyBulkApiKeys(e.target.value)}
-                    className="mt-1 w-full h-32 rounded-md border border-[var(--border)] bg-[var(--background)] p-3 text-sm font-mono text-[var(--foreground)] placeholder:text-[var(--muted-foreground)] focus:outline-none focus:ring-1 focus:ring-[var(--ring)] resize-none"
-                    placeholder={"cb-xxxxxxxxxxxxxxxx...\ncb-yyyyyyyyyyyyyyyy..."}
-                    disabled={codebuddyBusy}
-                  />
-                  <p className="mt-1 text-xs text-[var(--muted-foreground)]">
-                    Alternatif: paste CodeBuddy API key (prefix <code>cb-</code>), satu per baris.
-                    Model: <code>cb-opus-4.8</code>, <code>cb-sonnet-4.6</code>, <code>cb-gpt-5.5</code>, dll.
-                  </p>
+              {!cbIntlDeviceCode && (
+                <div className="flex justify-end gap-2">
+                  <Button variant="outline" onClick={() => setAddDialogProvider(null)} disabled={cbIntlBusy}>Cancel</Button>
                 </div>
-                <div className="flex justify-end gap-2 mt-3">
-                  <Button variant="outline" onClick={() => setAddDialogProvider(null)} disabled={codebuddyBusy}>Cancel</Button>
-                  <Button onClick={handleCodeBuddyBulkApiKey} disabled={codebuddyBusy || !codebuddyBulkApiKeys.trim()}>
-                    {codebuddyBusy ? (<><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Importing...</>) : "Add Accounts"}
-                  </Button>
-                </div>
-              </div>
+              )}
             </div>
           )}
 
@@ -2348,6 +2566,107 @@ eyJraWQiOiJhYmMxMjMi...
 
               <div className="flex justify-end gap-2 pt-1">
                 <Button size="sm" variant="outline" onClick={handleCloseAddDialog} disabled={codexOauthBusy && !hasPreparedCodexOAuth}>Cancel</Button>
+              </div>
+            </div>
+          )}
+
+          {/* Kiro OAuth mode (IDE 2026+ /signin + loopback 3128) */}
+          {addMode === "pat" && addDialogProvider === "kiro" && (
+            <div className="space-y-3">
+              <div className="rounded-md border border-[var(--border)] bg-[var(--secondary)]/30 p-3 text-sm text-[var(--muted-foreground)]">
+                Login Kiro pakai OAuth flow IDE Kiro terbaru (<code>app.kiro.dev/signin</code>).
+                Klik <b>Start OAuth Login</b> untuk buka popup, atau <b>Prepare Manual</b> untuk copy URL + paste callback dari browser.
+              </div>
+
+              <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
+                <Button variant="outline" size="sm" onClick={handleKiroOAuthPrepareManual} disabled={kiroOauthBusy || kiroOauthWaiting || hasPreparedKiroOAuth}>
+                  {hasPreparedKiroOAuth ? "Manual Ready" : kiroOauthBusy ? "Preparing..." : "Prepare Manual"}
+                </Button>
+                <Button size="sm" onClick={handleKiroOAuthLogin} disabled={kiroOauthBusy || kiroOauthWaiting || hasPreparedKiroOAuth}>
+                  {kiroOauthBusy ? "Opening browser..." : kiroOauthWaiting ? "Waiting for OAuth..." : "Start OAuth Login"}
+                </Button>
+              </div>
+
+              {hasPreparedKiroOAuth && (
+                <div className="space-y-3 rounded-md border border-[var(--border)] p-3">
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <label className="text-sm text-[var(--foreground)]">Auth URL</label>
+                      <div className="flex gap-2">
+                        <Button size="sm" variant="outline" onClick={handleKiroOAuthCopyAuthUrl}>Copy</Button>
+                        <Button size="sm" variant="outline" onClick={handleKiroOAuthOpenManual}>Open</Button>
+                      </div>
+                    </div>
+                    <textarea
+                      value={kiroOauthAuthUrl}
+                      readOnly
+                      className="w-full h-20 rounded-md border border-[var(--border)] bg-[var(--background)] p-3 text-xs font-mono text-[var(--foreground)] focus:outline-none resize-none"
+                    />
+                  </div>
+
+                  <div className="rounded-md bg-[var(--secondary)]/30 p-3 text-xs text-[var(--muted-foreground)] space-y-1.5">
+                    <p className="text-[var(--foreground)] font-medium">Cara pakai:</p>
+                    <ol className="list-decimal ml-4 space-y-1">
+                      <li>Copy Auth URL di atas, buka di browser.</li>
+                      <li>Login Google/GitHub, tunggu halaman <b>"Sign-in successful"</b>.</li>
+                      <li>Klik tombol <b>"Return to Kiro IDE"</b> / <b>"Open Kiro"</b> di halaman itu — browser akan mencoba redirect ke <code>{kiroLoopbackUrl}</code>.</li>
+                      <li>Kalau browser bilang <i>"can't connect"</i> atau URL bar berisi <code>?code=…</code>, copy URL bar tersebut lalu paste di kotak bawah dan tekan <b>Submit</b>.</li>
+                    </ol>
+                    <p className="mt-2"><span className="text-[var(--foreground)]">Contoh callback:</span> <code className="break-all">{kiroCallbackExample}</code></p>
+                  </div>
+
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <label className="text-sm text-[var(--foreground)]">Callback URL / Code</label>
+                      <Button size="sm" variant="outline" onClick={handleKiroOAuthPasteCallback} disabled={kiroOauthBusy}>Paste</Button>
+                    </div>
+                    <textarea
+                      value={kiroOauthCallbackUrl}
+                      onChange={(e) => setKiroOauthCallbackUrl(e.target.value)}
+                      placeholder={kiroCallbackExample}
+                      className="w-full h-20 rounded-md border border-[var(--border)] bg-[var(--background)] p-3 text-xs font-mono text-[var(--foreground)] focus:outline-none focus:ring-1 focus:ring-[var(--ring)] resize-none"
+                    />
+                    <div className="flex justify-end">
+                      <Button size="sm" onClick={handleKiroOAuthSubmitManual} disabled={kiroOauthBusy || !kiroCallbackReady}>
+                        {kiroOauthBusy ? "Completing OAuth..." : kiroOauthWaiting ? "Complete Manually" : "Submit Callback URL"}
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              <div className="flex justify-end gap-2 pt-1">
+                <Button size="sm" variant="outline" onClick={handleCloseAddDialog} disabled={kiroOauthBusy && !hasPreparedKiroOAuth && !kiroOauthWaiting}>Cancel</Button>
+              </div>
+            </div>
+          )}
+
+          {/* Refresh Token import (Kiro only) */}
+          {addMode === "refresh" && addDialogProvider === "kiro" && (
+            <div className="space-y-4">
+              <div className="rounded-md bg-[var(--secondary)]/30 p-3 text-xs text-[var(--muted-foreground)] space-y-1">
+                <p className="text-[var(--foreground)] font-medium">Import Kiro dari Refresh Token</p>
+                <p>Paste refresh token Kiro (satu per baris). Backend akan menukar tiap token dengan access token baru di <code>/refreshToken</code> lalu simpan sebagai akun aktif — tanpa perlu login lewat browser.</p>
+                <p>Sumber refresh token: file <code>~/.aws/sso/cache/kiro-auth-token.json</code> di mesin lain, export dari Kiro IDE, atau backup lama.</p>
+              </div>
+              <div>
+                <label className="text-sm text-[var(--foreground)]">Refresh Tokens (satu per baris)</label>
+                <textarea
+                  value={kiroRefreshTokens}
+                  onChange={(e) => setKiroRefreshTokens(e.target.value)}
+                  className="mt-1 w-full h-40 rounded-md border border-[var(--border)] bg-[var(--background)] p-3 text-sm font-mono text-[var(--foreground)] placeholder:text-[var(--muted-foreground)] focus:outline-none focus:ring-1 focus:ring-[var(--ring)] resize-none"
+                  placeholder={"eyJraWQiOiJrZXktMTY...\nAQoJb3JpZ2luX2VjEB...\n..."}
+                  disabled={kiroRefreshBusy}
+                />
+                <p className="mt-1 text-xs text-[var(--muted-foreground)]">
+                  {kiroRefreshTokens.split(/\r?\n/).filter((l) => l.trim()).length} token siap diimport.
+                </p>
+              </div>
+              <div className="flex justify-end gap-2">
+                <Button variant="outline" onClick={handleCloseAddDialog} disabled={kiroRefreshBusy}>Cancel</Button>
+                <Button onClick={handleKiroImportRefresh} disabled={kiroRefreshBusy || !kiroRefreshTokens.trim()}>
+                  {kiroRefreshBusy ? "Importing..." : "Import Refresh Tokens"}
+                </Button>
               </div>
             </div>
           )}

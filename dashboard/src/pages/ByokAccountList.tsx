@@ -339,13 +339,13 @@ export default function ByokAccountList() {
           <div className="overflow-x-auto">
             <table className="w-full">
               <thead>
-                <tr className="border-b border-[var(--border)]">
-                  <th className="p-4 text-left text-xs font-medium uppercase tracking-wide text-[var(--muted-foreground)]">Key Label</th>
-                  <th className="p-4 text-left text-xs font-medium uppercase tracking-wide text-[var(--muted-foreground)]">Secret</th>
-                  <th className="p-4 text-left text-xs font-medium uppercase tracking-wide text-[var(--muted-foreground)]">Status</th>
-                  <th className="p-4 text-left text-xs font-medium uppercase tracking-wide text-[var(--muted-foreground)]">Enabled</th>
-                  <th className="p-4 text-left text-xs font-medium uppercase tracking-wide text-[var(--muted-foreground)]">Last Used</th>
-                  <th className="p-4 text-left text-xs font-medium uppercase tracking-wide text-[var(--muted-foreground)]">Actions</th>
+                <tr className="border-b border-[var(--border)] bg-[var(--surface-2)]">
+                  <th className="whitespace-nowrap p-4 text-left text-[10px] font-semibold uppercase tracking-wider text-[var(--muted-foreground)]">Key Label</th>
+                  <th className="whitespace-nowrap p-4 text-left text-[10px] font-semibold uppercase tracking-wider text-[var(--muted-foreground)]">Secret</th>
+                  <th className="whitespace-nowrap p-4 text-left text-[10px] font-semibold uppercase tracking-wider text-[var(--muted-foreground)]">Status</th>
+                  <th className="whitespace-nowrap p-4 text-left text-[10px] font-semibold uppercase tracking-wider text-[var(--muted-foreground)]">Enabled</th>
+                  <th className="whitespace-nowrap p-4 text-left text-[10px] font-semibold uppercase tracking-wider text-[var(--muted-foreground)]">Last Used</th>
+                  <th className="whitespace-nowrap p-4 text-left text-[10px] font-semibold uppercase tracking-wider text-[var(--muted-foreground)]">Actions</th>
                 </tr>
               </thead>
               <tbody>

@@ -6,8 +6,10 @@ const Card = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElemen
     <div
       ref={ref}
       className={cn(
-        "rounded-lg border border-[var(--border)] bg-[var(--card)] text-[var(--card-foreground)]",
-        "shadow-[var(--es-1)] transition-shadow duration-[var(--dur-base)] ease-[var(--ease-out)]",
+        // Terminal section, not a boxed card. A single rule on top separates
+        // sections the way `── TITLE ────` does on the public Share page.
+        // Full borders on every panel made pages read as nested boxes.
+        "border-t border-[var(--border)] bg-transparent pt-3 text-[var(--card-foreground)]",
         className
       )}
       {...props}
@@ -16,7 +18,7 @@ const Card = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElemen
 );
 Card.displayName = "Card";
 
-/** Card with hover elevation — use for clickable tiles / link cards. */
+/** Clickable tile — keeps a full frame because it must read as one hit target. */
 const CardInteractive = React.forwardRef<
   HTMLDivElement,
   React.HTMLAttributes<HTMLDivElement>
@@ -24,9 +26,11 @@ const CardInteractive = React.forwardRef<
   <div
     ref={ref}
     className={cn(
-      "cursor-pointer rounded-lg border border-[var(--border)] bg-[var(--card)] text-[var(--card-foreground)]",
-      "shadow-[var(--es-1)] transition-all duration-[var(--dur-base)] ease-[var(--ease-out)]",
-      "hover:-translate-y-0.5 hover:shadow-[var(--es-3)] hover:border-[var(--muted-foreground)]/40",
+      "cursor-pointer border border-[var(--border)] bg-[var(--card)] text-[var(--card-foreground)]",
+      "transition-colors duration-[var(--dur-fast)] ease-[var(--ease-out)]",
+      // Terminals don't lift — the phosphor just burns brighter.
+      "hover:border-[var(--primary)] hover:bg-[var(--secondary)]",
+      "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--ring)]",
       className
     )}
     {...props}
@@ -36,14 +40,23 @@ CardInteractive.displayName = "CardInteractive";
 
 const CardHeader = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>(
   ({ className, ...props }, ref) => (
-    <div ref={ref} className={cn("flex flex-col space-y-1.5 p-5", className)} {...props} />
+    // No side padding: without side borders the content should align to the
+    // page grid, not sit inset from an invisible edge.
+    <div ref={ref} className={cn("flex flex-col space-y-1 pb-2", className)} {...props} />
   )
 );
 CardHeader.displayName = "CardHeader";
 
 const CardTitle = React.forwardRef<HTMLParagraphElement, React.HTMLAttributes<HTMLHeadingElement>>(
   ({ className, ...props }, ref) => (
-    <h3 ref={ref} className={cn("text-sm font-semibold leading-none tracking-tight", className)} {...props} />
+    <h3
+      ref={ref}
+      className={cn(
+        "font-display text-[11px] leading-none text-[var(--muted-foreground)]",
+        className
+      )}
+      {...props}
+    />
   )
 );
 CardTitle.displayName = "CardTitle";
@@ -57,14 +70,14 @@ CardDescription.displayName = "CardDescription";
 
 const CardContent = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>(
   ({ className, ...props }, ref) => (
-    <div ref={ref} className={cn("p-5 pt-0", className)} {...props} />
+    <div ref={ref} className={cn("pt-0", className)} {...props} />
   )
 );
 CardContent.displayName = "CardContent";
 
 const CardFooter = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>(
   ({ className, ...props }, ref) => (
-    <div ref={ref} className={cn("flex items-center p-5 pt-0", className)} {...props} />
+    <div ref={ref} className={cn("flex items-center pt-2", className)} {...props} />
   )
 );
 CardFooter.displayName = "CardFooter";
