@@ -24,13 +24,27 @@ describe("kiro nativeFormat + routing flags", () => {
     expect(kiro.nativeFormat).toBe("anthropic");
   });
 
-  test("ownsModel matches standard-tier + bare claude, not other providers' prefixes", () => {
-    for (const m of ["auto", "claude-sonnet-4.5", "claude-sonnet-4.5-thinking", "deepseek-3.2", "glm-5", "minimax-m2.1", "qwen3-coder-next", "claude-opus-4.1"]) {
+  test("ownsModel matches the complete Kiro catalog and excludes other provider prefixes", () => {
+    for (const m of [
+      "auto",
+      "opus-5", "opus-4.8", "opus-4.7", "opus-4.6", "opus-4.5",
+      "sonnet-5", "sonnet-4.6", "sonnet-4.5", "sonnet-4",
+      "haiku-4.5", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna",
+      "deepseek-3.2", "glm-5", "minimax-m2.5", "minimax-m2.1",
+      "qwen3-coder-next", "claude-opus-4.1",
+    ]) {
       expect(kiro.ownsModel(m)).toBe(true);
     }
-    for (const m of ["qd-Lite", "kp-opus-4.8", "cb-opus-4.6", "codex-auto", "canva-image"]) {
+    for (const m of ["qd-Lite", "cb-opus-4.6", "codex-auto", "canva-image", "openrouter/opus-5"]) {
       expect(kiro.ownsModel(m)).toBe(false);
     }
+  });
+
+  test("resolves public aliases to exact Kiro upstream model names", () => {
+    expect(kiro.resolveModel("opus-5")).toBe("claude-opus-5");
+    expect(kiro.resolveModel("sonnet-4.6-thinking")).toBe("claude-sonnet-4.6-thinking");
+    expect(kiro.resolveModel("haiku-4.5")).toBe("claude-haiku-4.5");
+    expect(kiro.resolveModel("gpt-5.6-sol")).toBe("gpt-5.6-sol");
   });
 });
 

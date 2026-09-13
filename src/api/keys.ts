@@ -3,6 +3,7 @@ import { db } from "../db/index";
 import { settings, apiKeys } from "../db/schema";
 import { eq, desc, sql } from "drizzle-orm";
 import { config } from "../config";
+import { parseModelWhitelist } from "../lib/model-whitelist";
 
 const API_KEY_SETTING = "pool_api_key";
 const API_KEY_CACHE_TTL_MS = 5000;
@@ -91,10 +92,7 @@ export async function resolveApiKey(token: string): Promise<ApiKeyMeta | null> {
       id: row.id,
       key: row.key,
       name: row.name,
-      modelWhitelist: (row.modelWhitelist || "")
-        .split(",")
-        .map((s) => s.trim().toLowerCase())
-        .filter((s) => s.length > 0),
+      modelWhitelist: parseModelWhitelist(row.modelWhitelist),
       rpmLimit: row.rpmLimit,
       tokenLimit: row.tokenLimit,
       tokensUsed: row.tokensUsed,

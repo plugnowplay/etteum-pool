@@ -119,6 +119,7 @@ export default function Share() {
   const [keyLoading, setKeyLoading] = useState(true);
   const [showKey, setShowKey] = useState(false);
   const [publicEnabled, setPublicEnabled] = useState<boolean | null>(null);
+  const [defaultShareKeyId, setDefaultShareKeyId] = useState<number>(0);
   const [managedKeys, setManagedKeys] = useState<ManagedKeyDTO[]>([]);
   const [selectedKeyId, setSelectedKeyId] = useState<number | null>(null);
   const [selectedKeyName, setSelectedKeyName] = useState("master");
@@ -127,7 +128,10 @@ export default function Share() {
 
   useEffect(() => {
     fetchSettings()
-      .then((res: any) => setPublicEnabled(res?.data?.share_page_enabled !== "false"))
+      .then((res: any) => {
+        setPublicEnabled(res?.data?.share_page_enabled !== "false");
+        setDefaultShareKeyId(Number(res?.data?.share_default_key_id) || 0);
+      })
       .catch(() => setPublicEnabled(null));
   }, []);
 
@@ -143,7 +147,24 @@ export default function Share() {
     }
   }
 
-  const shareUrl = `${window.location.origin}/s${selectedKeyId ? `?keyId=${selectedKeyId}` : ""}`;
+  // Which key the bare share URL ("/") serves. Stored server-side so the public
+  // page can resolve it without any query param.
+  async function handleDefaultShareKey(nextId: number) {
+    const prev = defaultShareKeyId;
+    setDefaultShareKeyId(nextId);
+    try {
+      await updateSettings({ share_default_key_id: String(nextId) });
+      toast.success(nextId ? "Share URL now serves this key" : "Share URL cleared");
+    } catch (err) {
+      setDefaultShareKeyId(prev);
+      toast.error(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  // Share URL is the bare site root — no path, no query. The backend resolves
+  // which key to show from the `share_default_key_id` setting, which we keep in
+  // sync with the selector below.
+  const shareUrl = `${window.location.origin}/`;
 
   // Load the pool key once; fall back to the browser-stored key if unreachable.
   // NOTE: never overwrite apiKey after user picked a managed key (race: async
@@ -366,7 +387,7 @@ ${curlSnippet}`;
               <div className="min-w-0">
                 <h4 className="text-sm font-medium text-[var(--foreground)]">Public share page</h4>
                 <p className="mt-0.5 text-xs text-[var(--muted-foreground)]">
-                  A public landing at <span className="font-mono">/s</span> showing the base URL, API key, usage bars, and model list — no login required.
+                  A public landing showing the base URL, API key, and usage bars — no login required. It lives at the bare root URL, so pick which key it serves.
                 </p>
               </div>
               <button
@@ -382,7 +403,28 @@ ${curlSnippet}`;
               </button>
             </div>
             {publicEnabled === true && (
-              <div className="mt-3">
+              <div className="mt-3 space-y-2">
+                <label className="block text-xs font-medium text-[var(--muted-foreground)]">
+                  Key served at the share URL
+                </label>
+                <select
+                  value={defaultShareKeyId || ""}
+                  onChange={(e) => handleDefaultShareKey(Number(e.target.value) || 0)}
+                  className="w-full rounded-md border border-[var(--border)] bg-[var(--surface-inset)] px-3 py-2 font-mono text-xs text-[var(--foreground)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
+                >
+                  <option value="">— none (share URL shows OFFLINE) —</option>
+                  {managedKeys.filter((k) => k.isShareable).map((k) => (
+                    <option key={k.id} value={k.id}>
+                      {k.name || `key-${k.id}`} — {k.key.slice(0, 12)}…
+                      {!k.enabled ? " · disabled" : ""}
+                    </option>
+                  ))}
+                </select>
+                {defaultShareKeyId === 0 && (
+                  <p className="text-xs text-[var(--warning,#b45309)]">
+                    No key selected — visitors will see OFFLINE. Mark a key as shareable in API Keys first.
+                  </p>
+                )}
                 <CopyField label="Share URL" value={shareUrl} />
               </div>
             )}

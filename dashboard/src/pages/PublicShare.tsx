@@ -4,9 +4,9 @@ import { copyText } from "@/lib/clipboard";
 import { formatNumber } from "@/lib/utils";
 
 /**
- * RETRO EDITION — halaman share public /s.
+ * RETRO EDITION — halaman share public di root ("/?keyId=<id>").
  * CRT phosphor-green terminal: scanlines, ASCII panel, blinking cursor.
- * Semua fungsi tetap: copy, keyId, period switch, model list.
+ * Semua fungsi tetap: copy, keyId, period switch.
  */
 
 const PERIODS = [
@@ -14,15 +14,6 @@ const PERIODS = [
   { id: "7d", label: "7D", hours: 24 * 7 },
   { id: "30d", label: "30D", hours: 24 * 30 },
 ] as const;
-
-interface ShareModel {
-  id: string;
-  provider: string;
-  contextWindow: number | null;
-  maxOutput: number | null;
-  thinking: boolean;
-  vision: boolean;
-}
 
 interface ShareData {
   enabled: boolean;
@@ -32,7 +23,6 @@ interface ShareData {
   apiKeyLimits?: { rpmLimit: number; tokenLimit: number; tokensUsed: number; modelWhitelist: string };
   usage?: { requests: number; promptTokens: number; completionTokens: number; credits: number; cachedTokens?: number };
   modelUsage?: Array<{ provider: string; model: string; tokens: number; requests: number }>;
-  models?: ShareModel[];
 }
 
 async function fetchShare(hours: number): Promise<ShareData> {
@@ -41,13 +31,6 @@ async function fetchShare(hours: number): Promise<ShareData> {
   const res = await fetch(`${API_BASE}/api/share?${params.toString()}`);
   if (!res.ok) throw new Error(`API error: ${res.status}`);
   return res.json();
-}
-
-function formatCtx(n: number | null): string {
-  if (!n) return "?";
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(0)}M`;
-  if (n >= 1_000) return `${Math.round(n / 1_000)}K`;
-  return String(n);
 }
 
 /** Chunky retro progress bar pakai block characters █████░░░ */
@@ -113,7 +96,6 @@ export default function PublicShare() {
   const [data, setData] = useState<ShareData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showKey, setShowKey] = useState(false);
-  const [showAllModels, setShowAllModels] = useState(false);
   const [tick, setTick] = useState(0);
   const mounted = useRef(true);
 
@@ -169,6 +151,12 @@ export default function PublicShare() {
           <p className="mt-2 text-xs text-[#9dff70]/70">
             {(data as any).error || "SHARE PAGE DISABLED BY OPERATOR"}
           </p>
+          <a
+            href="/login"
+            className="mt-4 inline-block border border-[#9dff70]/40 px-3 py-1 text-[10px] tracking-widest text-[#9dff70]/70 hover:border-[#9dff70] hover:text-[#9dff70]"
+          >
+            [OPERATOR LOGIN]
+          </a>
         </div>
       </div>
     );
@@ -177,8 +165,6 @@ export default function PublicShare() {
   const baseUrl = `${API_BASE}/v1`;
   const usage = data.usage ?? { requests: 0, promptTokens: 0, completionTokens: 0, credits: 0, cachedTokens: 0 };
   const modelUsage = (data.modelUsage ?? []).slice(0, 8);
-  const models = data.models ?? [];
-  const visibleModels = showAllModels ? models : models.slice(0, 12);
   const totalTokens = usage.promptTokens + usage.completionTokens;
   const promptPct = totalTokens > 0 ? (usage.promptTokens / totalTokens) * 100 : 0;
   const completionPct = totalTokens > 0 ? (usage.completionTokens / totalTokens) * 100 : 0;
@@ -331,45 +317,15 @@ export default function PublicShare() {
           </div>
         )}
 
-        {/* ── Model catalogue ── */}
-        <div className="mt-4 border border-[#9dff70]/50 bg-black/50 p-4 font-mono">
-          <PanelTitle>{`MODEL CATALOGUE (${models.length})`}</PanelTitle>
-          {models.length === 0 ? (
-            <div className="text-xs text-[#9dff70]/50">&gt; no models registered</div>
-          ) : (
-            <>
-              <ul className="space-y-1 text-[11px]">
-                {visibleModels.map((m) => (
-                  <li key={m.id} className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-                    <span className="text-[#9dff70]">▸</span>
-                    <span className="min-w-0 break-all text-[#baff9e]">{m.id}</span>
-                    <span className="text-[#9dff70]/50">[{m.provider}]</span>
-                    <span className="text-[#9dff70]/50">ctx:{formatCtx(m.contextWindow)}</span>
-                    <span className="text-[#9dff70]/50">out:{formatCtx(m.maxOutput)}</span>
-                    <span className="flex gap-1 text-[9px]">
-                      {m.thinking && <span className="border border-[#9dff70]/40 px-1">THINK</span>}
-                      {m.vision && <span className="border border-[#9dff70]/40 px-1">VIS</span>}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-              {models.length > 12 && (
-                <button
-                  onClick={() => setShowAllModels((s) => !s)}
-                  className="mt-2 w-full border border-[#9dff70]/40 py-1 text-[10px] tracking-widest text-[#9dff70]/70 hover:border-[#9dff70] hover:text-[#9dff70]"
-                >
-                  [{showAllModels ? "SHOW LESS" : `SHOW ALL ${models.length}`}]
-                </button>
-              )}
-            </>
-          )}
-        </div>
-
         {/* ── Footer ── */}
         <div className="mt-6 pb-4 text-center font-mono text-[10px] text-[#9dff70]/50">
           ── POWERED BY <span className="text-[#baff9e]">ETTEUM POOL</span> ──
           <br />
           <span className="opacity-50">press F5 to re-establish connection · session #{tick}</span>
+          <br />
+          <a href="/login" className="mt-2 inline-block opacity-40 hover:opacity-90 hover:text-[#baff9e]">
+            [operator login]
+          </a>
         </div>
       </div>
     </div>

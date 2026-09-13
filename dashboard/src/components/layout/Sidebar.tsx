@@ -191,7 +191,7 @@ export default function Sidebar({
                 <li key={item.path}>
                   <NavLink
                     to={item.path}
-                    end={item.path === "/"}
+                    end={item.path === "/dashboard"}
                     className={({ isActive }) => rowClass(collapsed, isActive)}
                   >
                     {({ isActive }) => (

@@ -3,11 +3,13 @@ import { db } from "../db/index";
 import { settings, usageSummary, requestLogs, apiKeys } from "../db/schema";
 import { eq, sql } from "drizzle-orm";
 import { getAllModels } from "../proxy/providers/registry";
+import { isModelAllowed, parseModelWhitelist } from "../lib/model-whitelist";
 import { getActiveApiKey } from "./keys";
 
 export const shareRouter = new Hono();
 
 const SETTING_KEY = "share_page_enabled";
+const DEFAULT_KEY_SETTING = "share_default_key_id";
 
 async function isShareEnabled(): Promise<boolean> {
   const [row] = await db.select().from(settings).where(eq(settings.key, SETTING_KEY));
@@ -15,14 +17,23 @@ async function isShareEnabled(): Promise<boolean> {
   return row.value === "true";
 }
 
+/** Default key yang dipakai kalau URL gak bawa ?keyId= (share URL polos "/"). */
+async function getDefaultShareKeyId(): Promise<number> {
+  const [row] = await db.select().from(settings).where(eq(settings.key, DEFAULT_KEY_SETTING));
+  return Number(row?.value) || 0;
+}
+
 /**
- * GET /api/share — public, unauthenticated landing data for the /s page.
- * Wajib `keyId` query param. Hanya key yang `isShareable=true` yang bisa di-share.
- * Gak ada fallback master key — master key gak bisa di-share.
+ * GET /api/share — public, unauthenticated landing data for the share page
+ * served at the dashboard root ("/").
+ *
+ * Hanya key yang `isShareable=true` yang bisa di-share. Gak ada fallback master
+ * key — master key gak bisa di-share.
  *
  * Query params:
  *   hours  — window (default 24, max 30d)
- *   keyId  — REQUIRED: id managed key yang shareable
+ *   keyId  — OPTIONAL: id managed key. Kalau kosong, pakai
+ *            `share_default_key_id` dari settings supaya share URL bisa polos.
  */
 shareRouter.get("/", async (c) => {
   if (!(await isShareEnabled())) {
@@ -30,10 +41,10 @@ shareRouter.get("/", async (c) => {
   }
 
   const hours = Math.min(24 * 30, Math.max(1, Number(c.req.query("hours")) || 24));
-  const keyId = Number(c.req.query("keyId")) || 0;
+  const keyId = Number(c.req.query("keyId")) || (await getDefaultShareKeyId());
 
   if (!keyId) {
-    return c.json({ enabled: false, error: "keyId required" });
+    return c.json({ enabled: false, error: "no share key configured" });
   }
 
   const [managed] = await db.select().from(apiKeys).where(eq(apiKeys.id, keyId));
@@ -71,16 +82,12 @@ shareRouter.get("/", async (c) => {
     .having(sql`COALESCE(SUM(total_tokens), 0) > 0`)
     .orderBy(sql`COALESCE(SUM(total_tokens), 0) DESC`);
 
-  // Filter models by key's whitelist
-  const whitelist = (managed.modelWhitelist || "")
-    .split(",")
-    .map((s) => s.trim().toLowerCase())
-    .filter((s) => s.length > 0);
+  // Filter models by key's whitelist. Pakai matcher bersama supaya daftar yang
+  // diiklankan di share page identik dengan yang benar-benar diizinkan proxy.
+  const whitelist = parseModelWhitelist(managed.modelWhitelist);
 
   const allModels = getAllModels();
-  const availableModels = whitelist.length > 0
-    ? allModels.filter((m) => whitelist.some((w) => m.id.toLowerCase().includes(w) || m.id.toLowerCase().endsWith(w)))
-    : allModels;
+  const availableModels = allModels.filter((m) => isModelAllowed(m.id, whitelist));
 
   return c.json({
     enabled: true,
@@ -106,13 +113,8 @@ shareRouter.get("/", async (c) => {
       tokens: Number(m.tokens),
       requests: Number(m.requests),
     })),
-    models: availableModels.map((m) => ({
-      id: m.id,
-      provider: m.owned_by,
-      contextWindow: m.context_window ?? null,
-      maxOutput: m.max_output ?? null,
-      thinking: Boolean(m.thinking),
-      vision: Boolean(m.vision),
-    })),
+    // Jumlah model yang match whitelist. Daftar lengkapnya gak dikirim karena
+    // share page gak lagi nampilin katalog model.
+    modelCount: availableModels.length,
   });
 });

@@ -1,5 +1,5 @@
 import { lazy, Suspense, useState, useEffect } from "react";
-import { Routes, Route, useLocation } from "react-router-dom";
+import { Routes, Route, useLocation, useNavigate } from "react-router-dom";
 import Layout from "./components/layout/Layout";
 import Login from "./pages/Login";
 import { Skeleton, SkeletonCard, SkeletonRows } from "./components/ui/skeleton";
@@ -47,6 +47,8 @@ function RouteFallback() {
 
 export default function App() {
   const [authed, setAuthed] = useState<boolean | null>(null);
+  const location = useLocation();
+  const navigate = useNavigate();
 
   useEffect(() => {
     async function check() {
@@ -68,11 +70,19 @@ export default function App() {
 
   function handleLogin(_apiKey?: string) {
     setAuthed(true);
+    // The root is the public share page, so signing in must move the operator to
+    // "/dashboard". Use the router — history.replaceState alone would not
+    // re-render.
+    if (location.pathname === "/login" || location.pathname === "/") {
+      navigate("/dashboard", { replace: true });
+    }
   }
 
   function handleLogout() {
     logout();
     setAuthed(false);
+    // Root is the public share page, so log out to the operator login instead.
+    navigate("/login", { replace: true });
   }
 
   if (authed === null) {
@@ -84,8 +94,24 @@ export default function App() {
     );
   }
 
-  // Public unauthenticated share landing — must render regardless of auth.
-  if (location.pathname === "/s" || location.pathname === "/s/") {
+  // The public share landing owns the bare site root ("/") unconditionally, so
+  // the shared URL is just the host with nothing trailing and it looks the same
+  // for everyone. Consequences of that choice:
+  //   - operators sign in at "/login" and work from "/dashboard"
+  //   - being signed in does NOT change what "/" renders
+  //   - "?keyId=<id>" is optional and only previews a specific key; without it
+  //     the backend falls back to `share_default_key_id`
+  const isRoot = location.pathname === "/" || location.pathname === "";
+  const isLegacyShare = location.pathname === "/s" || location.pathname === "/s/";
+  const isLoginRoute = location.pathname === "/login";
+
+  // Legacy "/s?keyId=..." links keep working by redirecting to the new root URL.
+  if (isLegacyShare) {
+    window.location.replace(`/${location.search}`);
+    return <RouteFallback />;
+  }
+
+  if (isRoot) {
     return (
       <Suspense fallback={<RouteFallback />}>
         <PublicShare />
@@ -93,7 +119,7 @@ export default function App() {
     );
   }
 
-  if (!authed) {
+  if (isLoginRoute || !authed) {
     return <Login onLogin={handleLogin} />;
   }
 
@@ -101,7 +127,7 @@ export default function App() {
     <Suspense fallback={<RouteFallback />}>
       <Routes>
         <Route element={<Layout onLogout={handleLogout} />}>
-          <Route path="/" element={<Dashboard />} />
+          <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/accounts" element={<Accounts />} />
           <Route path="/accounts/byok/:prefix" element={<ByokAccountList />} />
           <Route path="/accounts/:provider" element={<AccountList />} />

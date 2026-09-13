@@ -64,8 +64,11 @@ export function comboModels(combos: ComboDefinitionShape[]) {
     object: "model" as const,
     created: Date.now(),
     owned_by: "combo",
-    context_window: 200000,
-    max_output: 8192,
+    // Matches the unified 1M context window / 128k output applied by
+    // registry.getAllModels() so combos aren't artificially smaller than
+    // their member models.
+    context_window: 1_000_000,
+    max_output: 128_000,
     thinking: false,
     vision: combo.strategy === "capacity_auto_switch",
   }));

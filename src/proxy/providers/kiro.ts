@@ -56,26 +56,41 @@ interface KiroTokens {
  * shows. So it is a *variant* of this one provider class, not a subclass.
  */
 const KIRO_PRO_MODELS: ModelInfo[] = [
+  // Claude Opus
+  { id: "opus-5", object: "model", created: Date.now(), owned_by: "kiro", context_window: 1000000, max_output: 64000, thinking: true, vision: true, creditUnit: "credit", creditRate: 0.025 / 1000, creditSource: "estimated" },
   { id: "opus-4.8", object: "model", created: Date.now(), owned_by: "kiro", context_window: 1000000, max_output: 64000, thinking: true, vision: true, creditUnit: "credit", creditRate: 0.022 / 1000, creditSource: "estimated" },
   { id: "opus-4.7", object: "model", created: Date.now(), owned_by: "kiro", context_window: 1000000, max_output: 64000, thinking: true, vision: true, creditUnit: "credit", creditRate: 0.022 / 1000, creditSource: "estimated" },
   { id: "opus-4.6", object: "model", created: Date.now(), owned_by: "kiro", context_window: 1000000, max_output: 64000, thinking: true, vision: true, creditUnit: "credit", creditRate: 0.022 / 1000, creditSource: "estimated" },
   { id: "opus-4.5", object: "model", created: Date.now(), owned_by: "kiro", context_window: 200000, max_output: 64000, thinking: true, vision: true, creditUnit: "credit", creditRate: 0.018 / 1000, creditSource: "estimated" },
+  // Claude Sonnet
+  { id: "sonnet-5", object: "model", created: Date.now(), owned_by: "kiro", context_window: 1000000, max_output: 64000, thinking: true, vision: true, creditUnit: "credit", creditRate: 0.015 / 1000, creditSource: "estimated" },
+  { id: "sonnet-4.6", object: "model", created: Date.now(), owned_by: "kiro", context_window: 1000000, max_output: 64000, thinking: true, vision: true, creditUnit: "credit", creditRate: 0.012 / 1000, creditSource: "estimated" },
+  { id: "sonnet-4.5", object: "model", created: Date.now(), owned_by: "kiro", context_window: 200000, max_output: 64000, thinking: true, vision: true, creditUnit: "credit", creditRate: 0.010 / 1000, creditSource: "estimated" },
+  { id: "sonnet-4", object: "model", created: Date.now(), owned_by: "kiro", context_window: 200000, max_output: 64000, thinking: true, vision: true, creditUnit: "credit", creditRate: 0.010 / 1000, creditSource: "estimated" },
+  // Claude Haiku
+  { id: "haiku-4.5", object: "model", created: Date.now(), owned_by: "kiro", context_window: 200000, max_output: 64000, thinking: true, vision: true, creditUnit: "credit", creditRate: 0.003 / 1000, creditSource: "estimated" },
+  // GPT-5.6 variants
+  { id: "gpt-5.6-sol", object: "model", created: Date.now(), owned_by: "kiro", context_window: 400000, max_output: 128000, thinking: true, vision: true, creditUnit: "credit", creditRate: 0.035 / 1000, creditSource: "estimated" },
+  { id: "gpt-5.6-terra", object: "model", created: Date.now(), owned_by: "kiro", context_window: 400000, max_output: 128000, thinking: true, vision: true, creditUnit: "credit", creditRate: 0.035 / 1000, creditSource: "estimated" },
+  { id: "gpt-5.6-luna", object: "model", created: Date.now(), owned_by: "kiro", context_window: 400000, max_output: 128000, thinking: true, vision: true, creditUnit: "credit", creditRate: 0.035 / 1000, creditSource: "estimated" },
 ];
 
-/** Map plain model IDs to the actual Kiro API model names (legacy kp- ids also accepted). */
+/** Map public model IDs to the actual Kiro API model names (legacy kp- ids also accepted). */
 const KIRO_PRO_MODEL_MAP: Record<string, string> = {
   "auto": "auto",
+  "opus-5": "claude-opus-5",
   "opus-4.8": "claude-opus-4.8",
-  "opus-4.8-thinking": "claude-opus-4.8-thinking",
   "opus-4.7": "claude-opus-4.7",
-  "opus-4.7-thinking": "claude-opus-4.7-thinking",
   "opus-4.6": "claude-opus-4.6",
-  "opus-4.6-thinking": "claude-opus-4.6-thinking",
   "opus-4.5": "claude-opus-4.5",
+  "sonnet-5": "claude-sonnet-5",
   "sonnet-4.6": "claude-sonnet-4.6",
-  "sonnet-4.6-thinking": "claude-sonnet-4.6-thinking",
+  "sonnet-4.5": "claude-sonnet-4.5",
+  "sonnet-4": "claude-sonnet-4",
   "haiku-4.5": "claude-haiku-4.5",
-  "haiku-4.5-thinking": "claude-haiku-4.5-thinking",
+  "gpt-5.6-sol": "gpt-5.6-sol",
+  "gpt-5.6-terra": "gpt-5.6-terra",
+  "gpt-5.6-luna": "gpt-5.6-luna",
 };
 
 export type KiroVariant = "standard" | "pro";
@@ -104,27 +119,34 @@ export class KiroProvider extends BaseProvider {
 
   override ownsModel(model: string): boolean {
     const m = model.toLowerCase();
-    // Legacy kiro-pro ids (kp-…) + pro catalog ids (opus-*, sonnet-4.6, haiku-4.5)
+    // Legacy kiro-pro ids (kp-…) + the complete public Kiro catalog.
     if (m.startsWith("kp-")) return true;
     const bare = m.replace(/-thinking$/, "");
     if (KIRO_PRO_MODEL_MAP[bare]) return true;
     const m2 = model.toLowerCase().replace("-thinking", "");
     // Kiro owns bare model names only. BYOK-shaped "prefix/model" ids (e.g.
-    // "openrouter/claude-sonnet-4.6") must not match the claude/sonnet/haiku
-    // substrings — they belong to byok, not the catch-all fallback.
+    // "openrouter/claude-sonnet-4.6") must not match the model-family names —
+    // they belong to byok, not the catch-all fallback.
     if (m2.includes("/")) return false;
     if (this.getModelInfo(model)) return true;
     if (m2 === "auto") return true;
     if (m2 === "deepseek-3.2" || m2 === "glm-5") return true;
-    if (m2.startsWith("minimax-") || m2.startsWith("qwen")) return true;
-    // bare claude family (no provider prefix) belongs to kiro standard tier
+    if (m2.startsWith("gpt-5.6-") || m2.startsWith("minimax-") || m2.startsWith("qwen")) return true;
+    // Bare Claude families (no provider prefix) belong to Kiro. Public short
+    // Opus ids are matched explicitly by KIRO_PRO_MODEL_MAP above so another
+    // provider's prefixed id such as cb-opus-* is never claimed accidentally.
     return m2.includes("claude") || m2.includes("sonnet") || m2.includes("haiku");
   }
 
-  /** Resolve pro catalog ids (or legacy kp-*) to the real Kiro API model names. */
+  /** Resolve catalog ids (or legacy kp-*) to the real Kiro API model names. */
   private resolveModel(model: string): string {
     const m = model.toLowerCase();
-    if (KIRO_PRO_MODEL_MAP[m]) return KIRO_PRO_MODEL_MAP[m]!;
+    const thinking = m.endsWith("-thinking");
+    const bare = thinking ? m.slice(0, -"-thinking".length) : m;
+    if (KIRO_PRO_MODEL_MAP[bare]) {
+      const resolved = KIRO_PRO_MODEL_MAP[bare]!;
+      return thinking ? `${resolved}-thinking` : resolved;
+    }
     // Legacy kp- id → strip prefix and re-lookup
     if (m.startsWith("kp-")) {
       const bare = m.slice(3);
@@ -145,18 +167,9 @@ export class KiroProvider extends BaseProvider {
 
     // Auto (1.0x baseline)
     { id: "auto", object: "model", created: Date.now(), owned_by: "kiro", context_window: 1000000, max_output: 64000, thinking: true, vision: true, creditUnit: "credit", creditRate: 0.008 / 1000, creditSource: "estimated" },
-    // Claude Haiku 4.5 (0.4x)
-    { id: "claude-haiku-4.5", object: "model", created: Date.now(), owned_by: "kiro", context_window: 200000, max_output: 64000, thinking: true, vision: true, creditUnit: "credit", creditRate: 0.003 / 1000, creditSource: "estimated" },
-    // Claude Sonnet 4 (1.3x)
-    { id: "claude-sonnet-4", object: "model", created: Date.now(), owned_by: "kiro", context_window: 200000, max_output: 64000, thinking: true, vision: true, creditUnit: "credit", creditRate: 0.010 / 1000, creditSource: "estimated" },
-    // Claude Sonnet 4.5 (1.3x)
-    { id: "claude-sonnet-4.5", object: "model", created: Date.now(), owned_by: "kiro", context_window: 200000, max_output: 64000, thinking: true, vision: true, creditUnit: "credit", creditRate: 0.010 / 1000, creditSource: "estimated" },
-    // Claude Sonnet 4.5 Thinking (1.3x with extended thinking)
-    { id: "claude-sonnet-4.5-thinking", object: "model", created: Date.now(), owned_by: "kiro", context_window: 200000, max_output: 64000, thinking: true, vision: true, creditUnit: "credit", creditRate: 0.013 / 1000, creditSource: "estimated" },
-    // Claude Sonnet 4.6 (1.5x)
-    { id: "claude-sonnet-4.6", object: "model", created: Date.now(), owned_by: "kiro", context_window: 200000, max_output: 64000, thinking: true, vision: true, creditUnit: "credit", creditRate: 0.012 / 1000, creditSource: "estimated" },
-    // Claude Sonnet 4.6 Thinking (1.5x with extended thinking)
-    { id: "claude-sonnet-4.6-thinking", object: "model", created: Date.now(), owned_by: "kiro", context_window: 200000, max_output: 64000, thinking: true, vision: true, creditUnit: "credit", creditRate: 0.015 / 1000, creditSource: "estimated" },
+    // Claude + GPT public aliases live in KIRO_PRO_MODELS below. Keeping one
+    // canonical public id per model avoids duplicate `claude-*`/short aliases
+    // in /v1/models; resolveModel() still maps them to upstream names.
     // DeepSeek 3.2 (0.25x)
     { id: "deepseek-3.2", object: "model", created: Date.now(), owned_by: "kiro", context_window: 164000, max_output: 64000, thinking: false, vision: false, creditUnit: "credit", creditRate: 0.002 / 1000, creditSource: "estimated" },
     // GLM-5 (0.5x)

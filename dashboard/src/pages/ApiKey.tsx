@@ -426,7 +426,7 @@ export default function ApiKey() {
                   className="h-4 w-4 rounded border-[var(--border)]"
                 />
                 <span>
-                  Shareable <span className="text-xs text-[var(--muted-foreground)]">(bisa muncul di halaman share public /s)</span>
+                  Shareable <span className="text-xs text-[var(--muted-foreground)]">(bisa muncul di halaman share public)</span>
                 </span>
               </label>
             </div>

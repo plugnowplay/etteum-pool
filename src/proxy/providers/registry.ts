@@ -185,6 +185,11 @@ type CustomModelEntry = { provider: string; model: string; info: ModelInfo };
 
 let customModelCache: CustomModelEntry[] = [];
 
+/** Uniform advertised context window (in tokens) for every model in /v1/models. */
+export const UNIFIED_CONTEXT_WINDOW = 1_000_000;
+/** Uniform advertised max_output (in tokens). Upstream still enforces the real cap. */
+export const UNIFIED_MAX_OUTPUT = 128_000;
+
 /** All models across every registered provider, exposed as `provider/model`. */
 export function getAllModels(): ModelInfo[] {
   const seen = new Set<string>();
@@ -195,7 +200,16 @@ export function getAllModels(): ModelInfo[] {
       const id = formatModelId(provider.name as ProviderName, m.id);
       if (seen.has(id)) continue;
       seen.add(id);
-      out.push({ ...m, id });
+      // All exposed models advertise a unified 1M context window / 128k output
+      // so the dashboard, combos, and downstream clients (Kilo, opencode,
+      // share links, etc.) never see mismatched or provider-specific limits.
+      // Upstream still enforces the real cap when a request exceeds it.
+      out.push({
+        ...m,
+        id,
+        context_window: UNIFIED_CONTEXT_WINDOW,
+        max_output: UNIFIED_MAX_OUTPUT,
+      });
     }
   }
 
@@ -206,7 +220,11 @@ export function getAllModels(): ModelInfo[] {
   for (const entry of customModelCache) {
     if (seen.has(entry.info.id)) continue;
     seen.add(entry.info.id);
-    out.push(entry.info);
+    out.push({
+      ...entry.info,
+      context_window: UNIFIED_CONTEXT_WINDOW,
+      max_output: UNIFIED_MAX_OUTPUT,
+    });
   }
 
   return out;

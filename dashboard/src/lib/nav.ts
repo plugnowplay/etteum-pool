@@ -40,7 +40,7 @@ export const navSections: NavSection[] = [
   {
     title: "Accounts",
     items: [
-      { label: "Dashboard", path: "/", icon: LayoutDashboard, keywords: ["home", "overview", "stats"] },
+      { label: "Dashboard", path: "/dashboard", icon: LayoutDashboard, keywords: ["home", "overview", "stats"] },
       { label: "Accounts", path: "/accounts", icon: Users, keywords: ["pool", "byok", "kiro", "codex", "grok"] },
       { label: "Models", path: "/models", icon: Cpu, keywords: ["context", "custom model", "output"] },
       { label: "Combos", path: "/combos", icon: Layers, keywords: ["bundle", "mix"] },

@@ -152,14 +152,10 @@ app.use("/v1/*", async (c, next) => {
       try {
         const cloned = c.req.raw.clone();
         const body: any = await cloned.json();
-        const requested = String(body?.model || "").toLowerCase();
-        // Strip "provider/" prefix untuk perbandingan
-        const bareModel = requested.includes("/") ? requested.split("/").pop()! : requested;
-        // Normalize allowed: strip "provider/" prefix biar "cb/glm-5.2" match "glm-5.2"
-        const ok = meta.modelWhitelist.some((allowed) => {
-          const bareAllowed = allowed.includes("/") ? allowed.split("/").pop()! : allowed;
-          return bareModel === bareAllowed || bareModel.includes(bareAllowed);
-        });
+        const requested = String(body?.model || "");
+        // Matcher bersama dengan share page — lihat src/lib/model-whitelist.ts
+        const { isModelAllowed } = await import("./lib/model-whitelist");
+        const ok = isModelAllowed(requested, meta.modelWhitelist);
         if (requested && !ok) {
           return c.json(
             {

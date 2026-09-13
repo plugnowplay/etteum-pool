@@ -191,7 +191,7 @@ export const apiKeys = sqliteTable("api_keys", {
   // Total token yang sudah dipakai (increment tiap request selesai).
   tokensUsed: integer("tokens_used", { mode: "number" }).notNull().default(0),
   enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
-  // Apakah key ini boleh di-share lewat halaman public /s. 0 = tidak.
+  // Apakah key ini boleh di-share lewat halaman public root ("/?keyId="). 0 = tidak.
   isShareable: integer("is_shareable", { mode: "boolean" }).notNull().default(false),
   createdAt: integer("created_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
   updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
