@@ -2648,18 +2648,19 @@ eyJraWQiOiJhYmMxMjMi...
                 <p className="text-[var(--foreground)] font-medium">Import Kiro dari Refresh Token</p>
                 <p>Paste refresh token Kiro (satu per baris). Backend akan menukar tiap token dengan access token baru di <code>/refreshToken</code> lalu simpan sebagai akun aktif — tanpa perlu login lewat browser.</p>
                 <p>Sumber refresh token: file <code>~/.aws/sso/cache/kiro-auth-token.json</code> di mesin lain, export dari Kiro IDE, atau backup lama.</p>
+                <p>Kiro tidak pernah mengembalikan email, jadi label akun dibuat dari fingerprint token. Mau nama sendiri? Pakai format <code>email|refreshToken</code> per baris.</p>
               </div>
               <div>
-                <label className="text-sm text-[var(--foreground)]">Refresh Tokens (satu per baris)</label>
+                <label className="text-sm text-[var(--foreground)]">Refresh Tokens (satu per baris, opsional <code>email|token</code>)</label>
                 <textarea
                   value={kiroRefreshTokens}
                   onChange={(e) => setKiroRefreshTokens(e.target.value)}
                   className="mt-1 w-full h-40 rounded-md border border-[var(--border)] bg-[var(--background)] p-3 text-sm font-mono text-[var(--foreground)] placeholder:text-[var(--muted-foreground)] focus:outline-none focus:ring-1 focus:ring-[var(--ring)] resize-none"
-                  placeholder={"eyJraWQiOiJrZXktMTY...\nAQoJb3JpZ2luX2VjEB...\n..."}
+                  placeholder={"aor...token1\nakun2@gmail.com|aor...token2\n..."}
                   disabled={kiroRefreshBusy}
                 />
                 <p className="mt-1 text-xs text-[var(--muted-foreground)]">
-                  {kiroRefreshTokens.split(/\r?\n/).filter((l) => l.trim()).length} token siap diimport.
+                  {kiroRefreshTokens.split(/\r?\n/).filter((l) => l.trim()).length} token siap diimport. Tiap token jadi akun terpisah.
                 </p>
               </div>
               <div className="flex justify-end gap-2">

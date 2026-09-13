@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { createHash } from "node:crypto";
 import { db } from "../db/index";
 import { accounts, requestLogs, vccCards, vccTransactions, settings, customModels } from "../db/schema";
 import { eq, inArray, and, gte, sql } from "drizzle-orm";
@@ -2648,15 +2649,74 @@ export async function exchangeCodexRefreshTokens(tokens: string[]) {
 const KIRO_AUTH_BASE = "https://prod.us-east-1.auth.desktop.kiro.dev";
 const KIRO_TOKEN_URL = `${KIRO_AUTH_BASE}/oauth/token`;
 
-async function upsertKiroAccount(email: string, tokens: Record<string, unknown>) {
-  const existing = await db.select().from(accounts)
-    .where(eq(accounts.email, email))
-    .then((rows) => rows.find((r) => r.provider === "kiro"));
+/**
+ * Stable per-credential identity for Kiro.
+ *
+ * Kiro never returns an email, and `profileArn` is a SHARED tenant ARN
+ * (e.g. `arn:aws:codewhisperer:us-east-1:699475941385:profile/EHGA3GRVQMUK`) —
+ * identical for every user. Deriving the account email from it made every
+ * import collapse onto one row and clobber the previous account's tokens.
+ *
+ * Instead we fingerprint the credential the user actually gave us. Refresh
+ * tokens rotate on every refresh, so we record a fingerprint for BOTH the
+ * original input token and the rotated one, accumulating them in
+ * `tokens.fingerprints`. Re-importing any token this account has ever used
+ * then resolves back to the same row instead of creating a duplicate.
+ */
+function kiroFingerprint(seed: string) {
+  return createHash("sha256").update(seed.trim()).digest("hex").slice(0, 12);
+}
+
+/**
+ * Upsert a Kiro account.
+ *
+ * Matching order:
+ *   1. `tokens.fingerprints` / `tokens.fingerprint` — survives refresh-token
+ *      rotation and email edits
+ *   2. `tokens.refresh_token` — catches legacy rows written before fingerprints
+ *      existed, so re-importing their token updates instead of duplicating
+ *   3. `email` — for user-supplied emails
+ * No match → insert a NEW row. Two different credentials never share a row.
+ */
+async function upsertKiroAccount(
+  email: string,
+  tokens: Record<string, unknown>,
+  fingerprints: string[] = [],
+  sourceRefreshToken?: string,
+) {
+  const kiroRows = await db.select().from(accounts)
+    .then((rows) => rows.filter((r) => r.provider === "kiro"));
+
+  const tokensOf = (r: typeof kiroRows[number]) => {
+    const t = r.tokens as Record<string, unknown> | null;
+    return t && typeof t === "object" ? t : null;
+  };
+
+  const knownFingerprints = (t: Record<string, unknown> | null) => {
+    if (!t) return [] as string[];
+    const list = Array.isArray(t.fingerprints) ? t.fingerprints.map(String) : [];
+    if (typeof t.fingerprint === "string") list.push(t.fingerprint);
+    return list;
+  };
+
+  const byFingerprint = fingerprints.length > 0
+    ? kiroRows.find((r) => knownFingerprints(tokensOf(r)).some((fp) => fingerprints.includes(fp)))
+    : undefined;
+
+  const byStoredToken = !byFingerprint && sourceRefreshToken
+    ? kiroRows.find((r) => tokensOf(r)?.refresh_token === sourceRefreshToken)
+    : undefined;
+
+  const existing = byFingerprint || byStoredToken || kiroRows.find((r) => r.email === email);
 
   if (existing) {
+    // Carry forward every fingerprint this row has ever been known by so the
+    // chain survives arbitrarily many token rotations.
+    const merged = [...new Set([...knownFingerprints(tokensOf(existing)), ...fingerprints])];
     await db.update(accounts).set({
+      email,
       status: "active",
-      tokens: tokens as unknown,
+      tokens: { ...tokens, fingerprints: merged } as unknown,
       errorMessage: null,
       lastLoginAt: new Date(),
       updatedAt: new Date(),
@@ -2687,6 +2747,7 @@ export async function exchangeKiroAuthorizationCode(input: {
   code: string;
   codeVerifier: string;
   redirectUri: string;
+  email?: string;
 }) {
   const payload = {
     code: input.code,
@@ -2757,17 +2818,15 @@ export async function exchangeKiroAuthorizationCode(input: {
   if (data.authMethod) newTokens.auth_method = String(data.authMethod);
   if (data.provider) newTokens.identity_provider = String(data.provider);
 
-  // Kiro tokens don't carry an email. Derive one from the profile ARN (which
-  // typically contains the account id) so the row is stable across re-auths.
-  let email = "";
-  if (profileArn) {
-    const arnMatch = profileArn.match(/(?:account|user|profile)[/:]([\w.-]+)/i);
-    email = arnMatch?.[1] ? `kiro-${arnMatch[1]}@oauth.local` : `kiro-${profileArn.slice(-12)}@oauth.local`;
-  } else {
-    email = `kiro-${accessToken.slice(-10)}@oauth.local`;
-  }
+  // Identity: fingerprint this credential. Do NOT use profileArn — it's a
+  // shared tenant ARN, identical for every Kiro user, so it made every login
+  // overwrite the same account row.
+  const fingerprint = kiroFingerprint(refreshToken || accessToken);
+  newTokens.fingerprint = fingerprint;
+  newTokens.fingerprints = [fingerprint];
+  const email = (input.email || "").trim() || `kiro-${fingerprint}@oauth.local`;
 
-  const id = await upsertKiroAccount(email, newTokens);
+  const id = await upsertKiroAccount(email, newTokens, [fingerprint], refreshToken);
   pool.invalidate("kiro" as ProviderName);
   broadcast({ type: "accounts_updated", data: { provider: "kiro", count: 1 } });
 
@@ -2788,8 +2847,13 @@ export async function exchangeKiroAuthorizationCode(input: {
  * returns a fresh `accessToken` + rotated `refreshToken` + `expiresAt`. This
  * lets users paste an existing Kiro refresh token (e.g. exported from another
  * machine) and skip the interactive OAuth flow entirely.
+ *
+ * `email` is optional and purely a label — Kiro's API never returns one. When
+ * omitted, the account gets a deterministic `kiro-<fingerprint>@oauth.local`
+ * derived from the INPUT refresh token, so each distinct token becomes its own
+ * account instead of overwriting the previous one.
  */
-export async function importKiroFromRefreshToken(refreshToken: string) {
+export async function importKiroFromRefreshToken(refreshToken: string, suppliedEmail?: string) {
   const trimmed = (refreshToken || "").trim();
   if (!trimmed) throw new Error("refreshToken is required");
 
@@ -2838,15 +2902,19 @@ export async function importKiroFromRefreshToken(refreshToken: string) {
   if (data.authMethod) newTokens.auth_method = String(data.authMethod);
   if (data.provider) newTokens.identity_provider = String(data.provider);
 
-  let email = "";
-  if (profileArn) {
-    const arnMatch = profileArn.match(/(?:account|user|profile)[/:]([\w.-]+)/i);
-    email = arnMatch?.[1] ? `kiro-${arnMatch[1]}@oauth.local` : `kiro-${profileArn.slice(-12)}@oauth.local`;
-  } else {
-    email = `kiro-${accessToken.slice(-10)}@oauth.local`;
-  }
+  // Fingerprint the INPUT token, not the rotated one — the server rotates the
+  // refresh token on every call, so hashing the rotated value would produce a
+  // new identity (and a duplicate row) on every re-import.
+  const fingerprint = kiroFingerprint(trimmed);
+  const rotatedFingerprint = rotatedRefresh && rotatedRefresh !== trimmed
+    ? kiroFingerprint(rotatedRefresh)
+    : null;
+  const candidates = rotatedFingerprint ? [fingerprint, rotatedFingerprint] : [fingerprint];
+  newTokens.fingerprint = fingerprint;
+  newTokens.fingerprints = candidates;
+  const email = (suppliedEmail || "").trim() || `kiro-${fingerprint}@oauth.local`;
 
-  const id = await upsertKiroAccount(email, newTokens);
+  const id = await upsertKiroAccount(email, newTokens, candidates, trimmed);
   pool.invalidate("kiro" as ProviderName);
   broadcast({ type: "accounts_updated", data: { provider: "kiro", count: 1 } });
 
@@ -2861,16 +2929,31 @@ export async function importKiroFromRefreshToken(refreshToken: string) {
 }
 
 /**
- * Bulk-import Kiro accounts from a list of refresh tokens (one per line).
- * Returns per-token status so the UI can surface partial failures.
+ * Bulk-import Kiro accounts, one entry per line. Each line is either:
+ *   `<refreshToken>`            → email auto-generated from the token fingerprint
+ *   `<email>|<refreshToken>`    → email used as the account label
+ * (mirrors the `email|password` convention used by scripts/auth kiro.py)
+ *
+ * Returns per-entry status so the UI can surface partial failures.
  */
 export async function importKiroFromRefreshTokens(tokens: string[]) {
   const results: Array<{ token: string; success: boolean; id?: number; email?: string; error?: string }> = [];
   for (const raw of tokens) {
-    const token = raw.trim();
-    if (!token) continue;
+    const line = raw.trim();
+    if (!line) continue;
+
+    // Split on the LAST separator: tokens never contain | or whitespace, while
+    // an email won't either, so a single split is unambiguous.
+    let suppliedEmail = "";
+    let token = line;
+    const sepMatch = line.match(/^(.*?)[|,\s]+([^|,\s]+)$/);
+    if (sepMatch?.[1] && sepMatch[2] && sepMatch[1].includes("@")) {
+      suppliedEmail = sepMatch[1].trim();
+      token = sepMatch[2].trim();
+    }
+
     try {
-      const acc = await importKiroFromRefreshToken(token);
+      const acc = await importKiroFromRefreshToken(token, suppliedEmail);
       results.push({ token: token.slice(0, 12) + "…", success: true, id: acc.id, email: acc.email });
     } catch (err) {
       results.push({ token: token.slice(0, 12) + "…", success: false, error: err instanceof Error ? err.message : String(err) });
